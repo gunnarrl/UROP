@@ -1,0 +1,103 @@
+# import the libraries
+
+%matplotlib inline
+
+import pandas as pd
+import numpy as np
+import scipy
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime
+
+# convert scientific notation to decimals
+pd.set_option('display.float_format', lambda x: '%.2f' % x)
+sns.set_style('whitegrid')
+
+df_flights = pd.read_csv('../../Data/flightsmerged.csv', low_memory=False)
+
+df_flights.head()
+
+# load complementary data
+# Source: https://data.world/mattwinter225/2015-usa-weather-avg-max-min
+
+df_weather = pd.read_csv('../../Data/2015_USA_Weather_Data.csv', sep=";")
+df_weather.head()
+
+df_weather.isnull().sum()
+
+df_weather = df_weather.dropna()
+
+df_weather = df_weather[['State','Date','AvgTemp','MaxTemp','MinTemp']]
+df_weather.columns
+
+# Extract the month from date
+
+def extract_month(str_date):
+    
+    if type(str_date) != str:
+        return str_date
+    
+    date_month = datetime.strptime(str_date, '%m/%d/%y %I:%M %p')
+    date_month = date_month.month
+    
+    return date_month
+
+df_weather['Month'] = df_weather['Date'].apply(extract_month)
+df_weather['Month'].value_counts()
+
+# Group by State and month, to set a unified value
+
+state_avg_temp = df_weather.groupby(by =['State','Month'])['AvgTemp'].mean()
+state_min_temp = df_weather.groupby(by =['State','Month'])['MinTemp'].mean()
+state_max_temp = df_weather.groupby(by =['State','Month'])['MaxTemp'].mean()
+
+# Default value of new columns
+
+df_weather['State_Avg_Temp'], df_weather['State_Min_Temp'], df_weather['State_Max_Temp'] = 0, 0, 0
+
+unique_states = set(df_weather['State'])
+len(unique_states)
+
+for state in unique_states:
+    
+    for idx in df_weather.index[df_weather['State'] == state]:
+        this_month = df_weather.loc[idx,'Month']
+        
+        df_weather.at[idx,'State_Avg_Temp'] = state_avg_temp.loc[(state,this_month)]
+        df_weather.at[idx,'State_Min_Temp'] = state_min_temp.loc[(state,this_month)]
+        df_weather.at[idx,'State_Max_Temp'] = state_max_temp.loc[(state,this_month)]
+
+
+df_weather = df_weather[['State','Month','State_Avg_Temp','State_Min_Temp','State_Max_Temp']]
+df_weather.head()
+
+print("Length of DF = ", len(df_weather))
+print("Length of Unique States = ", len(set(df_weather['State'])))
+
+# Remove duplicated state,month tupples.
+
+new_df_weather = df_weather.drop_duplicates(subset = ["State",'Month'])
+len(new_df_weather)
+
+# Keep just the delayed and on_time flights, remove the cancelled and early flights.
+
+new_df = df_flights[(df_flights['CLASS'] == 'On_Time') | (df_flights['CLASS'] == 'Delayed')]
+new_df = new_df.drop(columns = ['CANCELLATION_REASON','CANCELLED','DIVERTED'])
+print("Original dataset : ",df_flights.shape)
+print("Now : ",new_df.shape)
+
+df = pd.merge(new_df, new_df_weather, left_on=['ORIGIN_STATE','MONTH'], right_on=['State','Month'], how='left')
+df.drop(['State','Month'], axis=1, inplace=True)
+df.rename(columns={'State_Avg_Temp':'ORIGIN_AVG_TEMP',
+                       'State_Min_Temp':'ORIGIN_MIN_TEMP',
+                       'State_Max_Temp':'ORIGIN_MAX_TEMP'} , inplace=True)
+
+df = pd.merge(df, new_df_weather, left_on=['DEST_STATE','MONTH'], right_on=['State','Month'], how='left')
+df.drop(['State','Month'], axis=1, inplace=True)
+df.rename(columns={'State_Avg_Temp':'DEST_AVG_TEMP',
+                       'State_Min_Temp':'DEST_MIN_TEMP',
+                       'State_Max_Temp':'DEST_MAX_TEMP'} , inplace=True)
+
+df.columns[-6:]
+
+df.to_csv('../../Data/flightsmerged_final.csv', index=False)

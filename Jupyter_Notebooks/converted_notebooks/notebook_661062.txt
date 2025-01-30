@@ -1,0 +1,150 @@
+import os
+import cv2
+import imutils
+import cv2
+import argparse
+import pandas as pd
+import numpy as np
+from random import randint
+import pickle
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import GridSearchCV
+from sklearn.svm import SVC
+
+import sys
+sys.path.append('../') 
+from utils import show_side_by_side, load_image_as_array, show_image
+
+protoPath = '../opencv_face_recognition/face_detector/deploy.prototxt'
+modelPath = '../opencv_face_recognition/face_detector/res10_300x300_ssd_iter_140000_fp16.caffemodel'
+detector = cv2.dnn.readNetFromCaffe(protoPath, modelPath)
+
+embedding_model = '../opencv_face_recognition/openface/nn4.small2.v1.t7'
+embedder = cv2.dnn.readNetFromTorch(embedding_model)
+
+num_images_per_person = 20
+names = ['Tony_Blair', 'Serena_Williams']
+
+confidence = 0.5
+mean_subtract_values = (104, 177, 123)
+embeddings_file = '../classifier_data/face_embeddings.p'
+recogniser_file = '../classifier_data/recogniser.p'
+labels_file = '../classifier_data/labels.p'
+
+lfw_dir = '../lfw'
+
+X, y = [], []
+for name in names:
+    X_name, y_name = [], []
+    images = os.listdir(os.path.join(lfw_dir, name))
+    for i in range(num_images_per_person):
+        filename = os.path.join(lfw_dir, name, images[i]) 
+        X.append(filename)
+        y.append(name)
+                    
+df_names = pd.read_csv(os.path.join(lfw_dir, 'lfw-names.txt'), delim_whitespace=True, names=['name', 'count'])
+df_names = df_names[~df_names['name'].isin(names)]
+df_names = df_names.sort_values(by=['count'], ascending=False).reset_index()
+
+for i in range(num_images_per_person):
+    unknown_idx = randint(0, len(df_names) - 1 )
+    name = df_names.iloc[unknown_idx]['name']
+    df_names = df_names[df_names['name'] != name]
+    images = os.listdir(os.path.join(lfw_dir, name))
+    image_idx = randint(0, len(images) - 1)
+    X.append(os.path.join(lfw_dir, name, images[image_idx]))
+    y.append('Unknown')   
+
+def get_face_embeddings_from_image(image):
+    vec = []
+    #image = cv2.imread(image_path)
+    imageBlob = cv2.dnn.blobFromImage(
+        cv2.resize(image, (300, 300)), 1.0, (300, 300),
+        mean_subtract_values, swapRB=False, crop=False)
+    (h, w) = image.shape[:2]
+
+    # apply OpenCV's deep learning-based face detector to localize faces in the input image
+    detector.setInput(imageBlob)
+    predictions = detector.forward()
+    # We need one face to continue
+    if len(predictions) > 0:
+        # Find the bounding box with the largest probability
+        i = np.argmax(predictions[0, 0, :, 2])
+        conf = predictions[0, 0, i, 2]
+ 
+        # Find the bounding box with the highest confidence
+        if conf > confidence:
+            # Find the bounding box and extract the face
+            box = predictions[0, 0, i, 3:7] * np.array([w, h, w, h])
+            start_x, start_y, end_x, end_y = box.astype("int")
+            face = image[start_y:end_y, start_x:end_x]
+ 
+            # Ensure the face width and height are sufficiently large
+            if face.shape[0] >= 20 and face.shape[1] > 20:
+                # construct a blob for the face ROI, then pass the blob through our face embedding model 
+                # to obtain the 128-d vector
+                faceBlob = cv2.dnn.blobFromImage(face, 1.0 / 255,
+                    (96, 96), (0, 0, 0), swapRB=True, crop=False)
+                embedder.setInput(faceBlob)
+                vec = embedder.forward()
+    return (start_x, start_y, end_x, end_y), vec
+
+embeddings = {'names': [], 'embeddings': []}
+for i, (image_path, name) in enumerate(zip(X, y)):
+    image = load_image_as_array(image_path)
+    print('Processing image {}'.format(image_path))
+    _, face_embedding_vector = get_face_embeddings_from_image(image)
+    if face_embedding_vector != []:
+        embeddings['names'].append(name)
+        embeddings['embeddings'].append(face_embedding_vector[0])
+
+print('Created {} embeddings.'.format(len(embeddings['names'])))
+
+pickle.dump(embeddings, open(embeddings_file, 'wb' ))
+
+embeddings = pickle.load(open(embeddings_file, 'rb' ))
+
+le = LabelEncoder()
+labels = le.fit_transform(embeddings['names'])
+
+recogniser = SVC(C=1.0, kernel="linear", probability=True)
+recogniser.fit(embeddings['embeddings'], labels)
+
+pickle.dump(recogniser, open(recogniser_file, 'wb'))
+pickle.dump(le, open(labels_file, 'wb'))
+
+detector = cv2.dnn.readNetFromCaffe(protoPath, modelPath)
+embedder = cv2.dnn.readNetFromTorch(embedding_model)
+recogniser = pickle.load(open(recogniser_file, 'rb'))
+le = pickle.load(open(labels_file, 'rb'))
+
+for i in range(num_images_per_person):
+    name = names[randint(0, len(names) - 1)]
+    images = os.listdir(os.path.join(lfw_dir, name))
+    filename = os.path.join(lfw_dir, name, images[randint(0, len(images) - 1)])
+    print('Trying to recognise faces in {}'.format(filename))
+    image = load_image_as_array(filename)
+
+    # imageBlob = cv2.dnn.blobFromImage(
+    #     cv2.resize(image, (300, 300)), 1.0, (300, 300),
+    #     mean_subtract_values, swapRB=False, crop=False)
+
+    # detector.setInput(imageBlob)
+    # detections = detector.forward()
+
+    box, vec = get_face_embeddings_from_image(image)
+
+    predictions = recogniser.predict_proba(vec)[0]
+    j = np.argmax(predictions)
+    proba = predictions[j]
+    name = le.classes_[j]
+
+    start_x, start_y, end_x, end_y = box
+    text = "{}: {:.2f}%".format(name, proba * 100)
+    y = start_y - 10 if start_y - 10 > 10 else start_y + 10
+    cv2.rectangle(image, (start_x, start_y), (end_x, end_y),
+        (0, 0, 255), 2)
+    cv2.putText(image, text, (start_x, y),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 2)
+
+    show_image(image)

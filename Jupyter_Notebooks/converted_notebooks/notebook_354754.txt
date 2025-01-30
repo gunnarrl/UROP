@@ -1,0 +1,178 @@
+import numpy as np
+
+class DecisionNode():
+    """
+    决策树的决策节点或者是叶子节点
+    -----------------------
+    feature_index:代表所属特征的列号
+    threshold:判断的阈值
+    value:预测值|cm=mean(sum(y))
+    left:左子树--符合阈值条件
+    right:右子树--不符合调价
+    """
+    def __init__(self,feature_index=None,threshold=None,value=None,left=None,right=None):
+        self.feature_index=feature_index
+        self.threshold=threshold
+        self.value=value
+        self.left=left
+        self.right=right
+        
+        
+    
+
+def divide(X,feature_index,threshold):#根据超二分类，进行数据集的二分切分
+    ##考虑到feature可能是连续性数据或者是离散型的数据，那么在切分特征的时候，切分函数是不一样的
+    ##连续性的数据根据x>=threshold来进行二分切分
+    ##离散型的数据根据x==threshold来进行二分切分
+    split=None
+    ##如果是连续性的数据
+    if isinstance(threshold,int) or isinstance(threshold,float):
+        split=lambda item:item[feature_index]>=threshold
+    else:
+        split=lambda item:item[feature_i]==threshold
+    X1=np.array([sample for sample in X if split(sample)])
+    X2=np.array([sample for sample in X if not split(sample)])
+    
+    return np.array([X1,X2])
+
+def variance(X):
+    mean=np.ones(np.shape(X))*X.mean(0)
+    N=np.shape(X)[0]
+    variance=(1/N)*np.diag((X-mean).T.dot(X-mean))
+    return variance
+
+class DecisionTree(object):
+    """
+    决策树的超类
+    
+    ---------------
+    min_samples_split:最小样本数量，当大于等于该数量的时候可以进行分裂，如果小于该数量则不进行分裂
+    
+    min_gain:分裂最小增益，当小于该增益的时候，不进行分裂
+    
+    max_depth:最大深度，当大于该深度的时候不进行分裂
+    
+    loss:function:Loss函数的Handle
+    
+    """
+    
+    def __init__(self,min_samples_split=2,min_gain=0.01,max_depth=100,loss=None):
+        self.root=None
+        self.min_samples_split=min_samples_split
+        self.min_gain=min_gain
+        self.max_depht=max_depth
+        self._gain=None
+        self._leaf_value=None
+        self.one_dim=None#(len(X),)->(Len(X),1)
+        self.loss=loss
+
+    def fit(self,X,y,loss=None):        
+        self.one_dim=len(np.shape(y))==1
+        self.root=self.build_tree(X,y)      
+        self.loss=None
+    
+    def build_tree(self,X,y,current_depth=0):
+        """循环递归的进行决策树的构建，依据增益函数的值进行X的分裂"""
+        largest_gain=0
+        best_condition=None
+        best_sets=None
+        if len(np.shape(y))==1:
+            y=np.expand_dims(y,axis=1)#将(x,)的数组变成(x,1)的数组
+        Xy=np.concatenate((X,y),axis=1)#将y的值作为列合并到X中
+        n_samples,n_features=np.shape(X)#得到行数和列数
+        if n_samples>=self.min_samples_split :
+            #and current_depth<=self.max_depth:
+            for feature_i in range(n_features):#遍历所有的属性寻找最佳切分点
+                values = np.expand_dims(X[:, feature_i], axis=1)
+                unique_values=np.unique(values)#将所有的values进行去重
+                for threshold in unique_values:#遍历该feature_i所有可能的切分点，寻找最佳切分点
+                    Xy1,Xy2=divide(Xy,feature_i,threshold)
+                    if len(Xy1)>0 and len(Xy2)>0:
+                        y1=Xy1[:,n_features:]#最后的y值取出来
+                        y2=Xy2[:,n_features:]
+                        gain=self._gain(y,y1,y2)
+                        if gain>largest_gain:#如果比当前最大的增益还大，则保存当前记录
+                            largest_gain=gain
+                            best_condition={"feature_index":feature_i,"threshold":threshold}
+                            best_sets={
+                                "leftX":Xy1[:,:n_features],#左子树的X
+                                "lefty":Xy1[:,n_features:],
+                                "rightX":Xy2[:,:n_features],
+                                "righty":Xy2[:,n_features:]
+                            }
+        if largest_gain>=self.min_gain:#如果达到了分裂的最小增益，则进行分裂
+            left=self.build_tree(best_sets["leftX"],best_sets["lefty"],current_depth+1)
+            right=self.build_tree(best_sets["rightX"],best_sets["righty"],current_depth+1)
+            return DecisionNode(feature_index=best_condition['feature_index'],threshold=best_condition['threshold'],left=left,right=right)
+        leaf_value=self._leaf_value(y)
+        return DecisionNode(value=leaf_value)
+    
+    def predict(self,X):
+        """
+        逐个遍历x in X，寻找相应的叶子节点
+        """
+        y_pred=[self.predict_v(x) for x in X]
+        
+        return y_pred
+    
+    def predict_v(self,x,tree=None):
+        """
+        递归的进行树的遍历
+        """
+        if tree is None:
+            tree=self.root
+        if tree.value is None:
+            return tree.value
+        feature_value=x[tree.feature_index]#取出需要进行判定的列
+        
+        branch=tree.right
+        #如果是数值类型的feature，则使用>=来进行判断
+        if isinstance(feature_value,int) or isinstance(feature_value,float):
+            if feature_value>=tree.threshold:
+                branch=tree.left
+        elif feature_value==tree.threshold:#如果是离散型的数值，则使用==来进行判断
+            branch=tree.left
+        
+        return self.predict_v(x,branch)
+        
+
+class RegressionTree(DecisionTree):
+    
+    def _calculate_variance_gain(self,y,y1,y2):
+        var_total=variance(y)
+        var_1=variance(y1)
+        var_2=variance(y2)
+        p1=len(y1)/len(y)
+        p2=len(y2)/len(y)
+        var_gain=var_total-(p1*var_1+p2*var_2)
+        return sum(var_gain)
+    def _mean(self,y):
+        value=np.mean(y,axis=0)
+        return value if len(value) > 1 else value[0]
+    def fit(self,X,y):
+        self._gain=self._calculate_variance_gain
+        self._leaf_value=self._mean
+        super(RegressionTree,self).fit(X,y)
+
+model=RegressionTree()
+
+#model.max_depht
+
+import pandas as pd
+
+train=pd.read_csv('./data/train_1.csv')
+
+from sklearn.model_selection import train_test_split as tts
+
+y=np.asarray(train['SalePrice'])
+train1=train.drop(['Id','SalePrice'],axis=1)
+X=np.asarray(pd.get_dummies(train1).reset_index(drop=True))
+X_train,X_test,y_train,y_test=tts(X,y,test_size=0.2)
+
+model=RegressionTree()
+
+model.fit(X_train,y_train)
+
+pred=model.predict(X_test)
+
+#np.expand_dims

@@ -1,0 +1,160 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib import pylab
+import mpld3
+
+%matplotlib inline
+mpld3.enable_notebook()
+
+from busqueda_local import hill_climb
+from deap import base, creator, tools, algorithms
+
+# -*- coding: utf-8 -*-
+"""
+Ejercicio 3: N-reinas
+"""
+
+QUEENS = 16
+
+def amenaza(fila_1, col_1, fila_2, col_2):
+    "Determina a partir de sus posiciones si dos reinas se están amenazando."
+    return ( (fila_1 == fila_2) or (col_1 == col_2) or
+             (abs(fila_1 - fila_2) == abs(col_1 - col_2)) )
+
+"""
+Para la cantidad máxima de amenazas, si la reina A amenaza a la reina B, la
+reina B también amenaza a la reina A pero sólo se contabiliza como una amenaza.
+"""
+MAX_AMENAZAS = (QUEENS * (QUEENS-1)) / 2
+
+
+def evaluacion(x):
+    t=0
+    for i in range(0,x.size-1):
+        for j in range(i+1,x.size):
+            if amenaza(i,x[i],j,x[j]):
+                t+=1
+    return -t
+
+def invertirPos(x,pos1,pos2):
+    aaa=x[pos1]
+    x[pos1]=x[pos2]
+    x[pos2]=aaa
+    return x
+
+def vecinos(x):
+    v = []
+    pos=np.random.randint(0,x.size,3)
+    while pos[0]==pos[1] & pos[1]==pos[2]:
+        pos=np.random.randint(0,x.size,3)
+    v.append(invertirPos(x,pos[0],pos[1]))
+    v.append(invertirPos(x,pos[0],pos[2]))
+    v.append(invertirPos(x,pos[1],pos[2]))
+    return v
+
+def nuevos(q):
+    a=np.arange(q)
+    np.random.shuffle(a)
+    return a
+
+def buscar(i,reinas):
+    mejor = nuevos(reinas)
+    for j in range(i):
+        mejor, evaluaciones = hill_climb(mejor, evaluacion, vecinos)
+        print("\nEvaluacion mejor",evaluacion(mejor))
+        print("Evaluaciones:",evaluaciones)
+        if evaluacion(mejor)==0:
+            print("Ganadora:",mejor)
+            tablero=np.empty((reinas,reinas),np.str_)
+            for i in range(reinas):
+                tablero[i,mejor[i]]='X'
+            print(tablero)
+    return
+
+def buscarMejor(reinas):
+    mejor = nuevos(reinas)
+    while evaluacion(mejor)!=0:
+        mejor, evaluaciones = hill_climb(mejor, evaluacion, vecinos)
+    print("Evaluaciones:",evaluaciones)
+    print("Ganadora:",mejor)
+    tablero=np.empty((reinas,reinas),np.str_)
+    for i in range(reinas):
+        tablero[i,mejor[i]]='X'
+    print(tablero)
+    return mejor
+
+buscarMejor(8)
+
+QUEENS=16
+
+creator.create("FitnessMax", base.Fitness, weights=(-1,))
+creator.create("Individual", list, fitness=creator.FitnessMax)
+
+toolbox = base.Toolbox()
+toolbox.register("cromo_gen", nuevos, QUEENS)
+toolbox.register("individual", tools.initIterate, creator.Individual, toolbox.cromo_gen)
+toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+
+bit = toolbox.cromo_gen()
+ind = toolbox.individual()
+pop = toolbox.population(n=3)
+
+print("bit is of type %s and has value\n%s" % (type(bit), bit))
+print("ind is of type %s and contains %d bits\n%s" % (type(ind), len(ind), ind))
+print("pop is of type %s and contains %d individuals\n%s" % (type(pop), len(pop), pop))
+
+def evaluarADN(x):
+    t=0
+    pos=x
+    for i in range(0,QUEENS-1):
+        for j in range(i+1,QUEENS):
+            if amenaza(i,pos[i],j,pos[j]):
+                t+=1
+    return [t]
+
+toolbox.register("evaluate", evaluarADN)
+toolbox.register("mate", tools.cxOrdered)
+toolbox.register("mutate", tools.mutShuffleIndexes, indpb=0.20)
+toolbox.register("select", tools.selTournament, tournsize=3)
+
+ind = toolbox.individual()
+print(ind)
+toolbox.evaluate(ind)
+
+ind = toolbox.individual()
+print(ind)
+toolbox.mutate(ind)
+print(ind)
+
+ind = toolbox.individual()
+print(ind)
+ind2 = toolbox.individual()
+print(ind2)
+toolbox.mate(ind,ind2)
+
+popu = toolbox.population(n=50)
+jeje=toolbox.select(popu,1)
+evaluarADN(jeje[0])
+
+def main():    
+    pop = toolbox.population(n=1000)
+    hof = tools.HallOfFame(1)
+    stats = tools.Statistics(lambda ind: ind.fitness.values)
+    stats.register("avg", np.mean)
+    stats.register("min", np.min)
+    stats.register("max", np.max)
+    
+    pop, logbook = algorithms.eaSimple(pop, toolbox, cxpb=0.5, mutpb=0.2, ngen=10, stats=stats, halloffame=hof, verbose=True)
+    
+    return pop, logbook, hof
+
+if __name__ == "__main__":
+    pop, log, hof = main()
+    print("Best individual is: %s\nwith fitness: %s" % (hof[0], hof[0].fitness))
+    gen, avg, min_, max_ = log.select("gen", "avg", "min", "max")
+    plt.plot(gen, avg, label="average")
+    plt.plot(gen, min_, label="minimum")
+    plt.plot(gen, max_, label="maximum")
+    plt.xlabel("Generation")
+    plt.ylabel("Fitness")
+    plt.legend(loc="lower right")

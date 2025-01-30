@@ -1,0 +1,225 @@
+from google.colab import drive
+drive.mount('/content/gdrive')
+
+import tensorflow as tf
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import cv2
+import os
+
+from tensorflow import keras
+from tensorflow.keras.layers import Input
+from tensorflow.keras.layers import Conv2D
+from tensorflow.keras.layers import MaxPool2D
+from tensorflow.keras.layers import ReLU
+from tensorflow.keras.layers import Softmax
+from tensorflow.keras.layers import Flatten
+from tensorflow.keras.layers import Dropout
+from tensorflow.keras.layers import BatchNormalization
+from tensorflow.keras.metrics import sparse_top_k_categorical_accuracy
+from tensorflow.keras.callbacks import CSVLogger
+from ast import literal_eval
+
+# parameters
+BATCH_SIZE = 200
+EPOCHS = 50
+STEPS_PER_EPOCH = 850
+VALIDATION_STEPS = 100
+EVALUATE_STEPS = 850
+IMAGE_SIZE = 128
+LINE_SIZE = 3
+
+
+# load path
+TRAIN_DATA_PATH = 'gdrive/My Drive/QW/Data/Data_10000/All_classes_10000.csv'
+VALID_DATA_PATH = 'gdrive/My Drive/QW/Data/My_test_data/My_test_data.csv'
+LABEL_DICT_PATH = 'gdrive/My Drive/QW/Data/labels_dict.npy'
+
+# save path
+CKPT_PATH = 'gdrive/My Drive/QW/Notebook/Quick Draw/Thesis_pre_research/(2-2)Stroke_MobileNet/best_model_2_2.ckpt'
+LOSS_PLOT_PATH = 'gdrive/My Drive/QW/Notebook/Quick Draw/Thesis_pre_research/(2-2)Stroke_MobileNet/loss_plot_2_2.png'
+ACC_PLOT_PATH = 'gdrive/My Drive/QW/Notebook/Quick Draw/Thesis_pre_research/(2-2)Stroke_MobileNet/acc_plot_2_2.png'
+LOG_PATH = 'gdrive/My Drive/QW/Notebook/Quick Draw/Thesis_pre_research/(2-2)Stroke_MobileNet/Log_2_2.log'
+
+print('finish!')
+
+def generate_data(data, batch_size, choose_recognized):
+    data = data.sample(frac = 1)
+    while 1:
+        
+#         get columns' values named 'drawing', 'word' and 'recognized'
+        drawings = data["drawing"].values
+        drawing_recognized = data["recognized"].values
+        drawing_class = data["word"].values
+      
+#         initialization
+        cnt = 0
+        data_X =[]
+        data_Y =[]
+        
+#         generate batch
+        for i in range(len(drawings)):
+            if choose_recognized:
+                if drawing_recognized[i] == 'False':    #Choose according to recognized value
+                    continue
+            draw = drawings[i]
+            label = drawing_class[i]
+            stroke_vec = literal_eval(draw)
+            img = np.zeros([256, 256])
+            x = []
+            for j in range(len(stroke_vec)): 
+                line = np.array(stroke_vec[j]).T
+                cv2.polylines(img, [line], False, 255-(13*min(j,10)), LINE_SIZE)
+            img = cv2.resize(img, (IMAGE_SIZE,IMAGE_SIZE), interpolation = cv2.INTER_NEAREST)
+            img = img[:,:, np.newaxis]
+            x = img
+            y = labels2nums_dict[label]
+            data_X.append(x)
+            data_Y.append(y)
+            cnt += 1
+            if cnt==batch_size:        #generate a batch when cnt reaches batch_size 
+                cnt = 0
+                yield (np.array(data_X), np.array(data_Y))
+                data_X = []
+                data_Y = []
+
+print('finish!')
+
+# define a class named LossHitory 
+class LossHistory(keras.callbacks.Callback):
+    def on_train_begin(self, logs={}):
+        self.losses = {'batch':[], 'epoch':[]}
+        self.accuracy = {'batch':[], 'epoch':[]}
+        self.val_loss = {'batch':[], 'epoch':[]}
+        self.val_acc = {'batch':[], 'epoch':[]}
+
+    def on_batch_end(self, batch, logs={}):
+        self.losses['batch'].append(logs.get('loss'))
+        self.accuracy['batch'].append(logs.get('acc'))
+        self.val_loss['batch'].append(logs.get('val_loss'))
+        self.val_acc['batch'].append(logs.get('val_acc'))
+
+    def on_epoch_end(self, batch, logs={}):
+        self.losses['epoch'].append(logs.get('loss'))
+        self.accuracy['epoch'].append(logs.get('acc'))
+        self.val_loss['epoch'].append(logs.get('val_loss'))
+        self.val_acc['epoch'].append(logs.get('val_acc'))
+
+    def loss_plot(self, loss_type, loss_fig_save_path, acc_fig_save_path):
+        iters = range(len(self.losses[loss_type]))
+        plt.figure('acc')
+        plt.plot(iters, self.accuracy[loss_type], 'r', label='train acc')
+        plt.plot(iters, self.val_acc[loss_type], 'b', label='val acc')
+        plt.grid(True)
+        plt.xlabel(loss_type)
+        plt.ylabel('acc')
+        plt.legend(loc="upper right")
+        plt.savefig(acc_fig_save_path)
+        plt.show()
+        
+        
+        plt.figure('loss')
+        plt.plot(iters, self.losses[loss_type], 'g', label='train loss')
+        plt.plot(iters, self.val_loss[loss_type], 'k', label='val loss')
+        plt.grid(True)
+        plt.xlabel(loss_type)
+        plt.ylabel('loss')
+        plt.legend(loc="upper right")
+        plt.savefig(loss_fig_save_path)
+        plt.show()
+        
+# create a object from LossHistory class
+History = LossHistory()
+
+print("finish!")
+
+
+cp_callback = tf.keras.callbacks.ModelCheckpoint(
+    CKPT_PATH, 
+    verbose = 1, 
+    monitor='val_acc', 
+    mode = 'max', 
+    save_best_only=True)
+
+print("finish!")
+
+ReduceLR = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_acc', factor=0.5, patience=3,
+                      min_delta=0.005, mode='max', cooldown=3, verbose=1)
+
+csv_logger = CSVLogger(LOG_PATH, separator=',', append=True)
+
+# load train data and valid data
+#  labels_dict and data path
+
+# labels convert into nums
+labels_dict = np.load(LABEL_DICT_PATH)
+labels2nums_dict = {v: k for k, v in enumerate(labels_dict)}
+
+# read csv 
+train_data = pd.read_csv(TRAIN_DATA_PATH)
+valid_data = pd.read_csv(VALID_DATA_PATH)
+
+print('finish!')
+
+
+MODEL = tf.keras.applications.MobileNet(
+        input_shape=(IMAGE_SIZE,IMAGE_SIZE,1),
+        alpha=1.0,
+        include_top=True,
+        weights=None,
+        classes=340
+        )
+MODEL.summary()
+
+model = MODEL
+model.compile(loss='sparse_categorical_crossentropy',
+              optimizer='adam',
+              metrics=['accuracy'])
+
+print('finish')
+
+
+print('start training')
+# callbacks = [History, cp_callback]
+
+history = model.fit_generator(generate_data(train_data, BATCH_SIZE, True),
+                              steps_per_epoch = STEPS_PER_EPOCH,
+                              epochs = EPOCHS,
+                              validation_data = generate_data(valid_data, BATCH_SIZE, False) ,
+                              validation_steps = VALIDATION_STEPS,
+                              verbose = 1,
+                              initial_epoch = 0,
+                              callbacks = [History,cp_callback,ReduceLR,csv_logger]
+                             )
+print("finish training")
+
+History.loss_plot('epoch', LOSS_PLOT_PATH, ACC_PLOT_PATH)
+
+print('finish!')
+
+def top_3_accuracy(X, Y):
+        return sparse_top_k_categorical_accuracy(X, Y, 3)
+  
+def top_5_accuracy(X, Y):
+        return sparse_top_k_categorical_accuracy(X, Y, 5)
+  
+model_E = MODEL
+model_E.compile(loss=tf.keras.losses.sparse_categorical_crossentropy,
+              optimizer=tf.train.AdamOptimizer(),
+              metrics=['accuracy',top_3_accuracy, top_5_accuracy])
+
+model_weights_path = CKPT_PATH
+model_E.load_weights(model_weights_path)
+print('finish')
+
+result = model_E.evaluate_generator(
+    generate_data(valid_data, BATCH_SIZE, False),
+    steps = EVALUATE_STEPS,
+    verbose = 1
+)
+
+print('loss:', result[0])
+print('top1 accuracy:', result[1])
+print('top3 accuracy:', result[2])
+print('top3 accuracy:', result[3])

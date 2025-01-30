@@ -1,0 +1,121 @@
+%pylab inline --no-import-all
+
+import poppy
+poppy.__version__
+
+RADIUS = 1.0 # meters
+WAVELENGTH = 460e-9 # meters
+PIXSCALE = 0.01 # arcsec / pix
+FOV = 1 # arcsec
+NWAVES = 1.0
+
+osys = poppy.OpticalSystem()
+circular_aperture = poppy.CircularAperture(radius=RADIUS)
+osys.add_pupil(circular_aperture)
+osys.add_detector(pixelscale=PIXSCALE, fov_arcsec=FOV)
+
+plt.figure(figsize=(8, 8))
+psf = osys.calc_psf(wavelength=WAVELENGTH, display_intermediates=True)
+plt.tight_layout()
+
+osys = poppy.OpticalSystem()
+circular_aperture = poppy.CircularAperture(radius=RADIUS)
+osys.add_pupil(circular_aperture)
+
+thinlens = poppy.ThinLens(nwaves=NWAVES, reference_wavelength=WAVELENGTH, radius=RADIUS)
+osys.add_pupil(thinlens)
+
+osys.add_detector(pixelscale=PIXSCALE, fov_arcsec=FOV)
+
+plt.figure(figsize=(8, 8))
+psf = osys.calc_psf(wavelength=WAVELENGTH, display_intermediates=True)
+plt.tight_layout()
+
+defocus_coefficient = NWAVES * WAVELENGTH / (2 * np.sqrt(3))
+coefficients_sequence = [0, 0, 0, defocus_coefficient]
+
+osys = poppy.OpticalSystem()
+circular_aperture = poppy.CircularAperture(radius=RADIUS)
+osys.add_pupil(circular_aperture)
+thinlens = poppy.ZernikeWFE(radius=RADIUS, coefficients=coefficients_sequence)
+osys.add_pupil(thinlens)
+osys.add_detector(pixelscale=PIXSCALE, fov_arcsec=FOV)
+
+plt.figure(figsize=(8,8))
+psf_with_zernikewfe = osys.calc_psf(wavelength=WAVELENGTH, display_intermediates=True)
+plt.tight_layout()
+
+poppy.display_psf_difference(psf, psf_with_zernikewfe, title='ThinLens vs. ZernikeWFE')
+
+coefficients_sequence = [0, 0, 2e-7, defocus_coefficient, 0, 3e-8]
+
+osys = poppy.OpticalSystem("Testing Thin Lens w/ Zernike Module")
+circular_aperture = poppy.CircularAperture(radius=RADIUS)
+osys.add_pupil(circular_aperture)
+thinlens = poppy.ZernikeWFE(radius=RADIUS, coefficients=coefficients_sequence)
+osys.add_pupil(thinlens)
+osys.add_detector(pixelscale=PIXSCALE, fov_arcsec=FOV)
+
+plt.figure(figsize=(8,8))
+psf_with_astigmatism = osys.calc_psf(wavelength=WAVELENGTH, display_intermediates=True)
+plt.tight_layout()
+
+osys = poppy.OpticalSystem()
+circular_aperture = poppy.CircularAperture(radius=RADIUS)
+osys.add_pupil(circular_aperture)
+thinlens = poppy.ParameterizedWFE(
+    coefficients=coefficients_sequence,
+    basis_factory=poppy.zernike.zernike_basis,
+    radius=RADIUS
+)
+osys.add_pupil(thinlens)
+osys.add_detector(pixelscale=PIXSCALE, fov_arcsec=FOV)
+
+plt.figure(figsize=(8,8))
+psf_with_parameterizedwfe = osys.calc_psf(wavelength=WAVELENGTH, display_intermediates=True)
+plt.tight_layout()
+
+osys = poppy.OpticalSystem()
+hex_aperture = poppy.HexagonAperture(side=RADIUS)
+osys.add_pupil(hex_aperture)
+thinlens = poppy.ParameterizedWFE(
+    coefficients=coefficients_sequence,
+    basis_factory=poppy.zernike.hexike_basis,
+    radius=RADIUS
+)
+osys.add_pupil(thinlens)
+osys.add_detector(pixelscale=PIXSCALE, fov_arcsec=FOV)
+
+plt.figure(figsize=(8,8))
+psf_with_hexikes = osys.calc_psf(wavelength=WAVELENGTH, display_intermediates=True)
+plt.tight_layout()
+
+wfe_budget = [0, 100, 100, 50, 36, 36]
+
+def generate_coefficients(wfe_budget):
+    coefficients = []
+    for term in wfe_budget:
+        coefficients.append(
+            np.random.uniform(low=-1e-9 * term, high=1e-9 * term)  # convert nm to meters, get value in range
+        )
+    return coefficients
+
+possible_coefficients = [generate_coefficients(wfe_budget) for i in range(5)]
+
+plt.figure(figsize=(18,2))
+
+for idx, coefficient_set in enumerate(possible_coefficients, start=1):
+    plt.subplot(1, 5, idx)
+
+    osys = poppy.OpticalSystem()
+    hex_aperture = poppy.CircularAperture(radius=RADIUS)
+    osys.add_pupil(hex_aperture)
+    thinlens = poppy.ZernikeWFE(
+        coefficients=coefficient_set,
+        radius=RADIUS
+    )
+    osys.add_pupil(thinlens)
+    osys.add_detector(pixelscale=PIXSCALE, fov_arcsec=FOV)
+
+    psf = osys.calc_psf(wavelength=WAVELENGTH, display=False)
+    poppy.display_psf(psf, title="PSF #{}".format(idx))

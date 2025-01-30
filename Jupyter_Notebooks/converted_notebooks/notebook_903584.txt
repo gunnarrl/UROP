@@ -1,0 +1,83 @@
+import pandas as pd
+import numpy as np
+import sys
+%matplotlib inline
+
+print('Python version ' + sys.version)
+print('Pandas version ' + pd.__version__)
+
+df = pd.DataFrame({'group1':["a","a","b","b"],
+                'value':[10,20,30,40]
+                })
+df
+
+group = df.groupby('group1')
+group.agg([len,sum])
+
+df = pd.DataFrame({'labels':["a","a","b","b"],
+                'value':[10,20,30,40]
+                })
+df
+
+group = df.groupby('labels')['value']
+df['value.sum'] = group.transform('sum')
+df
+
+df = pd.DataFrame({'col1':[pd.Timestamp('20130102000030'),
+                         pd.Timestamp('2013-02-03 00:00:30'),
+                         pd.Timestamp('3/4/2013 000030')]
+                 })
+df
+
+df['MonthNumber'] = df['col1'].apply(lambda x: x.month)
+df['Day'] = df['col1'].apply(lambda x: x.day)
+df['Year'] = df['col1'].apply(lambda x: x.year)
+df['MonthName'] = df['col1'].apply(lambda x: x.strftime('%B'))
+df['WeekDay'] = df['col1'].apply(lambda x: x.strftime('%A'))
+df
+
+df = pd.DataFrame({'col1':['minus','minus','positive','nan'],
+                'col2':[10,20,30,40]
+                })
+df
+
+df['col3'] = df['col2']*df['col1'].apply(lambda x: -1 if x=='minus' else (1 if x=='positive' else np.nan))
+df
+
+df = pd.DataFrame({'group1':['a','a','a','b','b','b'],
+                       'group2':['c','c','d','d','d','e'],
+                       'value1':[1.1,2,3,4,5,6],
+                       'value2':[7.1,8,9,10,11,12]
+})
+
+df
+
+group = df.groupby(['group1','group2'])
+
+def Half(x):
+    return x.sum()
+
+df['new'] = group['value1'].transform(Half)
+df
+
+# For multiple functions
+def HalfPlus(x):
+    return x.sum() + 1
+
+newcol = group['value1'].agg([Half,HalfPlus])
+newcol
+
+df.merge(newcol, left_on=['group1','group2'], right_index=True)
+
+df1 = pd.DataFrame(data=[26371, 1755, 2], index=[-9999, 240, 138.99], columns=['value'])
+df1
+
+df2 = pd.DataFrame(data=[26371, 1755, 6, 4], index=[-9999, 240, 113.03, 110], columns=['value'])
+df2
+
+# If you simply add them, you will get null values
+# were the index does not match
+df1 + df2
+
+# Here we fix this issue
+df1.add(df2, fill_value=0)

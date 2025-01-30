@@ -1,0 +1,100 @@
+import azureml.dataprep as dprep
+
+dflow = dprep.auto_read_file(path='./data/train.csv')
+dflow.head(5)
+
+dflow.get_profile()
+
+cabin_not_null_filter = dprep.f_not(dprep.col('Cabin').is_null())
+
+substr_exp = dprep.col('Cabin').substring(0, 1)
+out = dflow.filter(cabin_not_null_filter).add_column(
+    expression=substr_exp, new_column_name='CabinCode', prior_column='Cabin')
+out.head(5)
+
+from azureml.dataprep import MismatchAsOption
+
+out = dflow.to_bool(['Survived'], true_values=['yes'], false_values=['no'], mismatch_as=MismatchAsOption.ASFALSE)
+out.head(5)
+
+from azureml.dataprep import DecimalMark
+
+def transform(df, index):
+    df['Latitude'] = '53,346532'
+    df['Longitude'] = '-6,246138'
+    return df
+
+out = dflow.map_partition(fn=transform).to_number(['Latitude', 'Longitude'], decimal_point=DecimalMark.COMMA)
+out.head()
+
+def transform(df, index):
+    df['Date'] = '01.01.2020 11:11'
+    return df
+
+out = dflow.map_partition(fn=transform).to_datetime('Date', date_time_formats=['%d.%m.%Y %H:%M'])
+out.head(5)
+
+df = dflow.head(5)
+
+builder = dflow.builders.derive_column_by_example(source_columns=['Name'], new_column_name='Title')
+builder.add_example(source_data=df.iloc[0], example_value='Mr')
+builder.add_example(source_data=df.iloc[1], example_value='Mrs')
+builder.add_example(source_data=df.iloc[2], example_value='Miss')
+builder.add_example(source_data=df.iloc[3], example_value='Mrs')
+builder.preview(count=10)
+
+out = builder.to_dataflow()
+out.head(5)
+
+impute_embarked = dprep.ImputeColumnArguments(column_id='Embarked', custom_impute_value='S')
+
+from azureml.dataprep import StringMissingReplacementOption
+
+impute_cabin = dprep.ImputeColumnArguments(column_id='Cabin', impute_function=dprep.ReplaceValueFunction.MIN,
+  string_missing_option=StringMissingReplacementOption.NULLSANDEMPTY)
+
+impute_age = dprep.ImputeColumnArguments(column_id='Age', impute_function=dprep.ReplaceValueFunction.MEAN,
+  string_missing_option=StringMissingReplacementOption.NULLSANDEMPTY)
+
+impute_builder = dflow.builders.impute_missing_values(
+  impute_columns=[impute_embarked, impute_cabin, impute_age], group_by_columns=['Sex', 'Pclass'])
+impute_builder.learn()
+
+out = impute_builder.to_dataflow()
+out.head(5)
+
+out.get_profile()
+
+out = dflow.label_encode(source_column='Sex', new_column_name='Sex_Label').drop_columns(['Sex'])
+out.head(5)
+
+out = dflow.one_hot_encode(source_column='Embarked', prefix='Embarked_').drop_columns(['Embarked'])
+out.head(5)
+
+# requires version 0.5.3
+# https://github.com/microsoft/AMLDataPrepDocs/issues/61
+# out = dflow.fuzzy_group_column(source_column='Ticket', new_column_name='Ticket_Groups',
+#  similarity_threshold=0.75, similarity_score_column_name='similarity_score')
+# out.head(5)
+
+out = dflow.quantile_transform(source_column='Fare', new_column='Fare_Normal',
+  quantiles_count=5, output_distribution="Normal").drop_columns(['Fare'])
+out.head(5)
+
+out = dflow.min_max_scale(column='Parch', range_min=0, range_max=1)
+out.head(5)
+
+out = dflow.filter(dflow['PassengerId'] > dflow['Pclass'])
+out.head(5)
+
+out = dflow.filter(dprep.col('Fare') > 50)
+out.head(5)
+
+out = dflow.filter(dflow['Name'].starts_with('Cumings'))
+out.head(5)
+
+out = dflow.filter(dflow['Cabin'].ends_with('5'))
+out.head(5)
+
+out = dflow.filter(dprep.f_not(dprep.col('Survived').is_null()))
+out.head(5)

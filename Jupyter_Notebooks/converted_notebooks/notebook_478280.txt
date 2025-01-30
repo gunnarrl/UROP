@@ -1,0 +1,125 @@
+import os
+import pandas as pd
+import json
+from   sklearn.preprocessing import LabelEncoder
+import boto3
+from   sagemaker.s3 import S3Uploader, S3Downloader
+
+
+train_filename   = 'store47-2016-train.csv'
+test_filename    = 'store47-2016-test.csv'
+final_train_file = 'final_train.csv'
+final_test_file  = 'final_validate.csv'
+local_data_dir   = 'CD4ML-AWS-Serverless/data'
+local_tmp_dir    = 'CD4ML-AWS-Serverless/data/tmp'
+s3_prefix        = 'demandforecast'
+raw_filename     = 'store47-2016.csv'
+s3_raw_data_path = 'https://christoph-windheuser-public.s3.amazonaws.com'
+
+
+pd.set_option('display.max_columns', 500)     # Make sure we can see all of the columns
+pd.set_option('display.max_rows', 10)         # Keep the output on one page
+
+
+def write_df_to_s3(df, filename, s3_path):
+    if not os.path.exists(local_tmp_dir):
+        os.makedirs(local_tmp_dir)
+    df.to_csv('{}/{}'.format(local_tmp_dir, filename), index=False)
+    s3url = S3Uploader.upload('{}/{}'.format(local_tmp_dir, filename), s3_path)
+    os.remove('{}/{}'.format(local_tmp_dir, filename))
+    print(s3url)
+
+
+def write_dic_to_json_to_s3(dic, filename, s3_path):
+    if not os.path.exists(local_tmp_dir):
+        os.makedirs(local_tmp_dir)
+    
+    with open('{}/{}'.format(local_tmp_dir, filename), 'w') as fp:
+        json.dump(dic, fp)
+        
+    s3url = S3Uploader.upload('{}/{}'.format(local_tmp_dir, filename), s3_path)
+    os.remove('{}/{}'.format(local_tmp_dir, filename))
+    print(s3url)
+
+
+sess       = boto3.Session()
+account_id = sess.client('sts', region_name=sess.region_name).get_caller_identity()["Account"]
+bucket     = 'sagemaker-studio-{}-{}'.format(sess.region_name, account_id)
+
+try:
+    if sess.region_name == "us-east-1":
+        sess.client('s3').create_bucket(Bucket=bucket)
+    else:
+        sess.client('s3').create_bucket(Bucket=bucket, 
+                                        CreateBucketConfiguration={'LocationConstraint': sess.region_name})
+except Exception as e:
+    print("Looks like you already have a bucket of this name. That's good. Uploading the data files...")
+
+
+data = pd.read_csv('{}/{}'.format(s3_raw_data_path, raw_filename))
+
+
+data.head(10)
+
+# Split the data at the date 2017-08-02 (last 14 days of data set)
+data_train = data[data['date'] < '2017-08-02']
+data_test  = data[data['date'] >= '2017-08-02']
+
+
+write_df_to_s3(data_train, train_filename, 's3://{}/{}/{}'.format(bucket, s3_prefix,'train'))
+write_df_to_s3(data_test,  test_filename,  's3://{}/{}/{}'.format(bucket, s3_prefix,'test'))
+
+
+def join_tables(train, validate):
+    print("Joining tables for consistent encoding")
+    return train.append(validate).drop('date', axis=1)
+
+
+def encode_categorical_columns(df):
+    obj_df = df.select_dtypes(include=['object', 'bool']).copy().fillna('-1')
+    lb = LabelEncoder()
+    classes_dic = {}
+    
+    for col in obj_df.columns:
+        print (col)
+        df[col] = lb.fit_transform(obj_df[col])
+
+        if col == "family":    
+            classes = list(lb.classes_)
+            for index, c in enumerate(classes):
+                classes_dic[c] = index
+            write_dic_to_json_to_s3(classes_dic, 'family_encoder.json', 's3://{}/{}/{}'.format(bucket, s3_prefix,'train/final'))
+
+            # print (classes_dic)
+    
+    return df
+
+
+def encode(train, validate):
+    print("Encoding categorical variables")
+    train_ids = train.id
+    validate_ids = validate.id
+
+    joined  = join_tables(train, validate)
+
+    encoded = encode_categorical_columns(joined.fillna(-1))
+
+    print("Not predicting returns (changing negative unit sales to 0)")
+    encoded.loc[encoded.unit_sales < 0, 'unit_sales'] = 0
+
+    validate = encoded[encoded['id'].isin(validate_ids)]
+    train = encoded[encoded['id'].isin(train_ids)]
+    return train, validate
+
+
+train, validate = encode(data_train, data_test)
+train.head()
+
+
+%pwd
+
+validate.head()
+
+write_df_to_s3(train,    final_train_file, 's3://{}/{}/{}'.format(bucket, s3_prefix,'train/final'))
+write_df_to_s3(validate, final_test_file,  's3://{}/{}/{}'.format(bucket, s3_prefix,'test/final'))
+

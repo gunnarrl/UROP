@@ -1,0 +1,66 @@
+from IPython.display import display
+from IPython.display import (
+    display_png, display_html, display_latex,
+    display_javascript, display_svg
+)
+
+%load soln/mycircle.py
+
+c = MyCircle()
+
+display(c)
+
+display_html(c)
+
+display_latex(c)
+
+%matplotlib inline
+from matplotlib import pyplot as plt
+
+from IPython.core.pylabtools import print_figure
+
+def circle_to_png(circle):
+    """Render AnotherCircle to png data using matplotlib"""
+    fig, ax = plt.subplots()
+    patch = plt.Circle(circle.center,
+                       radius=circle.radius,
+                       fc=circle.color,
+                       )
+    ax.add_patch(patch)
+    plt.axis('scaled')
+    data = print_figure(fig, 'png')
+    # We MUST close the figure, otherwise IPython's display machinery
+    # will pick it up and send it as output, resulting in a double display
+    plt.close(fig)
+    return data
+
+%load soln/mycircle_png.py
+
+display_png(c)
+
+from PIL import Image
+from io import BytesIO
+import numpy as np
+
+def ndarray_to_png(x):
+    if len(x.shape) != 2: return
+    x = np.asarray(Image.fromarray(x).resize((500, 500)))
+    x = (x - x.min()) / (x.max() - x.min())
+    img = Image.fromarray((x*256).astype('uint8'))
+    img_buffer = BytesIO()
+    img.save(img_buffer, format='png')
+    return img_buffer.getvalue()
+
+%load soln/ndarray_png.py
+
+a = np.random.rand(100,100)
+
+a
+
+from IPython.display import display_pretty
+
+display_pretty(a)
+
+b = np.linspace(0,100.0, 100**2).reshape((100,100))
+
+b

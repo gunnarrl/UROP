@@ -1,0 +1,147 @@
+import numba 
+import numpy as np
+
+np.random.seed(0)
+
+m = 10
+sigma = np.random.permutation(m)
+print(sigma)
+
+rank = sigma.argsort()
+print(rank)
+
+print(rank.argsort())
+
+@numba.jit("i8[:, :](i8)", nopython=True)
+def canonical_map(m):
+    ind_map = np.full((m, m), m**2, dtype=np.int64)
+    ind = 0
+    for j in range(m):
+        for i in range(j):
+            ind_map[i, j] = ind
+            ind += 1
+    return ind_map
+
+
+def get_emb(scores, ind_map):
+    m = len(scores)
+    m_emb = (m*(m-1))//2
+    emb = np.empty(m_emb, dtype=np.float64)
+    if scores.dtype == np.int64:
+        fill_emb_i8(scores, emb, ind_map)
+    else:
+        fill_emb_f8(scores, emb, ind_map)
+    return emb
+
+
+@numba.jit("(i8[:], f8[:], i8[:, :])", nopython=True)
+def fill_emb_i8(scores, emb, ind_map):
+    m = len(ind_map)
+    for j in range(m):
+        for i in range(j):
+            emb[ind_map[i, j]] = scores[i] > scores[j]
+    emb *= 2
+    emb -= 1
+
+
+@numba.jit("(f8[:], f8[:], i8[:, :])", nopython=True)
+def fill_emb_f8(scores, emb, ind_map):
+    m = len(ind_map)
+    for j in range(m):
+        for i in range(j):
+            emb[ind_map[i, j]] = scores[i] > scores[j]
+    emb *= 2
+    emb -= 1
+
+
+def get_emb_from_rank(rank, ind_map):
+    m = len(ind_map)
+    m_emb = (m*(m-1)) // 2
+    emb = np.zeros(m_emb, dtype=np.float64)
+    fill_emb_from_rank(rank, emb, ind_map)
+    return emb
+
+
+@numba.jit("(i8[:], f8[:], i8[:, :])", nopython=True)
+def fill_emb_from_rank(rank, emb, ind_map):
+    for i_, i in enumerate(rank):
+        for j in rank[i_+1:]:
+            if i < j:
+                ind = ind_map[i, j]
+                emb[ind] = -1
+            if j < i:
+                ind = ind_map[j, i]
+                emb[ind] = 1
+
+
+def get_sym_emb(emb, ind_map):
+    m = len(ind_map)
+    sym_emb = np.zeros((m, m), dtype=np.float64)
+    fill_sym_emb(emb, sym_emb, ind_map)
+    return sym_emb
+
+
+@numba.jit("(f8[:], f8[:, :], i8[:, :])", nopython=True)
+def fill_sym_emb(emb, sym_emb, ind_map):
+    m = len(ind_map)
+    for j in range(m):
+        sym_emb[j, j] = 0
+        for i in range(j):
+            ind = ind_map[i, j]
+            sym_emb[i, j] = emb[ind]
+            sym_emb[j, i] = -emb[ind]
+
+ind_map = canonical_map(m)
+emb = get_emb(sigma, ind_map)
+print(np.abs(get_emb_from_rank(rank, ind_map) - emb).max())
+
+sym_emb = get_sym_emb(emb, ind_map)
+new_scores = sym_emb.sum(axis=1)
+print(new_scores.argsort().argsort())
+
+new_emb = get_emb(new_scores, ind_map)
+print(np.abs(new_emb - emb).max())
+
+class BasicFasSolver:
+    def __init__(self, ind_map):
+        self.ind_map = ind_map
+        
+        # Placeholders
+        m = len(ind_map)
+        self.sym_pl = np.empty((m, m), dtype=np.float)
+        self.score_pl = np.empty(m, dtype=np.float)
+    
+    def solve(self, c):
+        """
+        Solve inf_y <phi(y), c>.
+        """
+        emb = np.empty(c.shape, dtype=np.float)
+        self.solve_out(c, emb)
+        return emb
+    
+    def solve_out(self, c, out):
+        fill_sym_emb(c, self.sym_pl, self.ind_map)
+        np.sum(self.sym_pl, axis=1, out=self.score_pl) 
+        self.score_pl *= -1
+        fill_emb_f8(self.score_pl, out, self.ind_map)
+
+solver = BasicFasSolver(ind_map)
+
+print(np.abs(solver.solve(emb) + emb).max())
+
+def get_sym_emb(emb, ind_map):
+    m = len(ind_map)
+    sym_emb = np.zeros((m, m), dtype=np.float64)
+    fill_sym_emb(emb, sym_emb, ind_map)
+    return sym_emb
+
+
+@numba.jit("(f8[:], f8[:, :], i8[:, :])", nopython=True)
+def fill_sym_emb(emb, sym_emb, ind_map):
+    m = len(ind_map)
+    for j in range(m):
+        sym_emb[j, j] = 0
+        for i in range(j):
+            ind = ind_map[i, j]
+            sym_emb[i, j] = emb[ind]
+            sym_emb[j, i] = -emb[ind]

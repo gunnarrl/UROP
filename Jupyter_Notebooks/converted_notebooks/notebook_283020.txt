@@ -1,0 +1,139 @@
+%matplotlib inline
+import numpy as np
+import scipy.stats as stats
+import matplotlib.pyplot as plt
+
+plt.style.use('fivethirtyeight')
+
+plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['font.serif'] = 'Ubuntu'
+plt.rcParams['font.monospace'] = 'Ubuntu Mono'
+plt.rcParams['font.size'] = 10
+plt.rcParams['axes.labelsize'] = 10
+plt.rcParams['axes.labelweight'] = 'bold'
+plt.rcParams['axes.titlesize'] = 10
+plt.rcParams['xtick.labelsize'] = 8
+plt.rcParams['ytick.labelsize'] = 8
+plt.rcParams['legend.fontsize'] = 10
+plt.rcParams['figure.titlesize'] = 12
+plt.rcParams['image.cmap'] = 'jet'
+plt.rcParams['image.interpolation'] = 'none'
+plt.rcParams['figure.figsize'] = (16, 8)
+plt.rcParams['lines.linewidth'] = 2
+
+colors = ['#008fd5', '#fc4f30', '#e5ae38', '#6d904f', '#8b8b8b', '#810f7c', '#137e6d', '#be0119', '#3b638c', '#af6f09']
+
+theta_real = 0.36
+n_trials = 100000
+
+data = stats.bernoulli.rvs(theta_real, size=n_trials)
+
+data
+
+# dichiara la distribuzione prior
+dist = stats.beta
+# valori dei suoi parametri
+alpha = 100
+beta = 100
+hyper = [alpha, beta]
+
+# fissa l'insieme dei valori sui quali calcolare la distribuzione
+nv = 100000
+x = np.linspace(0, 1, nv)
+# calcola i valori di densità di probabilità per tutti i punti dell'insieme
+yp = dist.pdf(x,*hyper)
+
+fig, ax = plt.subplots(figsize=(16,6))
+ax=plt.subplot(1,1,1)
+ax.plot(x, yp, '-', c=colors[7], linewidth=0.9, alpha=1, label="prior")
+ax.fill_between(x, 0, yp, color=colors[7], alpha=0.6)
+# testo sull'asse x
+plt.xticks(fontsize=12)
+plt.yticks(fontsize=12)
+plt.tight_layout
+# titolo della figura
+plt.suptitle(r'Prior: $p(\theta)=Beta({0:3d}, {1:3d})$'.format(alpha, beta), fontsize=16)
+plt.show()
+
+n = 100
+
+# determina numero di esiti pari a 1
+ones = data[:n].sum()
+# modifica i parametri della distribuzione per tener conto degli esiti osservati
+params = [sum(t) for t in zip(hyper, [ones, n-ones])]
+# calcola elenco dei valori per la distribuzione a posteriori con i parametri calcolati
+post = dist.pdf(x, *params)
+# calcola il valore sulla griglia per cui la distribuzione a posteriori è massima
+mp = x[np.argmax(post)]
+# calcola elenco dei valori per la verosimiglianza con la probabilità considerata
+lik = [p**ones*(1-p)**(n-ones) for p in x]
+# calcola il valore sulla griglia per cui la verosimiglianza è massima
+ml = x[np.argmax(lik)]
+# calcola il valore dell'evidenza
+ev = np.sum(list(map(lambda x,y:x*y/float(nv), lik, yp)))
+
+def plot_dist(color):
+    fig, ax = plt.subplots(figsize=(16,10))
+    ax=plt.subplot(2,1,1)
+    ax.plot(x, lik, '-', c=color, linewidth=0.9, alpha=0.8)
+    # riempie la zona compresa tra la curva e l'asse x
+    ax.fill_between(x, 0, lik, color=color, alpha=0.3)
+    # testo sull'asse x
+    plt.xlabel(r"$\theta$",fontsize=14)
+    plt.xticks(fontsize=12)
+    plt.yticks(fontsize=12)
+    plt.title('Likelihood; ML={0:8.5f}'.format(ml), fontsize=14)
+    ax=plt.subplot(2,1,2)
+    # effettua il plot a partire dalla sequenza di ascisse in x e di ordinate calcolate e salvate 
+    # nell'elemento attuale di ys
+    ax.plot(x, post, '-', c=color, linewidth=0.9, alpha=1)
+    # riempie la zona compresa tra la curva e l'asse x
+    ax.fill_between(x, 0, post, color=color, alpha=0.6)
+    # effettua il plot del prior a partire dalla sequenza di ascisse in x e di ordinate calcolate e salvate in yp
+    ax.plot(x, yp, '-', c=colors[7], linewidth=0.9, alpha=1, label="prior")
+     # riempie la zona compresa tra la curva e l'asse x
+    ax.fill_between(x, 0, yp, color=colors[7], alpha=0.6)
+    plt.annotate(r'Evidence; $p(X)={0:10.3e}$'.format(ev), xy=(.05, .85), va='top', xycoords='axes fraction', 
+                 fontsize=14)
+    # testo sull'asse x
+    plt.xlabel(r'$\theta$', fontsize=14)
+    plt.xticks(fontsize=12)
+    plt.yticks(fontsize=12)
+    plt.title(r'Posterior; $p(\theta|X)=Beta({0:3d}, {1:3d})\qquad$ MAP={2:8.5f}'.format(params[0],params[1],mp), fontsize=14)
+    #plt.tight_layout
+    # titolo della figura
+    plt.suptitle(r'$\theta={0:3.2f}\qquad n={1:3d}\qquad\#1={2:3d}\quad \#0={3:3d}$'.format(theta_real, 
+                                                    n, ones, n-ones), fontsize=16)
+    plt.show()
+
+plot_dist(colors[6])
+
+import pymc3 as pm
+import seaborn as sns
+
+with pm.Model() as model:
+    # a priori
+    theta = pm.Beta('theta', alpha=1, beta=1)
+    # likelihood
+    y = pm.Bernoulli('y', p=theta, observed=data)
+    trace = pm.sample(20000)
+
+theta_data = data.sum()/len(data)
+
+fig = plt.figure(figsize=(12,4))
+sns.distplot(trace['theta'])
+plt.title(r'$p(\theta)$', fontsize=16)
+plt.show()
+
+pm.traceplot(trace, lines={'theta':theta_data})
+
+with model:
+    multi_trace = pm.sample(1000, chains=2)
+
+pm.traceplot(multi_trace, lines={'theta':theta_data})
+
+pm.summary(multi_trace)
+
+pm.autocorrplot(multi_trace)
+
+pm.plot_posterior(multi_trace, kde_plot=True)

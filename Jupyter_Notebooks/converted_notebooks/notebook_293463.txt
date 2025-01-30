@@ -1,0 +1,256 @@
+# This Python 3 environment comes with many helpful analytics libraries installed
+# It is defined by the kaggle/python docker image: https://github.com/kaggle/docker-python
+# For example, here's several helpful packages to load in 
+import numpy as np # linear algebra
+import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
+import keras
+from keras.applications import VGG16
+from keras.models import Model
+from keras.layers import Dense, Dropout, Flatten, BatchNormalization
+from keras.regularizers import l2
+from keras.preprocessing.image import ImageDataGenerator
+
+from hyperopt import Trials, STATUS_OK, tpe
+from hyperas import optim
+from hyperas.distributions import choice, uniform
+
+import tensorflow as tf
+import random
+import os
+from tqdm import tqdm
+from sklearn import preprocessing
+from sklearn.model_selection import train_test_split
+import cv2
+# Input data files are available in the "../input/" directory.
+# For example, running this (by clicking run or pressing Shift+Enter) will list the files in the input directory
+
+from subprocess import check_output
+print(check_output(["ls", "../input"]).decode("utf8"))
+
+# Any results you write to the current directory are saved as output.
+
+##############
+# parameters #
+##############
+# dontFreezeLast = 0;
+
+# patience = 10;
+
+# gpuName = '/device:GPU:0'
+# workers = 2;
+# histogram_freq = 0;
+
+# epochs = 100;
+# validation_size=0.3;
+
+modelPath = '../models/VGG16_opt/';
+modelName = 'best_run.h5';
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
+
+if not os.path.exists(modelPath):
+    os.makedirs(modelPath)
+
+# df_train = pd.read_csv('../input/labels.csv')
+# df_test = pd.read_csv('../input/sample_submission.csv')
+
+# print('Training images: ',df_train.shape[0])
+# print('Test images: ',df_test.shape[0])
+
+# reduce dimensionality
+#df_train = df_train.head(100)
+#df_test = df_test.head(100)
+
+#df_train.head(10)
+
+# targets_series = pd.Series(df_train['breed'])
+# one_hot = pd.get_dummies(targets_series, sparse = True)
+
+# one_hot_labels = np.asarray(one_hot)
+
+# im_size = 90
+
+# x_train = []
+# y_train = []
+# x_test = []
+
+# i = 0 
+# for f, breed in tqdm(df_train.values[:10]):
+#     img = cv2.imread('../input/train/{}.jpg'.format(f))
+#     label = one_hot_labels[i]
+#     x_train.append(cv2.resize(img, (im_size, im_size)))
+#     y_train.append(label)
+#     i += 1
+
+# for f in tqdm(df_test['id'].values):
+#     img = cv2.imread('../input/test/{}.jpg'.format(f))
+#     x_test.append(cv2.resize(img, (im_size, im_size)))
+
+# y_train_raw = np.array(y_train, np.uint8)
+# x_train_raw = np.array(x_train, np.float32) / 255.
+# x_test  = np.array(x_test, np.float32) / 255.
+
+# print(x_train_raw.shape)
+# print(y_train_raw.shape)
+# print(x_test.shape)
+
+# num_class = y_train_raw.shape[1]
+# print('Number of classes: ', num_class)
+
+# X_train, X_valid, Y_train, Y_valid = train_test_split(x_train_raw, y_train_raw, test_size=validation_size, random_state=1)
+
+def data():
+    print('Getting data')
+    df_train = pd.read_csv('../input/labels.csv')
+    df_test = pd.read_csv('../input/sample_submission.csv')
+    
+    targets_series = pd.Series(df_train['breed'])
+    one_hot = pd.get_dummies(targets_series, sparse = True)
+    one_hot_labels = np.asarray(one_hot)
+    
+    im_size = 90;
+    x_train = []
+    y_train = []
+    x_test = []
+    
+    i = 0 
+    for f, breed in tqdm(df_train.values):
+        img = cv2.imread('../input/train/{}.jpg'.format(f))
+        label = one_hot_labels[i]
+        x_train.append(cv2.resize(img, (im_size, im_size)))
+        y_train.append(label)
+        i += 1
+    
+    y_train_raw = np.array(y_train, np.uint8)
+    x_train_raw = np.array(x_train, np.float32) / 255.
+    num_class = y_train_raw.shape[1]
+    
+    print('Splitting into training/validation')
+    X_train, X_valid, Y_train, Y_valid = train_test_split(x_train_raw, y_train_raw, test_size=0.3, random_state=1)
+    
+    return X_train, Y_train, X_valid, Y_valid
+
+# prepare data and model for hyperas
+
+def model(X_train,Y_train,X_valid,Y_valid):
+    print('Creating model')
+    base_model = VGG16(weights = 'imagenet',
+                       include_top=False,
+                       input_shape=(im_size, im_size, 3))
+
+    dropout=0.6;
+    dontFreeze = 3;
+    batchSize = 64;
+    momentum=0.99;
+    #
+    lambda_l2 = 0.022572752376655788;
+    bottleneckFlag = {{choice([False,False])}};
+    tensorboard_dir = '../tb/VGG16/best_run';
+    
+    print()
+    print('lambda_l2=',lambda_l2)
+    print('bottleneckFlag=',bottleneckFlag)
+    print()
+    
+    stepsPerEpoch = round( len(X_train)/batchSize );
+    
+    # Add a new top layer
+    x = base_model.output
+    x = BatchNormalization(axis=1,momentum=momentum)(x)
+    x = Flatten()(x)
+    x = Dropout(dropout)(x)
+    
+    x = Dense(2048,activation='relu',kernel_regularizer=l2(lambda_l2))(x)
+    if bottleneckFlag:
+        x = Dense(100,activation='relu')(x)
+    x = Dense(1024,activation='relu')(x)
+    x = Dense(512,activation='relu')(x)
+    # in any case:
+    predictions = Dense(num_class, activation='softmax')(x)
+
+    # This is the model we will train
+    model = Model(inputs=base_model.input, outputs=predictions)
+
+    # First: train only the top layers (which were randomly initialized)
+    for i in range(len(base_model.layers)-dontFreeze):
+        base_model.layers[i].trainable = False
+
+    # predetermined optimizer
+    lr=0.00020389590556056983;
+    beta_1=0.9453158868247398;
+    beta_2=0.9925872692991417;
+    decay=0.000821336141287018;
+    adam = keras.optimizers.Adam(lr=lr,beta_1=beta_1,beta_2=beta_2,decay=decay)
+    model.compile(loss='categorical_crossentropy', 
+                  optimizer=adam, 
+                  metrics=['accuracy'])
+
+    # callbacks
+    callbacks_list = [];
+    callbacks_list.append(keras.callbacks.EarlyStopping(
+        monitor='val_acc',
+        patience=10,
+        verbose=1));
+    callbacks_list.append(keras.callbacks.TensorBoard(
+            log_dir=tensorboard_dir,
+            histogram_freq=0,
+            write_graph=False,
+            write_images=False));
+    print('Tensorboard activated in directory: ',tensorboard_dir)
+
+
+    # data augmentation & fitting
+    datagen = ImageDataGenerator(
+        rotation_range=30,
+        width_shift_range=0.1,
+        height_shift_range=0.1,
+        shear_range=0.5,
+        zoom_range=0.5,
+        horizontal_flip=True,
+        vertical_flip=True);
+    
+    model.fit_generator(
+        datagen.flow(X_train,Y_train,batch_size=batchSize),
+        steps_per_epoch=stepsPerEpoch,
+        epochs=150,
+        verbose=1,
+        validation_data=(X_valid,Y_valid),
+        workers=2,
+        shuffle=True,
+        callbacks=callbacks_list)
+#     model.fit(X_train, Y_train,
+#       epochs=100,
+#       batch_size = batchSize,
+#       validation_data=(X_valid, Y_valid),
+#       verbose=1,
+#       callbacks=callbacks_list)
+
+    score, acc = model.evaluate(X_valid, Y_valid, verbose=0)
+    print('Test accuracy:', acc)
+    return {'loss': -acc, 'status': STATUS_OK, 'model': model}
+
+
+best_run, best_model = optim.minimize(model=model,
+                                          data=data,
+                                          algo=tpe.suggest,
+                                          max_evals=1,
+                                          trials=Trials(),
+                                          notebook_name='VGG16_best_run')
+
+best_model.save(modelPath+modelName);
+best_model.summary()
+
+X_train, Y_train, X_test, Y_test = data()
+val_loss, val_acc = best_model.evaluate(X_test, Y_test);
+print("Evalutation of best performing model:")
+print("Validation loss: ", val_loss)
+print("Validation accuracy: ", val_acc)
+
+# preds = model.predict(x_test, verbose=1)
+
+# sub = pd.DataFrame(preds)
+# # Set column names to those generated by the one-hot encoding earlier
+# col_names = one_hot.columns.values
+# sub.columns = col_names
+# # Insert the column id from the sample_submission at the start of the data frame
+# sub.insert(0, 'id', df_test['id'])
+# sub.head(10)

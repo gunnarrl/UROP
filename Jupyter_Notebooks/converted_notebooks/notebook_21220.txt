@@ -1,0 +1,75 @@
+import pandas as pd
+import boto3
+import botocore
+
+bucket = "sagemaker-chicago-data"
+key = "Crimes_-_2018.csv"
+
+s3 = boto3.resource('s3')
+s3.Bucket(bucket).download_file(key, "crimes_2018.csv")
+
+df = pd.read_csv("../Data/crimes_2018.csv", index_col = "ID")
+
+df.head()
+
+df.shape
+
+df["Primary Type"].value_counts()
+
+def print_row_headers(df):
+    for h in list(df):
+        print (h)
+print_row_headers(df)
+
+keep_list = ["Case Number", "Date", "Block", "Primary Type", "Description", "Location Description", "Arrest", "Year", "Location"]
+
+reduced_df = df[keep_list]
+
+for h in list(reduced_df):
+    print (h)
+    print (df[h].isna().sum())
+
+missing_location = df.loc[ df["Location Description"].isna() > 0 ]
+
+missing_location
+
+import numpy as np
+
+df = df[ (df["Location Description"]).isna() == False ]
+
+# If this returns a 0, then our row removal step was successful
+df["Location Description"].isna().sum()
+
+missing_geo = df.loc[ df["Location"].isna() > 0]
+
+missing_geo["Primary Type"].value_counts()
+
+missing_geo["Description"].value_counts()
+
+df["Description"].value_counts()
+
+df = df[ (df["Location"]).isna() == False ]
+
+# If this returns a 0, our removal was successful
+df["Location"].isna().sum()
+
+df.to_csv("../Data/crimes_2018_reduced.csv")
+
+def main(f_name):
+    
+    df = pd.read_csv(f_name, index_col = "ID")
+    
+    # keep a subset of columns
+    keep_list = ["Case Number", "Date", "Block", "Primary Type", "Description", "Location Description", "Arrest", "Year", "Location"]
+    reduced_df = df[keep_list]
+
+    # drop rows that are missing Location Description
+    df = df[ (df["Location Description"]).isna() == False ]
+    
+    # drop rows that are missing Location, geo coordinates
+    df = df[ (df["Location"]).isna() == False ]
+    
+    # write to disk
+    df.to_csv("../Data/crimes_2018_reduced.csv")
+
+main("../Data/crimes_2018.csv")   

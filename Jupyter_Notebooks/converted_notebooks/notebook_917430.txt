@@ -1,0 +1,222 @@
+%matplotlib inline
+import numpy as np
+from pymt.models import PRMSSurface
+from pathlib import Path
+import prms6bmi
+import geopandas as gpd
+import pandas as pd
+
+gdf = gpd.read_file('GIS/pipestem_hru_geographic.shp')
+gdf.head()
+
+
+run_dir = '../prms/pipestem'
+config_file = 'control.default'
+print(Path(run_dir).exists())
+print((Path(run_dir) / config_file).exists())
+
+m = PRMSSurface()
+print(m.name)
+m.name
+
+m.initialize(config_file, run_dir)
+m.var['nowtime'].data
+
+pd.set_option('mode.chained_assignment', None)
+gdf_ps = gdf[gdf['hru_id'].isin(m.var['nhm_id'].data)]
+print(type(m.var['nhm_id'].data))
+dindex = np.zeros(np.shape(gdf_ps.hru_id.values), dtype=np.int8)
+for index, val in np.ndenumerate(m.var['nhm_id'].data):
+    tind = np.int(np.where(gdf_ps['hru_id'].values == m.var['nhm_id'].data[index])[0])
+#     print(type(tind), tind)
+    dindex[tind] = np.array([index])
+print(dindex)
+# # gdf_ps['tindex'] = 0
+gdf_ps.loc[:,'tindex'] = dindex
+# # # gdf_ps.Index.sort_values()
+gdf_ps.sort_values(by=['tindex'], inplace=True)
+gdf_ps
+# # tmp = np.where(gdf_ps.hru_id.values == m.var['nhm_id'].data[0])
+# # print(tmp[0])
+
+gdf_ps.plot()
+
+import xarray as xr
+import datetime as dt
+import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+clim_file = Path('../prms/pipestem/daymet.nc')
+clim = xr.open_dataset(clim_file)
+ptime = m.var['nowtime'].data
+timesel = dt.datetime(ptime[0], ptime[1], ptime[2])
+start_date = timesel
+gdf_ps['tmax'] = clim.tmax.sel(time=timesel)
+gdf_ps['tmin'] = clim.tmin.sel(time=timesel)
+gdf_ps['prcp'] = clim.prcp.sel(time=timesel)
+fig, ax = plt.subplots(ncols=3)
+divider0 = make_axes_locatable(ax[0])
+divider1 = make_axes_locatable(ax[1])
+divider2 = make_axes_locatable(ax[2])
+cax0 = divider0.append_axes("right", size="5%", pad=0.1)
+cax1 = divider1.append_axes("right", size="5%", pad=0.1)
+cax2 = divider2.append_axes("right", size="5%", pad=0.1)
+h_tmax = gdf_ps.tmax.max()
+l_tmax = gdf_ps.tmax.min()
+h_tmin= gdf_ps.tmin.max()
+l_tmin= gdf_ps.tmin.min()
+h_tmax = gdf_ps.tmax.max()
+l_tmax = gdf_ps.tmax.min()
+h_ppt= gdf_ps.prcp.max()
+l_ppt= gdf_ps.prcp.min()
+
+gdf_ps.plot(column='tmax', ax=ax[0], vmin=l_tmax, vmax=h_tmax, legend=True, label='tmax', cax=cax0)
+gdf_ps.plot(column='tmin', ax=ax[1], vmin=l_tmin, vmax=l_tmin, legend=True, label='tmin', cax=cax1)
+gdf_ps.plot(column='prcp', ax=ax[2], vmin=l_ppt, vmax=l_ppt, legend=True, label='prcp', cax=cax2)
+for i in range(3):
+    ax[i].set_xticklabels([])
+    ax[i].set_yticklabels([])
+    if i == 0:
+        ax[i].set_title('tmax')
+    elif i == 1:
+        ax[i].set_title('tmin')
+    elif i == 2:
+        ax[i].set_title('prcp')
+plt.tight_layout()
+
+# Get time information from the model.
+print('Start time:', m.start_time)
+print('End time:', m.end_time)
+print('Current time:', m.time)
+print('Nowtime: ', m.var['nowtime'].data)
+
+m.update_until(372)
+print('Current time:', m.time)
+print('Nowtime: ', m.var['nowtime'].data)
+
+# Get variable info.
+var_name = 'pkwater_ante'   # vector
+# var_name = 'nhru'      # scalar
+# var_name = 'dday_slope'  # rectilinear
+print('Variable {}'.format(var_name))
+print(' - variable type:', m.var_type(var_name))
+print(' - units:', m.var_units(var_name))
+print(' - itemsize:', m.var_itemsize(var_name))
+print(' - nbytes:', m.var_nbytes(var_name))
+print(' - location:', m.var_location(var_name))
+type(m.get_value('pkwater_ante'))
+print(m.get_value('pkwater_ante'))
+
+
+def example_plot(j, timesel):
+    gdf_ps['tmax'] = clim.tmax.sel(time=timesel)
+    gdf_ps['tmin'] = clim.tmin.sel(time=timesel)
+    gdf_ps['prcp'] = clim.prcp.sel(time=timesel)
+
+    gdf_ps['newsnow'] = m.var['newsnow'].data
+    gdf_ps['snow_evap'] = m.var['snow_evap'].data
+    gdf_ps['soil_moist_tot'] = m.var['net_ppt'].data
+
+    fig, ax = plt.subplots(ncols=6, figsize = (12,2))
+    divider0 = make_axes_locatable(ax[0])
+    divider1 = make_axes_locatable(ax[1])
+    divider2 = make_axes_locatable(ax[2])
+    divider3 = make_axes_locatable(ax[3])
+    divider4 = make_axes_locatable(ax[4])
+    divider5 = make_axes_locatable(ax[5])
+    cax0 = divider0.append_axes("right", size="5%", pad=0.1)
+    cax1 = divider1.append_axes("right", size="5%", pad=0.1)
+    cax2 = divider2.append_axes("right", size="5%", pad=0.1)
+    cax3 = divider3.append_axes("right", size="5%", pad=0.1)
+    cax4 = divider4.append_axes("right", size="5%", pad=0.1)
+    cax5 = divider5.append_axes("right", size="5%", pad=0.1)
+    
+    gdf_ps.plot(column='tmax', vmin=-20,  vmax= 35, ax=ax[0], legend=True, cax=cax0)
+    gdf_ps.plot(column='tmin', vmin=-20,  vmax= 35, ax=ax[1], legend=True, cax=cax1)
+    gdf_ps.plot(column='prcp', vmin=0,  vmax= .1, ax=ax[2], legend=True, cax=cax2)
+    gdf_ps.plot(column='newsnow', vmin=0,  vmax= 2, ax=ax[3], legend=True, cax=cax3)
+    gdf_ps.plot(column='snow_evap', vmin=.0005,  vmax= .01, ax=ax[4], legend=True, cax=cax4)
+    gdf_ps.plot(column='net_ppt', vmin=0,  vmax= .1, ax=ax[5], legend=True, cax=cax5)
+    for i in range(6):
+        ax[i].set_xticklabels([])
+        ax[i].set_yticklabels([])
+        if j == 0:
+            if i == 0:
+                ax[i].set_title('tmax')
+            elif i == 1:
+                ax[i].set_title('tmin')
+            elif i == 2:
+                ax[i].set_title('prcp')
+            elif i == 3:
+                ax[i].set_title('newsnow')
+            elif i == 4:
+                ax[i].set_title('snow_evap')
+            elif i == 5:
+                ax[i].set_title('net_ppt')
+    plt.tight_layout()
+    
+for i in range(7):
+    m.update()
+    ptime = m.var['nowtime'].data
+    timesel = dt.datetime(ptime[0], ptime[1], ptime[2])
+    print(ptime, timesel)
+    example_plot(i, timesel)
+
+for i in range(int(m.time),int(m.end_time)):
+    m.update()
+    
+print('Update: current time:', m.time)
+
+ptime = m.var['nowtime'].data
+end_date = dt.datetime(ptime[0], ptime[1], ptime[2])
+print(end_date)
+
+import xarray as xr
+prms_file = Path('../prms/pipestem/output/summary_daily.nc')
+pfile = xr.open_dataset(prms_file)
+pfile
+
+t_hru = 13
+
+fig, ax = plt.subplots(ncols=2)
+prms6bmi.bmi_prms6_value_plot(pfile, t_hru, 'snow_evap', 'HRU_13', start_date, end_date, ax[0])
+prms6bmi.bmi_prms6_value_plot(pfile, t_hru, 'snowmelt', 'HRU_13', start_date, end_date, ax[1])
+
+plt.show()
+
+# List the model's exchange items.
+print('Number of input vars:', len(m.input_var_names))
+for var in m.input_var_names:
+    print(' - {}'.format(var))
+print('Number of output vars:', len(m.output_var_names))
+for var in m.output_var_names:
+    print(' - {}'.format(var))
+
+# Get variable info.
+var_name = 'hru_ppt'   # vector
+# var_name = 'nhru'      # scalar
+# var_name = 'dday_slope'  # rectilinear
+print('Variable {}'.format(var_name))
+print(' - variable type:', m.var_type(var_name))
+print(' - units:', m.var_units(var_name))
+print(' - itemsize:', m.var_itemsize(var_name))
+print(' - nbytes:', m.var_nbytes(var_name))
+print(' - location:', m.var_location(var_name))
+
+# Get grid info for variable.
+grid_id = m.var_grid(var_name)
+print(' - grid id:', grid_id)
+print(' - grid type:', m.grid_type(grid_id))
+print(' - rank:', m.grid_ndim(grid_id))
+
+if m.grid_type(grid_id) == 'rectilinear':
+    print(' - size:', m.grid_node_count(grid_id))
+    print(' - shape:', m.grid_shape(grid_id))
+
+print(' - x:', m.grid_x(grid_id))
+print(' - y:', m.grid_y(grid_id))
+print(' - z:', m.grid_z(grid_id))
+
+if m.grid_type(grid_id) != 'rectilinear':
+    print(' - node count:', m.grid_node_count(grid_id))
+    print(' - face count:', m.grid_face_count(grid_id))
+    print(' - edge count:', m.grid_edge_count(grid_id))

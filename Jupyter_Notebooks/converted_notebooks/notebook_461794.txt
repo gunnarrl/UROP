@@ -1,0 +1,314 @@
+import statsmodels.api as sm
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+sns.set()
+
+#tensorflow imports
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras.layers import (Input, Dense, Flatten, SimpleRNN, 
+                                     LSTM, GRU, GlobalMaxPool1D, Conv1D)
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.models import Model, Sequential
+from tensorflow.keras.callbacks import EarlyStopping
+
+from statsmodels.tools.eval_measures import rmse
+from sklearn.preprocessing import MinMaxScaler
+
+tf.__version__
+
+url = 'https://raw.githubusercontent.com/health-data-science-OR/data/master/em_admits_ts.csv'
+em_admits = pd.read_csv(url)
+date_str = em_admits['month_year'].str[:3] + ' 20' + em_admits['month_year'].str[-2:]
+date_str.name = 'date'
+em_admits = em_admits.set_index(pd.to_datetime(date_str))
+em_admits.index.freq = 'MS'
+em_admits = em_admits.drop(columns=['month_year'])
+admit_rate = em_admits['em_admits'] / em_admits.index.days_in_month
+
+
+def sliding_window(train, window_size=2, horizon=2):
+    '''
+    sliding window.
+    
+    Parameters:
+    --------
+    train: array-like
+        training data for time series method
+    
+    window_size: int, optional (default=2)
+        lookback - how much lagged data to include.
+        
+    horizon: int, optional (default=2)
+        number of observations ahead to predict
+            
+    Returns:
+        array-like, array-like
+    
+        preprocessed X, preprocessed Y
+    '''
+    tabular_X = []
+    tabular_y = []
+    
+    for i in range(0, len(train) - window_size - horizon):
+        X_train = train[i:window_size+i]
+        #we use list slicing to return a vector of training for y_train
+        y_train = train[i+window_size:i+window_size+horizon]
+        tabular_X.append(X_train)
+        tabular_y.append(y_train)
+    
+    return np.asarray(tabular_X), np.array(tabular_y)
+
+#preprocess time series training and test sets
+WINDOW_SIZE = 12
+HORIZON = 12
+TRAIN_LENGTH = 56
+
+scaler = MinMaxScaler(feature_range=(-1, 1))
+
+#I am scaling on admit_rate because this will include the first 12 lags 
+#not in y_train
+scaler.fit(admit_rate.iloc[:-12].to_numpy().reshape(-1, 1))
+admit_rate_adj = scaler.transform(admit_rate.to_numpy().reshape(-1, 1))
+
+#convert to supervised learning problem
+X_train, y_train = sliding_window(admit_rate_adj, 
+                                  window_size=WINDOW_SIZE,
+                                  horizon=HORIZON)
+
+#This is the key part we reshape to a 3D representation 
+#(n_time_steps, window_size, n_features)
+X_train = X_train.reshape(-1, WINDOW_SIZE, 1)
+
+#train-test split
+X_train, X_test = X_train[:TRAIN_LENGTH], X_train[TRAIN_LENGTH:]
+y_train, y_test = y_train[:TRAIN_LENGTH], y_train[TRAIN_LENGTH:]
+
+X_train.shape
+
+X_test.shape
+
+def get_simple_rnn(window_size, n_units=10, activation='tanh'):
+    '''
+    Build and compile a simple RNN in Keras
+    
+    Parameters:
+    -------
+    window_size: int, 
+        the number lags of the time series included in each training observation
+    
+    n_units: int, optional (default=100)
+        the number of units to include in the RNN.
+    
+    activation: str, optional (default='tanh')
+        the SimpleRNN activation function.
+    
+    Returns:
+    ------
+    A compiled Keras model.
+    '''
+    model = Sequential()
+    model.add(Input(shape=(window_size, 1)))
+    model.add(SimpleRNN(n_units, activation=activation))
+    model.add(Dense(window_size))
+    model.compile(optimizer=Adam(lr=0.01), loss='mse')
+    return model
+
+#set tensorflow random seed for repeatability
+tf.random.set_seed(42)
+
+N_EPOCHS = 100
+
+#It might be worth experimenting with early stopping by varying @patience
+es = EarlyStopping(monitor='val_loss', patience=20,
+                  restore_best_weights=True)
+
+#this will only work if you have coded get_simple_rnn correctly!
+model = get_simple_rnn(12, n_units=100, activation='tanh')
+
+#train the model silently (verbose=0)
+history = model.fit(x=X_train, 
+                    y=y_train, 
+                    epochs=N_EPOCHS,
+                    validation_data=(X_test, y_test),
+                    verbose=0,
+                    callbacks=[es], 
+                    batch_size=16)
+
+#plot the training and validation loss
+plt.plot(history.history['loss'], label='loss')
+plt.plot(history.history['val_loss'], label='val_loss')
+plt.legend()
+
+y_preds = model.predict(X_test[0].reshape(1, WINDOW_SIZE, -1))[0]
+y_preds
+
+#back transform the predictions
+scaler.inverse_transform(y_preds.reshape(-1, 1))
+
+#back transform the matching y_test vector
+scaler.inverse_transform(y_test[0].reshape(-1, 1))
+
+#plot the two predictions on the same chart
+plt.plot(scaler.inverse_transform(y_preds.reshape(-1, 1)), 
+         label='forecast')
+plt.plot(scaler.inverse_transform(y_test[0].reshape(-1, 1)), 
+         label='ground_truth')
+plt.legend()
+
+def vector_iterative_forecast(model, exog, h):
+    '''
+    h-step forecast for an autoregressive 
+    model using the iterative prediction method.
+    
+    Conduct h one-step forecasts gradually
+    replacing ground truth autoregressive X 
+    values with predictions.
+    
+    Parameters:
+    ------
+    model: forecast object
+        model that has a .predict(h) interface
+        
+    exog: array-like
+        initial vector of lagged values (X)
+    
+    h: int
+        forecast horizon. assumed to be > 0
+    
+    Returns:
+    ------
+    numpy.ndarray
+        y_predictions
+    '''
+    y_preds = []
+    current_X = exog
+    for i in range(h):
+        
+        #this is the key change we are resizing to 3D
+        y_pred = model.predict(current_X.reshape(1, WINDOW_SIZE, -1))[0]
+        y_preds.append(y_pred)
+        
+        #current_X = np.roll(current_X, shift=-h)
+        #current_X[-h] = y_pred.copy()
+        current_X = y_pred.copy()
+
+    return np.concatenate(np.array(y_preds))
+
+#code to help plotting
+
+def plot_nn_prediction_results(model, X_train, y_train, y_test, y_preds):  
+    
+    #create series
+    fitted_values = scaler.inverse_transform(model.predict(X_train))
+    ground_truth = scaler.inverse_transform(y_train)
+    ground_truth_val = scaler.inverse_transform(y_test)
+
+    padding = np.full(len(fitted_values), np.NAN)
+
+    validation = np.concatenate([padding.reshape(-1, 1), ground_truth_val])
+    forecast = np.concatenate([padding.reshape(-1, 1), y_preds])
+
+    plt.plot(ground_truth, label='ground truth')
+    plt.plot(validation, label='test')
+    plt.plot(fitted_values, label='in-sample', linestyle='-.')
+    plt.plot(forecast, label='out-of-sample', linestyle='-.')
+    plt.legend();
+
+#predict next 24 months and plot (2 vector lengths)
+H = 24
+VECTORS_AHEAD = H // WINDOW_SIZE
+
+y_preds = vector_iterative_forecast(model, X_test[0], h=VECTORS_AHEAD)
+y_preds = scaler.inverse_transform(y_preds.reshape(-1, 1))
+
+#plot_nn_prediction_results(model, X_train, y_train, y_test[0], y_preds)
+
+y_test_to_plot = []
+for i in range(VECTORS_AHEAD):
+    y_test_to_plot.append(y_test[WINDOW_SIZE*i])
+y_test_to_plot = np.concatenate(y_test_to_plot)
+
+y_test_to_plot = scaler.inverse_transform(y_test_to_plot.reshape(-1, 1))   
+plt.plot(y_test_to_plot, label='test')
+plt.plot(y_preds, label='forecast')
+plt.legend();
+
+rmse_rnn = rmse(scaler.inverse_transform(y_test[0].reshape(-1, 1)), y_preds.T[:H])[0]
+print(f'rmse RNN: {rmse_rnn:.2f}')
+
+# Exercise create an ensemble of SimpleRNNs
+
+#training will take a few minutes.  Put the kettle on.
+
+#set tensorflow random seed for repeatability
+tf.random.set_seed(1066)
+
+N_MODELS = 20
+N_EPOCHS = 100
+N_UNITS = 100
+H = 12
+VECTORS_AHEAD = H // WINDOW_SIZE
+
+es = EarlyStopping(monitor='loss', patience=10)
+BATCH_SIZE = 32
+
+models = []
+for n in range(N_MODELS):
+    #SimpleRNN model
+    model_n = model = get_simple_rnn(WINDOW_SIZE, 
+                                     n_units=N_UNITS, 
+                                     activation='tanh')
+
+    #fit model silently
+    history = model_n.fit(x=X_train, 
+                          y=y_train, 
+                          epochs=N_EPOCHS,
+                          verbose=0, 
+                          callbacks=[es], 
+                          batch_size=BATCH_SIZE)
+
+    #this will overwrite pre-trained models.
+    #model_n.save(f'output/mlp_ensemble_{n}.h5')
+    models.append(model_n)
+
+#this code will take a few seconds to execute
+H = 1
+e_preds = []
+for model in models:
+    y_preds = vector_iterative_forecast(model, X_test[0], h=H)
+    e_preds.append(y_preds)
+    
+e_preds = np.array(e_preds)
+
+e_preds = np.asarray(e_preds)
+e_preds_tran = scaler.inverse_transform(e_preds).T
+y_preds_mdn = np.percentile(e_preds_tran.T, 50, axis=0)
+y_preds_2_5 = np.percentile(e_preds_tran.T, 2.5, axis=0)
+y_preds_97_5 = np.percentile(e_preds_tran.T, 97.5, axis=0)
+y_preds_mdn.shape
+
+#plot the individual forecasts and the median
+
+fig,ax = plt.subplots(1, 2, sharey=True, figsize=(12, 4))
+ax[0].plot(e_preds_tran)
+ax[0].plot(scaler.inverse_transform(y_test[0]), label='test', linestyle='--', 
+         color='red')
+ax[0].plot(y_preds_mdn, label='median', linestyle='-', color='black')
+ax[0].legend()
+ax[0].set_title(f'Point forecasts: {N_MODELS} models')
+
+ax[1].plot(scaler.inverse_transform(y_test[0]), label='test', linestyle='--', 
+         color='red')
+ax[1].plot(y_preds_mdn, label='median', linestyle='-', color='black')
+ax[1].plot(y_preds_2_5, label='0.025 percentile', linestyle='-.', color='black')
+ax[1].plot(y_preds_97_5, label='0.975 percentile', linestyle='--', color='black')
+
+ax[1].set_title(f'Middle 95% of point forecasts ')
+ax[1].legend();
+
+rmse_rnn_mdn = rmse(scaler.inverse_transform(y_test[0].reshape(-1, 1)), y_preds_mdn)[0]
+
+print(f'rmse RNN: {rmse_rnn_mdn:.2f}')

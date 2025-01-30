@@ -1,0 +1,192 @@
+%run ../notebook_preamble.ipy
+
+#Need to put this in utils
+def make_dirs(name,dirs = ['raw','processed','interim']):
+    '''
+    Utility that creates directories to save the data
+    
+    '''
+    
+    for d in dirs:
+        if name not in os.listdir(f'../../data/{d}'):
+            os.mkdir(f'../../data/{d}/{name}')
+
+def create_local_industry_dataset(path,salary_lookup,cluster_name,year,save=False):
+    '''
+    This creates a long dataset with industry activity per NUTS area and extra variables with share of activity in top two deciles
+    of salary, and bottom two deciles of salary
+    
+    Arguments:
+        path (str) path to a tidy dataframe with the industrial activity information (could be employment or establishments)
+        salary_lookup (dict) a lookup between industry segments and position in the salary distribution
+        cluster_name (str) name of the cluster variable in the industry df
+    
+    '''
+    #Read the data
+    industry = pd.read_csv(path,dtype={'SIC4':str})
+    
+    #Label with salary info
+    industry['median_salary_decile'] = industry[cluster_name].map(ashe_lookup)
+    
+    #Create wide dataset with industry activity per geography
+    industry_long = industry.groupby(
+        ['geo_nm','geo_cd',cluster_name])['value'].sum().reset_index(drop=False).pivot_table(
+        index=['geo_nm','geo_cd'],columns=cluster_name,values='value')
+    
+    #Share of activity in top and bottom of salary distribution
+    salary_long = industry.groupby(
+        ['geo_nm','geo_cd','median_salary_decile'])['value'].sum().reset_index(drop=False).pivot_table(
+        index=['geo_nm','geo_cd'],columns='median_salary_decile',values='value')
+    
+    #Top of distro
+    high_salary = salary_long.apply(lambda x: x/x.sum(),axis=1)[[8,9]].sum(axis=1)
+    
+    #Bottom of distro
+    low_salary = salary_long.apply(lambda x: x/x.sum(),axis=1)[[0,1]].sum(axis=1)
+    
+    salary_stats = pd.concat([high_salary,low_salary],axis=1)
+    
+    #Names
+    salary_stats.columns = ['top_20_salary_share','bottom_20_salary_share']
+    
+    #Concatenate
+    combined = pd.concat([industry_long,salary_stats],axis=1)
+    
+    if save==True:
+        
+        #Take the informative bit of the name
+        name = '_'.join(path.split('_')[1:3])
+        
+        combined.to_csv(f'../../data/interim/industry/{today_str}_{name}_industry_salary.csv')
+        
+    
+    salary_stats['year']=year
+    return(salary_stats)
+    
+    #Return everything
+    
+    
+    #return(salary_long)
+    
+
+def extract_segment(path,sector_list,sector_variable,sector_name):
+    '''
+    This function takes official data from a path and returns a segment of interest.
+    We will use it to produce indicators about cultural activities in different NUTS2 regions.
+    
+    Arguments:
+        path (str) is the path we use
+        segment (list) is the list of codes we are interested in - could be segments or sectors
+        sector_variable (str) is the variable that we use to identify sectors. It could be 
+            the sic code or the Nesta segment.
+    
+    '''
+    
+    #Read data
+    all_sectors = pd.read_csv(path,dtype={'SIC4':str})
+    
+    #Activity in sector
+    sector = all_sectors.loc[[x in sector_list for x in all_sectors[sector_variable]]].reset_index(
+        drop=True)
+    
+    #Regroup and aggregate
+    sector_agg = sector.groupby(['geo_nm','geo_cd','year'])['value'].sum()
+    
+    #Add the name
+    sector_agg.name = sector_name
+    
+    #Create dataframe so we can add years
+    #sector_agg = pd.DataFrame(sector_agg)
+    
+    #And add years
+    #sector_agg['year'] = year
+    
+    return(pd.DataFrame(sector_agg))
+    
+    
+
+
+def make_indicator(table,target_path,var_lookup,year_var,nuts_var='nuts_code',nuts_spec=2018,decimals=3):
+    '''
+    We use this function to create and save indicators using our standardised format.
+    
+    Args:
+        table (df) is a df with relevant information
+        target_path (str) is the location of the directory where we want to save the data (includes interim and processed)
+        var_lookup (dict) is a lookup to rename the variable into our standardised name
+        year (str) is the name of the year variable
+        nuts_var (str) is the name of the NUTS code variable. We assume it is nuts_code
+        nuts_spec (y) is the value of the NUTS specification. We assume we are working with 2018 NUTS
+    
+    '''
+    #Copy
+    t = table.reset_index(drop=False)
+    
+    #Reset index (we assume that the index is the nuts code, var name and year - this might need to be changed)
+    
+    
+    #Process the interim data into an indicator
+    
+    #This is the variable name and code
+    var_name = list(var_lookup.keys())[0]
+    
+    var_code = list(var_lookup.values())[0]
+    
+    #Focus on those
+    t = t[[year_var,nuts_var,var_name]]
+    
+    #Add the nuts specification
+    t['nuts_year_spec'] = nuts_spec
+    
+    #Rename variables
+    t.rename(columns={var_name:var_code,year_var:'year',nuts_var:'region_id'},inplace=True)
+
+    #Round variables
+    t[var_code] = [np.round(x,decimals) if decimals>0 else int(x) for x in t[var_code]]
+    
+    
+    #Reorder variables
+    t = t[['year','region_id','nuts_year_spec',var_code]]
+    
+    print(t.head())
+    
+    #Save in the processed folder
+    t.to_csv(f'../../data/processed/{target_path}/{var_code}.csv',index=False)
+
+make_dirs('industry')
+
+#Cultural industries 
+
+cultural = ['services_cultural','services_recreation','services_entertainment']
+
+#Read ashe and turn it into a lookup
+ashe = pd.read_csv('../../data/interim/industry/2020_02_18_ashe_rankings.csv')
+
+ashe_lookup = ashe.set_index('cluster')['ashe_median_salary_rank'].to_dict()
+
+#bres
+bres_2018 = pd.read_csv('../../data/interim/industry/nomis_BRES_2018_TYPE450.csv',dtype={'SIC4':str},
+                       index_col=None)
+
+bres_2018['sal'] = bres_2018['cluster_name'].map(ashe_lookup)
+
+bres_2018
+
+bres_cult = pd.concat([extract_segment(
+    f'../../data/interim/industry/nomis_BRES_{y}_TYPE450.csv',cultural,'cluster_name',
+    'culture_entertainment_recreation') for y in [2016,2017,2018]])
+
+make_indicator(bres_cult,
+               'industry',
+               {'culture_entertainment_recreation':'employment_culture_entertainment_recreation'},year_var='year',
+              nuts_spec=2013,nuts_var='geo_cd',decimals=0)
+
+bres_nuts,idbr_nuts = [pd.concat([create_local_industry_dataset(
+    f'../../data/interim/industry/nomis_{data}_{y}_TYPE450.csv',ashe_lookup,'cluster_name',y) 
+                       for y in [2016,2017,2018]]) for data in ['BRES','IDBR']]
+
+compl= pd.read_csv('../../data/interim/industry/nomis_ECI.csv')
+
+#make_indicator(compl.loc[compl['source']=='BRES'],
+#               'industry',
+#               {'eci':'economic_complexity_index'},year_var='year',nuts_spec=2013,nuts_var='geo_cd')

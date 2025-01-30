@@ -1,0 +1,319 @@
+# Imports here
+%matplotlib inline
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+import torch
+from torch import nn
+from torch import optim
+from torchvision import datasets, transforms, models
+
+from collections import OrderedDict
+
+import json
+import time
+
+from PIL import Image
+
+data_dir = 'flowers'
+train_dir = data_dir + '/train'
+valid_dir = data_dir + '/valid'
+test_dir = data_dir + '/test'
+
+# Define transforms for the training, validation, and testing sets
+# Data augmentation for the training set
+train_transforms = transforms.Compose([transforms.RandomRotation(30),
+                                       transforms.RandomResizedCrop(224),
+                                       transforms.RandomHorizontalFlip(),
+                                       transforms.ToTensor(),
+                                       transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+# No data augmentation for validation or test datasets, just resizing and center+crop (+ of course same normalization)
+test_valid_transforms = transforms.Compose([transforms.Resize(256),
+                                      transforms.CenterCrop(224),
+                                      transforms.ToTensor(),
+                                      transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+
+# Load the datasets with ImageFolder
+train_data = datasets.ImageFolder(train_dir, transform=train_transforms)
+test_data = datasets.ImageFolder(test_dir, transform=test_valid_transforms)
+valid_data = datasets.ImageFolder(valid_dir, transform=test_valid_transforms)
+
+# Using the image datasets and the trainforms, define the dataloaders
+train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=64, shuffle=True)
+test_dataloader = torch.utils.data.DataLoader(test_data, batch_size=64, shuffle=True)
+valid_dataloader = torch.utils.data.DataLoader(valid_data, batch_size=64, shuffle=True)
+
+with open('cat_to_name.json', 'r') as f:
+    cat_to_name = json.load(f)
+
+# Use this cell to get a specific model and display its architecture (useful to get the input_features for the classifier)
+model = models.vgg16(pretrained=True)
+model
+
+def extend_pretrained_network(model, in_features):
+    """
+    Extend an existing and pretrained network by replacing its classifier only
+    Note that model parameters are frozen so there will not be backprop through them
+    """
+    for param in model.parameters():
+        param.requires_grad = False
+
+    # Build a new classifier that will replace the existing one in the pretrained model
+    # Take care of the size for input on this classifier, it might change depending on the chosen model
+    # Note: as seen in the course, we are going to use the log-softmax as output which is a log probability 
+    #       Using the log probability, computations are often faster and more accurate. To get the class probabilities
+    #       later, we will need to take the exponential (torch.exp) of the output
+    classifier = nn.Sequential(OrderedDict([
+                              ('fc1', nn.Linear(in_features, 500)),
+                              ('relu', nn.ReLU()),
+                              ('fc2', nn.Linear(500, 102)),
+                              ('output', nn.LogSoftmax(dim=1))
+                              ]))
+    # Change the model's classifier: careful ! depending on the network, the name of the classifier might change...
+    model.classifier = classifier
+
+    return model
+
+
+def build_model(model_name):
+    # Define a dict where key is a model name and value is the number of features the classifier takes as input
+    model_clf_inputs = {
+        'resnet50': 2048,
+        'densenet121': 1024,
+        'vgg16': 25088
+    }
+
+    # Hard-coded cases, goal is not to have something more beautiful
+    model = None
+    if model_name == 'resnet50':
+        model = models.resnet50(pretrained=True)
+    elif model_name == 'vgg16':
+        model = models.vgg16(pretrained=True)
+    elif model_name == 'densenet121':
+        model = models.densenet121(pretrained=True)
+
+    in_features = model_clf_inputs[model_name]
+    model = extend_pretrained_network(model, in_features)
+    
+    return model
+
+# Implement a function for the validation pass
+def get_metrics(device, model, dataloader, criterion=None):
+    '''
+    Validation function for the validation pass on the validation dataloader
+    '''
+    loss = 0
+    correct = 0
+    total = 0
+    model.eval()  # Make sure network is in eval mode for inference
+
+    # Turn off gradients for validation --> saves memory and computations
+    with torch.no_grad():
+        for images, labels in dataloader:
+            # Move input and label tensors to the right device
+            images, labels = images.to(device), labels.to(device)
+
+            output = model.forward(images)
+            if criterion:
+                loss += criterion(output, labels).item()
+
+            total += labels.size(0)  # = batch size
+
+            ps = torch.exp(output)  # Remember, the output is a log softmax ! So take the exp to get back the original
+
+            # ps has shape(batch_size, nb_classes) so we take the index for which the computed value is the max among all classes
+            # probabilities and we compare this to the ground truth which is labels.data
+            # it then gives us a tensor of boolean that we can sum over to get the number of correctly classified images
+            equality = (labels.data == ps.max(dim=1)[1])
+
+            # Sum the number of correctly classified images among the given dataset
+            correct += equality.type(torch.FloatTensor).sum().item()
+
+    accuracy = 100 * correct / total
+
+    model.train()  # Make sure training is back on
+
+    return loss, accuracy
+
+def train_model(device, model, start_epoch, total_epochs, trainloader, validationloader, criterion, optimizer):
+    model.to(device)
+    
+    print_every = 10
+    steps = 0
+    running_loss = 0
+    start = time.time()
+    
+    for e in range(start_epoch, total_epochs):
+        model.train()
+        for images, labels in iter(trainloader):
+
+            steps += 1
+            # Move input and label tensors to the right device
+            images, labels = images.to(device), labels.to(device)
+
+            optimizer.zero_grad()
+
+            # Forward and backward passes
+            output = model.forward(images)
+            loss = criterion(output, labels)
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item()
+
+            if steps % print_every == 0:
+                valid_loss, valid_accuracy = get_metrics(device, model, validationloader, criterion)
+
+                print("Epoch: {}/{}.. ".format(e + 1, total_epochs),
+                      "Training Loss: {:.3f}.. ".format(running_loss / print_every),
+                      "Validation Loss: {:.3f}.. ".format(valid_loss / len(validationloader)),
+                      "Validation Accuracy: {:.2f} %".format(valid_accuracy))
+
+                running_loss = 0
+    
+    end = time.time()
+    print('Training finished ! Time taken for whole training is {:.2f} seconds'.format(end - start))
+    return e
+
+# PARAMETERS
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu") # Enabling GPU if possible
+
+# Let's choose a model (cf. https://cv-tricks.com/cnn/understand-resnet-alexnet-vgg-inception/)
+model_name = 'vgg16' 
+learning_rate = 0.001
+total_epochs = 2
+
+# Build the model, the loss and the optimizer
+# Since the model's forward method returns the log-softmax, use the negative log loss as criterion
+model = build_model(model_name)
+criterion = nn.NLLLoss()
+optimizer = optim.Adam(model.classifier.parameters(), lr=learning_rate)
+
+start_epoch = 0
+epochs_done = train_model(device, model, start_epoch, total_epochs, train_dataloader, valid_dataloader, criterion, optimizer)
+
+# Validation phase on the test set
+_, accuracy = get_metrics(device, model, test_dataloader)
+print("Test dataset accuracy: {:.2f} %".format(accuracy))
+
+# Save the checkpoint
+def save_checkpoint(filename='checkpoint.pth'):    
+    torch.save(checkpoint, filename)
+
+# Save the mapping of classes to indices got from one of the image datasets
+model.class_to_idx = train_data.class_to_idx
+checkpoint = {
+    'nb_epochs_done': epochs_done + 1,
+    'learning_rate': learning_rate,
+    'model_name': model_name,
+    'state_dict': model.state_dict()
+
+}
+# save_checkpoint() # commented to avoid mistakes and override of the already saved model
+
+# Function that loads a checkpoint and rebuilds the model
+def load_checkpoint(filename):
+    # Based on this discussion (https://discuss.pytorch.org/t/problem-loading-model-trained-on-gpu/17745/3) I had to add
+    # map_location option to be able to load a model trained on GPU to then use it on CPU
+    checkpoint = torch.load(filename, map_location=lambda storage, loc: storage)
+    nb_epochs_done = checkpoint['nb_epochs_done']
+    model = build_model(checkpoint['model_name'])
+    
+    model.load_state_dict(checkpoint['state_dict'])
+    
+    return model, nb_epochs_done
+
+def process_image(image):
+    ''' Scales, crops, and normalizes a PIL image for a PyTorch model,
+        returns an Numpy array
+    '''
+    new_size = 224
+
+    im = Image.open(image)
+    # Resize but keeping aspect ratio
+    im.thumbnail((256, 256))
+
+    # Center crop to 224
+    width, height = im.size  # Get new dimensions
+    left = int(np.ceil((width - new_size) / 2))
+    right = width - int(np.floor((width - new_size) / 2))
+    top = int(np.ceil((height - new_size) / 2))
+    bottom = height - int(np.floor((height - new_size) / 2))
+    im = im.crop((left, top, right, bottom))
+
+    mean = np.array([0.485, 0.456, 0.406])
+    std = np.array([0.229, 0.224, 0.225])
+
+    # Scale the raw pixel intensities to the range [0, 1]
+    np_image = np.array(im, dtype="float") / 255.0
+    # Colors normalization
+    np_image = (np_image - mean) / std
+
+    return np_image.transpose((2, 0, 1))
+
+def imshow(image, ax=None, title=None):
+    """Imshow for Tensor."""
+    if ax is None:
+        fig, ax = plt.subplots()
+    
+    # PyTorch tensors assume the color channel is the first dimension
+    # but matplotlib assumes is the third dimension
+    image = image.numpy().transpose((1, 2, 0))
+    
+    # Undo preprocessing
+    mean = np.array([0.485, 0.456, 0.406])
+    std = np.array([0.229, 0.224, 0.225])
+    image = std * image + mean
+    
+    # Image needs to be clipped between 0 and 1 or it looks like noise when displayed
+    image = np.clip(image, 0, 1)
+    
+    ax.imshow(image)
+    
+    return ax
+
+def predict(image_path, model, topk=5):
+    ''' Predict the class (or classes) of an image using a trained deep learning model.
+    '''
+    input_img = process_image(image_path)
+    torch_input_img = torch.from_numpy(input_img).float()
+    torch_input_img.unsqueeze_(0) # Add a dimension at first position (will represent the batch size, here 1)
+    
+    model.eval()
+    # Turn off gradients for validation --> saves memory and computations
+    with torch.no_grad():
+        output = model.forward(torch_input_img)
+        probs, indices = output.topk(topk)
+        # Transform tensors to numpy arrays and take the first (and single) element
+        probs = np.exp(probs.numpy()[0]) # Do not forget to get back the exponential value as output is log-softmax !
+        indices = indices.numpy()[0]
+        # Revert the dict 'class to indice' to get 'indice to class'
+        idx_classes = {v: k for k, v in train_data.class_to_idx.items()}
+        classes = [v for k, v in idx_classes.items() if k in indices]
+    
+    return probs, classes
+
+# Load the trained & saved model
+model_loaded, nb_epochs_done = load_checkpoint('checkpoint.pth')
+
+# Check with one image and print probs + classes
+image_path = valid_dir + '/28/image_05267.jpg'
+probs, classes = predict(image_path, model_loaded)
+probs, classes
+
+classnames = [cat_to_name[i] for i in classes]
+print(classnames)
+
+# Display an image along with the top 5 classes
+most_probable_classname = cat_to_name[classes[0]]
+classnames = [cat_to_name[i] for i in classes]
+
+figure, axis = plt.subplots(2, 1, figsize=(15, 10))
+axis[0].set_title(most_probable_classname)
+axis[0].set_axis_off()
+axis[1].barh(np.arange(len(probs)), probs, tick_label=classnames)
+axis[1].set_aspect(0.1)
+axis[1].invert_yaxis()
+
+imshow(torch.from_numpy(process_image(image_path)), axis[0])

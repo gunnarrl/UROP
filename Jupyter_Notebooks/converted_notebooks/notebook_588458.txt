@@ -1,0 +1,126 @@
+%matplotlib inline
+
+from pprint import pprint
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import pymc3 as mc
+import spacepy.toolbox as tb
+import spacepy.plot as spp
+import tqdm
+from scipy import stats
+
+
+%matplotlib inline
+
+np.random.seed(8675309)
+d1 = np.random.poisson(10, size=10000)
+d2 = np.random.poisson(10, size=10000)
+
+
+with mc.Model() as model0:
+    mu0 = mc.Uniform('mu', 0, 1000)
+    det1 = mc.Poisson('d1', mu=mu0, observed=d1[0:10])
+    #     det2 = mc.Poisson('d2', mu=mu, observed=d2[0:10])
+    start = mc.find_MAP()
+    trace0 = mc.sample(10000, start=start)
+
+mc.summary(trace0)
+
+mc.traceplot(trace0, lines={'mu':10})
+
+with mc.Model() as model1:
+    mu = mc.Uniform('mu', 0, 1000)
+    det1 = mc.Poisson('d1', mu=mu, observed=d1[0:10])
+    det2 = mc.Poisson('d2', mu=mu, observed=d2[0:10])
+    start = mc.find_MAP()
+    trace = mc.sample(10000, start=start)
+
+mc.summary(trace)
+
+mc.traceplot(trace, lines={'mu':10})
+
+with mc.Model() as model1:
+    mu = mc.Uniform('mu', 0, 1000)
+    det1 = mc.Poisson('d1', mu=mu, observed=d1[0:10])
+    #     det2 = mc.Poisson('d2', mu=mu, observed=d2[0:100])
+    start = mc.find_MAP()
+    trace = mc.sample(10000, start=start)
+    
+    
+def from_posterior(param, samples):
+    smin, smax = np.min(samples), np.max(samples)
+    width = smax - smin
+    x = np.linspace(smin, smax, 100)
+    y = stats.gaussian_kde(samples)(x)
+    
+    # what was never sampled should have a small probability but not 0,
+    # so we'll extend the domain and use linear approximation of density on it
+    x = np.concatenate([[x[0] - 3 * width], x, [x[-1] + 3 * width]])
+    y = np.concatenate([[0], y, [0]])
+    return mc.Interpolated(param, x, y)
+    
+    
+with mc.Model() as model2:
+    mu2 = from_posterior('mu', trace['mu'])
+    det2 = mc.Poisson('d2', mu=mu2, observed=d2[0:10])
+    start = mc.find_MAP()
+    trace2 = mc.sample(10000, start=start)
+
+mc.summary(trace2)
+
+mc.traceplot(trace, lines={'mu':10})
+
+with mc.Model() as model0:
+    mu0 = mc.Uniform('mu', 0, 1000)
+    det1 = mc.Poisson('d1', mu=mu0, observed=d1[0:100])
+    #     det2 = mc.Poisson('d2', mu=mu, observed=d2[0:100])
+    start = mc.find_MAP()
+    trace0 = mc.sample(10000, start=start)
+
+mc.summary(trace0)
+
+mc.traceplot(trace0, lines={'mu':10})
+
+with mc.Model() as model1:
+    mu = mc.Uniform('mu', 0, 1000)
+    det1 = mc.Poisson('d1', mu=mu, observed=d1[0:100])
+    det2 = mc.Poisson('d2', mu=mu, observed=d2[0:100])
+    start = mc.find_MAP()
+    trace = mc.sample(10000, start=start)
+
+mc.summary(trace)
+
+mc.traceplot(trace, lines={'mu':10})
+
+with mc.Model() as model1:
+    mu = mc.Uniform('mu', 0, 1000)
+    det1 = mc.Poisson('d1', mu=mu, observed=d1[0:100])
+    #     det2 = mc.Poisson('d2', mu=mu, observed=d2[0:100])
+    start = mc.find_MAP()
+    trace = mc.sample(10000, start=start)
+    
+    
+def from_posterior(param, samples):
+    smin, smax = np.min(samples), np.max(samples)
+    width = smax - smin
+    x = np.linspace(smin, smax, 100)
+    y = stats.gaussian_kde(samples)(x)
+    
+    # what was never sampled should have a small probability but not 0,
+    # so we'll extend the domain and use linear approximation of density on it
+    x = np.concatenate([[x[0] - 3 * width], x, [x[-1] + 3 * width]])
+    y = np.concatenate([[0], y, [0]])
+    return mc.Interpolated(param, x, y)
+    
+    
+with mc.Model() as model2:
+    mu2 = from_posterior('mu', trace['mu'])
+    det2 = mc.Poisson('d2', mu=mu2, observed=d2[0:100])
+    start = mc.find_MAP()
+    trace2 = mc.sample(10000, start=start)
+
+mc.summary(trace2)
+
+mc.traceplot(trace, lines={'mu':10})

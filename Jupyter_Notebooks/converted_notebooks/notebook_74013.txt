@@ -1,0 +1,86 @@
+bucket_name = 'applied-ai-20180924150202'
+image_path = '../lfw'
+
+import os
+import sys
+sys.path.append('../') 
+
+import random
+import pandas
+import numpy as np
+from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
+%matplotlib inline
+import cv2
+
+from utils import show_side_by_side, load_image_as_array
+from aws_rekognition import train, test
+
+X = []
+y = []
+names = ['david_beckham', 'serena_williams']
+for name in names:
+    for image in os.listdir(os.path.join(image_path, name)):
+        filename = os.path.join(image_path, name, image) 
+        X.append(filename)
+        y.append(name)
+X = np.array(X)
+y = np.array(y)
+
+y
+
+# def show_side_by_side(images:list, cmap:str='gray', figsize:tuple=None, labels:list=[])->None:
+#     """Pass a list of images to display them side by side"""
+#     fig, axes = plt.subplots(ncols=len(images), nrows=1)
+    
+#     if figsize:
+#         fig.set_size_inches(*figsize)
+        
+#     for i, im in enumerate(images):
+#         axes[i].imshow(im, cmap=cmap)
+#         axes[i].set_xticks([])
+#         axes[i].set_yticks([])
+        
+#     if len(labels) > 0:
+#         for i, label in enumerate(labels):
+#             axes[i].set_title(label)
+    
+#     plt.tight_layout()
+    
+# def load_image_as_array(path:str)->np.ndarray:
+#     """Load image from disk into numpy array"""
+#     img = cv2.cvtColor(cv2.imread(path), cv2.COLOR_BGR2RGB)
+#     return img
+
+def get_samples(X, y, num_samples=5):
+    samples = [random.randint(0, len(X) - 1) for i in range(num_samples)]
+    images = [load_image_as_array(image) for image in (X[samples])]
+    labels = y[samples]
+    return images, labels
+
+images, labels = get_samples(X, y)
+show_side_by_side(images, figsize=(100,100), labels=labels) 
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+[d for d in zip(X_train, y_train)]
+
+[d for d in zip(X_test, y_test)]
+
+train(X_train, y_train, bucket_name)
+
+images, labels = get_samples(np.array(X_test), np.array(y_test))
+
+def show_image(image):
+    img = image.squeeze()
+    plt.axis("off")
+    plt.imshow(img, cmap='gray', interpolation='nearest')  # Manipulation to display image in the correct orientation!
+    plt.show() 
+
+for image, label in zip(X_test, y_test):
+    print('Testing image {}'.format(image))
+    img = load_image_as_array(image)
+    show_image(img) 
+    inferred = test(image)
+    print(inferred)
+    break

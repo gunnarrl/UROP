@@ -1,0 +1,49 @@
+#shortcut for list of consecutive integers
+
+#slices
+
+
+#List comprehension
+# create a list of squares for integers 0 to 9
+
+# create a list of tuples (x, x*x) for integers 0 to 9
+
+# create a list of tuples (x, x*x, x**3) for integers 0 to 9
+
+
+#for
+#sum integers from 1 to 100
+
+
+#while
+#sum integers from 1 to 100
+
+
+
+#concise way to sum integers from 1 to 100 using reduce
+
+import functools
+
+
+#use the sum function
+
+
+#preferred way to sum floating point (faster) using fsum
+
+
+#if
+
+
+#distribution of characters in a string
+s = "The quick brown fox jumps over the lazy dog."
+
+
+def factorial(n):
+    ...
+for n in range(0,5):
+    print(str(n) +"! =", factorial(n))
+
+def gcd(a, b):
+    ...
+
+print(gcd(144, 256))

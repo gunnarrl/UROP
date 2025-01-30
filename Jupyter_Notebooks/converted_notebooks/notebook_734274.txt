@@ -1,0 +1,364 @@
+%matplotlib inline
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns;sns.set_style("dark") # remove gridline
+
+palette = sns.color_palette()
+sns.palplot(palette)
+
+# calculating data
+dx = np.linspace(25, 400)
+dz = np.linspace(0.02, 0.6)
+A = 1
+B = 1000
+D = 2*A*dx[np.newaxis,:]+B*dz[:,np.newaxis]
+D = D/D.max()
+
+D.min(), D.max()
+
+# convenience plotting functions
+
+color1 = palette[3] # choose line color
+color2 = 'white'
+
+def add_scaling_line(ax, dx):
+    '''optimal scaling lines'''
+    ax.plot(dx, dx/1500, '--', color = color1, label='$\Delta x/\Delta z = 1500$')
+    ax.plot(dx, dx/1000, '--', color = color2, label='$\Delta x/\Delta z = 1000$')
+    
+def add_legend(ax, loc=1):
+    '''set legend box color
+    https://stackoverflow.com/questions/19863368/matplotlib-legend-background-color
+    '''
+    legend = ax.legend(loc=loc, fontsize=13, frameon=1)
+    frame = legend.get_frame()
+    frame.set_edgecolor('black')
+    frame.set_facecolor('w')
+    frame.set_alpha(0.5)
+    
+def add_constraint(ax, dx):
+
+    # dx^3*dx = P, computational resource constraint
+    dzz = 0.3e6/dx**3
+    for i, level in enumerate([1/32, 1/4, 2, 16]):
+        label = '$\Delta z \cdot \Delta x^3=const$' if i==0 else None
+        ax.plot(dx, level*dzz, c=color1, label=label)
+
+    # dx^2*dx = P, box number constaint
+    dzz = 0.15e4/dx**2
+    for i, level in enumerate([1/16, 1/4, 1, 4, 16]):
+        label = '$\Delta z \cdot \Delta x^2=const$' if i==0 else None
+        ax.plot(dx, level*dzz, c=color2, label=label)
+        
+
+fig, axes = plt.subplots(1, 2, figsize=[10, 5])
+
+titlesize = 15
+
+# == linear scale ==
+ax = axes[0]
+ax.set_title('Linear scale for $\Delta x$ and $\Delta z$', fontsize=titlesize)
+
+def add_contour(ax, dx, dz, D):
+    im = ax.contourf(dx, dz, D, 
+                 levels=np.linspace(0, D.max(), 21),
+                 cmap='viridis_r')
+    ax.set_xlim([dx.min(),dx.max()])
+    ax.set_ylim([dz.min(),dz.max()]) 
+    
+    # make label fonts larger
+    ax.xaxis.set_tick_params(labelsize=13)
+    ax.yaxis.set_tick_params(labelsize=13)
+    return im
+
+ax.set_xlabel('Horizontal resolution $\Delta x$, km', fontsize=15)
+ax.set_ylabel('Vertical resolution $\Delta z$, km', fontsize=15)
+
+im = add_contour(ax, dx, dz, D)
+add_constraint(ax, dx)
+add_scaling_line(ax, dx)
+
+add_legend(ax)
+
+# == log scale ==
+ax = axes[1]
+ax.set_title('Logarithmic scale for $\Delta x$ and $\Delta z$', fontsize=titlesize)
+
+add_contour(ax, dx, dz, D)
+
+ax.set_xlabel('Horizontal resolution $\Delta x$, km', fontsize=15)
+
+add_constraint(ax, dx)
+add_scaling_line(ax, dx)
+
+# switch to log scale
+ax.set_xscale('log');ax.set_yscale('log')
+
+# fix tick labels
+# https://stackoverflow.com/questions/21920233/matplotlib-log-scale-tick-label-number-formatting
+from matplotlib.ticker import ScalarFormatter
+for axis in [ax.xaxis, ax.yaxis]:
+    axis.set_major_formatter(ScalarFormatter())
+ax.set_yticks([0.04, 0.08, 0.15, 0.3 , 0.6])
+ax.set_xticks([50, 100, 200, 400])
+
+# == common colorbar ===
+cb = fig.colorbar(im, ax=axes.tolist(), shrink=0.6,
+                  orientation='horizontal',
+                  ticks=np.linspace(0, D.max(), 11))
+cb.set_label('Numerical diffusion $D$ (normalized)', fontsize=15)
+cb.ax.tick_params(labelsize=13)
+ 
+# === common title ===
+fig.suptitle('Trade-off space for minimizing numerical diffusion (from theory)', 
+             fontsize = titlesize+2, y = 1.00)
+
+fig.savefig('scaling_theory.png', dpi=300)
+
+
+fig, ax = plt.subplots(1, 1, figsize=[5, 5])
+
+titlesize = 15
+
+ax.set_title('Trade-off space for minimizing \n numerical diffusion (from theory)', 
+             fontsize=titlesize, y=1.02)
+
+def add_contour(ax, dx, dz, D):
+    im = ax.contourf(dx, dz, D, 
+                 levels=np.linspace(0, D.max(), 21),
+                 cmap='viridis_r')
+    ax.set_xlim([dx.min(),dx.max()])
+    ax.set_ylim([dz.min(),dz.max()]) 
+    
+    # make label fonts larger
+    ax.xaxis.set_tick_params(labelsize=13)
+    ax.yaxis.set_tick_params(labelsize=13)
+    return im
+
+ax.set_xlabel('Horizontal resolution $\Delta x$, km', fontsize=15)
+ax.set_ylabel('Vertical resolution $\Delta z$, km', fontsize=15)
+
+im = add_contour(ax, dx, dz, D)
+add_constraint(ax, dx)
+add_scaling_line(ax, dx)
+
+add_legend(ax)
+
+# == common colorbar ===
+cb = fig.colorbar(im, ax=ax, shrink=1.0,
+                  orientation='horizontal',
+                  ticks=np.linspace(0, D.max(), 11))
+cb.set_label('Numerical diffusion $D$ (normalized)', fontsize=15)
+cb.ax.tick_params(labelsize=13)
+
+# === "optimal" label ===
+ax.text(180, 0.25, 'optimal', color='white', fontsize=14)
+ax.text(235, 0.13, 'optimal', color=palette[3], fontsize=14)
+
+fig.savefig('scaling_theory.png', dpi=300)
+
+
+# Basic parameters
+
+Vres_list = [20,40,80,160]
+Hres_list = [48,96,192,384]
+
+dx_list = 200/np.array([1,2,4,8])
+dz_list = 0.6/np.array([1,2,4,8])
+dx_list
+
+Vlabels = ['L{0}'.format(r) for r in Vres_list]
+Hlabels = ['C{0}'.format(r) for r in Hres_list]
+Vlabels, Vlabels
+
+import FV3log
+maindir = "../small_output/outputlog/"
+ds = FV3log.extract_HsVs(maindir, ['plume01'], Hres_list, Vres_list)
+ds
+
+dr_VMR = ds['plume01'].isel(time=-1)
+dr_VMR.to_pandas()
+
+import xarray as xr
+maindir = "../small_output/"
+dr_En = xr.open_dataarray(maindir+'plume01_entropy_all.nc',decode_times=False)
+dr_En = dr_En.isel(time=-1)/dr_En.isel(time=0) # last day normalize by initial condition
+dr_En.to_pandas()
+
+# convenience plotting functions
+
+def log_switch(ax, is_ylabel = True):
+    '''switch to log scale'''
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+
+    # make label fonts larger
+    ax.xaxis.set_tick_params(labelsize=13)
+    ax.yaxis.set_tick_params(labelsize=13)
+    ax.set_xlabel('Horizontal resolution $\Delta x$, km', fontsize=15)
+    
+    # fix ticks
+    ax.minorticks_off()
+    
+    ax.set_xticks(dx_list)
+    ax.set_xticklabels(['200\n(C48)', 
+                        '100\n(C96)',
+                        '50\n(C192)',
+                        '25\n(C384)']) 
+    
+    if is_ylabel:
+        ax.set_yticks(dz_list)
+        ax.set_yticklabels(['0.6\n(L20)', 
+                            '0.3\n(L40)',
+                            '0.15\n(L80)',
+                            '0.075\n(L160)'])
+        ax.set_ylabel('Vertical resolution $\Delta z$, km', fontsize=15)
+    else:
+        ax.set_yticks([])
+        ax.set_yticklabels([]) 
+    
+def add_data(ax):
+    '''overlay data points'''
+    xxs, yys = np.meshgrid(dx_list,dz_list)
+    dot_color = (0.7686274509803922, 0.30588235294117649, 0.32156862745098042)
+    ax.scatter(xxs, yys, color=dot_color)
+    ax.set_xlim([24.5,205])
+    ax.set_ylim([0.6/8*0.96, 0.62])
+    #ax.set_ylim([0.6/16*0.96, 0.62]) # extrapolation
+
+fig, axes = plt.subplots(1, 2, figsize=[10, 5])
+
+# == max VMR plot ==
+ax = axes[0]
+
+log_switch(ax)
+    
+# make filled-contour plot
+im = ax.contourf(dx_list, dz_list, dr_VMR.values.T,
+                 levels = np.linspace(0, 0.7, 8),
+                 cmap='viridis')
+
+ax.set_title('maximum VMR', fontsize=16)
+
+cb = fig.colorbar(im, ax=ax, orientation='horizontal', pad=0.2)
+cb.set_label('maximum VMR, v/v', fontsize=15)
+cb.ax.tick_params(labelsize=13) 
+
+add_data(ax)
+add_constraint(ax, dx)
+add_scaling_line(ax, dx)
+
+add_legend(ax)
+
+# == entropy plot ==
+ax = axes[1]
+
+log_switch(ax, is_ylabel=False)
+
+dr_En = np.clip(dr_En,13,20) # fix tiny missing region
+im = ax.contourf(dx_list, dz_list, dr_En.values.T, cmap='viridis_r',
+                 levels = np.linspace(13, 20, 8))
+ax.set_title('entropy', fontsize=16)
+
+cb = fig.colorbar(im, ax=ax, orientation='horizontal', pad=0.2)
+cb.set_label('entropy', fontsize=15)
+cb.ax.tick_params(labelsize=13) 
+
+add_data(ax)
+add_constraint(ax, dx)
+add_scaling_line(ax, dx)
+
+fig.suptitle('Trade-off space for minimizing numerical diffusion (from simulation)', 
+             fontsize = titlesize+2, y = 1.00)
+
+#fig.tight_layout()
+fig.savefig('scaling_simulation.png', dpi=300)
+
+def tweak_label(ax, is_ylabel = True):
+
+    # make label fonts larger
+    ax.xaxis.set_tick_params(labelsize=13)
+    ax.yaxis.set_tick_params(labelsize=13)
+    ax.set_xlabel('Horizontal resolution $\Delta x$, km', fontsize=15)
+    
+    # fix ticks
+    ax.minorticks_off()
+    
+    if is_ylabel:
+        ax.set_ylabel('Vertical resolution $\Delta z$, km', fontsize=15)
+    else:
+        ax.set_yticks([])
+        ax.set_yticklabels([]) 
+
+def add_multi_scaling_line(ax, dx):
+    '''optimal scaling lines'''
+    # ratios = [700, 1000, 1500]
+    ratios = [400, 500, 700]
+    for i, ratio in enumerate(ratios):
+        if i==0:
+            label = '$\Delta x / \Delta z=const$'
+        else:
+            label = None
+        ax.plot(dx, dx/ratio, '--', color = 'yellow', label=label)
+        
+    # xloc = 175
+    # ylocs = [0.28, 0.2, 0.133]
+    xloc = 180
+    ylocs = [0.5, 0.4, 0.29]
+    for i, ratio in enumerate(ratios):
+        ax.text(xloc, ylocs[i], str(ratio), color='yellow', fontsize=14)
+
+fig, axes = plt.subplots(1, 2, figsize=[10, 5])
+
+# == max VMR plot ==
+ax = axes[0]
+    
+# make filled-contour plot
+im = ax.contourf(dx_list, dz_list, dr_VMR.values.T,
+                 levels = np.linspace(0, 0.7, 8),
+                 cmap='viridis')
+
+ax.set_title('Maximum mixing ratio', fontsize=16)
+
+cb = fig.colorbar(im, ax=ax, orientation='horizontal', pad=0.2)
+cb.set_label('mixing ratio, kg/kg', fontsize=15)
+cb.ax.tick_params(labelsize=13) 
+
+add_data(ax)
+add_constraint(ax, dx)
+add_multi_scaling_line(ax, dx)
+
+add_legend(ax, loc=2)
+
+tweak_label(ax)
+ax.set_xlim([25*0.9, 200*1.01])
+ax.set_ylim([0.6/8*0.90, 0.60 * 1.01])
+
+# == entropy plot ==
+ax = axes[1]
+
+
+dr_En = np.clip(dr_En,13,20) # fix tiny missing region
+im = ax.contourf(dx_list, dz_list, dr_En.values.T, cmap='viridis_r',
+                 levels = np.linspace(13, 20, 8))
+ax.set_title('Entropy', fontsize=16)
+
+cb = fig.colorbar(im, ax=ax, orientation='horizontal', pad=0.2)
+cb.set_label('entropy', fontsize=15)
+cb.ax.tick_params(labelsize=13) 
+
+add_data(ax)
+add_constraint(ax, dx)
+add_multi_scaling_line(ax, dx)
+
+tweak_label(ax, is_ylabel = False)
+ax.set_xlim([25*0.9, 200*1.01])
+ax.set_ylim([0.6/8*0.90, 0.60 * 1.01])
+
+# == common title
+
+fig.suptitle('Trade-off space for minimizing numerical diffusion (from simulation)', 
+             fontsize = titlesize+2, y = 1.00)
+
+#fig.tight_layout()
+fig.savefig('scaling_simulation.png', dpi=300)

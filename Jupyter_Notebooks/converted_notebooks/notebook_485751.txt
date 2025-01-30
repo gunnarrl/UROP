@@ -1,0 +1,150 @@
+import os
+import numpy as np
+import numpy.ma as ma
+from glob import glob
+from time import strptime
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import pandas as pd
+
+from IPython.display import Image, display
+
+import scipy.io as sio
+import xarray as xr
+
+import matplotlib.dates as mdates
+
+filename_pattern  = '/home/voyager-sbarc/arc/reanalysis/erai/sfc/erai.sst.*'
+erai_files = glob(filename_pattern) # search files 
+erai_files.sort()
+
+for ifile, file, in enumerate(erai_files):
+    file_object = sio.readsav(file, python_dict=False,verbose=False)
+    lons = file_object['rlon']
+    lats = file_object['rlat']
+    values0 = file_object['erai_sst']-273.15 ## convert to celsius
+    
+    if ifile == 0:
+        values = values0
+    else:
+        values = ma.concatenate((values, values0))
+
+## create array of times - daily between Jan 1, 1979 and Dec 31, 2017
+times = pd.date_range('1979-01-01-00', '2017-12-31-18', freq='D', normalize=True)
+times
+
+## Read all data into single xarray dataset 
+## this makes it easier to index bounds and do climatology stuff
+ds = xr.Dataset({'sst': (['time', 'lat', 'lon'], values)},
+                coords={'time': times,
+                        'lat': (['lat'], lats),
+                        'lon': (['lon'], lons)})
+ds
+
+## Average area of NINO 3.4 region
+##  region 5°N-5°S, 120°- 170°W
+NINO34 = ds.sel(lat=slice(-5,5), lon=slice(360-170, 360-120))
+NINO34 = NINO34.mean(('lat', 'lon'))
+NINO34
+
+NINO34.sst.plot()
+plt.title('NINO 3.4 SST (*C)')
+
+climatology = NINO34.groupby('time.dayofyear').mean('time')
+climatology
+
+def calc_harmonics(tseries):
+    ''' calculates sum of first two harmonics to approximate annual cycle'''
+    mtot = tseries.size
+    a0 = tseries.mean().item() # calculate mean of series
+    t = np.arange(0, mtot, 1, dtype='float')
+
+    omegas = []
+    coef_a = []
+    coef_b = []
+    
+    # compute coefficients
+    for p in np.arange(1, 4):
+        omegas.append((2.*np.pi*np.float(p))/np.float(mtot))
+        coef_a.append((2./mtot)*(tseries*np.cos((2*np.pi*p*t)/mtot)).sum())
+        coef_b.append((2./mtot)*(tseries*np.sin((2*np.pi*p*t)/mtot)).sum())
+        
+    ## first harmonic
+    tsrecSC1 = a0 + coef_a[0].item()*np.cos(omegas[0]*t) + coef_b[0].item()*np.sin(omegas[0]*t)
+    ## second harmonic
+    tsrecSC2 = a0 + coef_a[1].item()*np.cos(omegas[1]*t) + coef_b[1].item()*np.sin(omegas[1]*t)
+    ## first plus second harmonic
+    tsrecSC = a0 + coef_a[0].item()*np.cos(omegas[0]*t) + coef_b[0].item()*np.sin(omegas[0]*t) + coef_a[1].item()*np.cos(omegas[1]*t) 
+    
+    return(tsrecSC1, tsrecSC2, tsrecSC)        
+
+tsrecSC1, tsrecSC2, tsrecSC = calc_harmonics(climatology.sst)
+
+plt.plot(np.arange(climatology.sst.size), climatology.sst, 'k', label='Climatological SST')
+plt.plot(np.arange(tsrecSC1.size), tsrecSC1, 'blue', label='1st Harmonic')
+plt.plot(np.arange(tsrecSC2.size), tsrecSC2, 'red', label='2nd Harmonic')
+plt.plot(np.arange(tsrecSC.size), tsrecSC, 'cyan', label='1st + 2nd Harmonics')
+plt.title('Harmonics')
+plt.ylabel('SST (*C)')
+plt.xlabel('Day of Year')
+plt.legend()
+plt.show()
+
+## place SST annual cycle in a dataset array to easily subtract from daily SST
+annual_cycle = xr.Dataset({'sst': (['dayofyear'], tsrecSC)},
+                coords={'dayofyear': np.arange(1,367,1)})
+annual_cycle
+
+## Calculate SST daily anomalies and plot
+SST_anomalies = NINO34.groupby('time.dayofyear') - annual_cycle
+SST_anomalies.sst.plot()
+
+da = SST_anomalies.sst
+yroll = da.rolling(time=30, center=True).mean()
+## Plot to Compare
+plt.plot(np.arange(SST_anomalies.sst.size), SST_anomalies.sst, 'b', label='SST Anomalies')
+plt.plot(np.arange(yroll.size), yroll, 'r', label='Rolling Window 30')
+plt.title('Raw Anomalies vs. 30 Rolling Window')
+plt.ylabel('SST (*C)')
+plt.legend()
+plt.show()
+
+da = SST_anomalies.sst
+yroll = da.rolling(time=150, center=True).mean()
+
+## Selecting the value every 5 months for plotting purposes
+times_list_150 =  pd.date_range('1979-01-01-00', '2017-12-31-18', freq='150D', normalize=True)
+
+# first_day_month_index = xr.cftime_range(start='1979', periods=468, freq='MS', calendar='standard')
+SST_anomalies_month_start = yroll.sel(time=times_list_150)
+SST_anomalies_month_start
+
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
+
+fig = plt.figure(figsize=(20,6))
+ax = fig.add_subplot(111)
+
+years = mdates.YearLocator()   # every year
+months = mdates.MonthLocator()  # every month
+yearsFmt = mdates.DateFormatter('%Y')
+
+ax.plot_date(SST_anomalies.time, yroll, 'r', label='Rolling Window 150')
+ax.plot_date(SST_anomalies_month_start.time, SST_anomalies_month_start, 'ro')
+ax.axhline(0.4, 0,1, color='k', linestyle='--')
+ax.axhline(0.0, 0,1, color='k')
+ax.axhline(-0.4, 0,1, color='k', linestyle='--')
+plt.ylabel('SST (*C)', fontsize=16)
+
+# format the ticks
+ax.xaxis.set_major_locator(years)
+ax.xaxis.set_major_formatter(yearsFmt)
+# ax.xaxis.set_minor_locator(months)
+ax.set_xlim('1979-01-01', '2017-12-31')
+ax.xaxis.grid(True)
+plt.title('NINO3.4 Anomalies', fontsize=16)
+plt.show()
+# ax.legend()
+# fig.savefig('./results/fig2.png', dpi = 300)

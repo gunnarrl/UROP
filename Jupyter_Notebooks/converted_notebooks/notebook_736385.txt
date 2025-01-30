@@ -1,0 +1,87 @@
+#Dataset is taken from kaggle thus is divided into 3 files.
+train=pd.read_csv(r'train.csv')
+test=pd.read_csv(r'test.csv')
+gender_submission=pd.read_csv(r'gender_submission.csv')
+
+# gender_submission file consist the output of testing dataset thus mergeing that data with out output data file.
+test.insert(1, "Survived", gender_submission['Survived'], True) 
+test.head()
+
+train.head()
+
+#Taking the columns which are needed for classification and ignoring the columns like PassengerID,Name,Ticket,Fare and Cabin 
+train=train[['Survived','Pclass','Sex','SibSp','Parch','Embarked']]
+test=test[['Survived','Pclass','Sex','SibSp','Parch','Embarked']]
+
+#Droping the Null value rows and performing one hot encoding
+train.dropna()
+train=pd.get_dummies(train)
+test=pd.get_dummies(test)
+
+train.head()
+
+test.head()
+
+y_train=train['Survived']
+train.drop(['Survived'], axis=1)
+
+y_test=test['Survived']
+test.drop(['Survived'], axis=1)
+
+print(len(y_train))
+print(len(y_test))
+
+def accuracy(y_pred,y_test):
+    from sklearn.metrics import accuracy_score,confusion_matrix, f1_score
+    import seaborn as sns
+    import matplotlib.pyplot as plt
+    print("accuracy score:",accuracy_score(y_test, y_pred))
+    print("confusion matrix:\n",confusion_matrix(y_test, y_pred))
+    print("f1 score:",f1_score(y_test, y_pred, average='macro'))
+    # using heatmat to plot accuracy
+    a=np.array(y_pred).reshape(-1,1)
+    b=np.array(y_test).reshape(-1,1)
+    df=pd.DataFrame(np.append(a,b,axis=1))
+    df.columns=["predicted_vals","true_vals"]
+    cor = df.corr()
+    sns.heatmap(cor)
+    #to use scatter plot uncomment the below given code
+    #plt.scatter(y_test,y_pred)
+    plt.show()
+
+from sklearn.ensemble import RandomForestClassifier
+model = RandomForestClassifier(n_estimators=100, bootstrap = True, max_features = 'sqrt')
+model.fit(train,y_train)
+y_pred_randF= model.predict(test)
+y_pred_randF=y_pred_randF.tolist()
+
+from sklearn.naive_bayes import GaussianNB
+gnb = GaussianNB()
+y_pred_naiveBayes = gnb.fit(train, y_train).predict(test)
+
+from sklearn import svm
+clf = svm.SVC()
+clf.fit(train, y_train)
+y_pred_SVM=clf.predict(test)
+
+from sklearn.linear_model import SGDClassifier
+clf = SGDClassifier(loss="hinge", penalty="l2", max_iter=5)
+clf.fit(train, y_train)
+SGDClassifier(max_iter=5)
+y_pred_SGD=clf.predict(test)
+
+from sklearn.neighbors import KNeighborsClassifier
+neigh = KNeighborsClassifier(n_neighbors=2)
+neigh.fit(train,y_train)
+y_pred_KNN=neigh.predict(test)
+
+print("Random Forest Accuracy")
+accuracy(y_pred_randF,y_test)
+print("\nNaive Bayes Accuracy")
+accuracy(y_pred_naiveBayes,y_test)
+print("\nSupport Vector Machine Accuracy")
+accuracy(y_pred_SVM,y_test)
+print("\nStochastic Gradient Decent Accuracy")
+accuracy(y_pred_SGD,y_test)
+print("\n KNN Accuracy")
+accuracy(y_pred_KNN,y_test)

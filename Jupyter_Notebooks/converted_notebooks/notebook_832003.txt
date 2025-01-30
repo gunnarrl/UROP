@@ -1,0 +1,41 @@
+import turicreate as tc
+
+image_data = tc.SFrame('image_train_data/')
+
+image_data['image'].explore()
+
+#deep_learning_model = turicreate.load_model('imagenet_model_iter45')
+#image_data['deep_features'] = deep_learning_model.extract_features(image_data)
+
+image_data.head(5)
+
+knn_model = tc.nearest_neighbors.create(image_data,
+                                        features = ['deep_features'],
+                                        label = 'id')
+
+cat = image_data[18:19]
+
+cat['image'].explore()
+
+knn_model.query(cat)
+
+def get_images_from_ids(query_result):
+    return image_data.filter_by(query_result['reference_label'],'id')
+
+cat_neighbors = get_images_from_ids(knn_model.query(cat))
+
+cat_neighbors['image'].explore()
+
+car = image_data[8:9]
+
+car['image'].explore()
+
+get_images_from_ids(knn_model.query(car))['image'].explore()
+
+show_neighbors = lambda i: get_images_from_ids(knn_model.query(image_data[i:i+1]))['image'].explore()
+
+show_neighbors(8)
+
+show_neighbors(26)
+
+show_neighbors(500)

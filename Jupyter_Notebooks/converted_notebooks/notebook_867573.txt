@@ -1,0 +1,121 @@
+import os
+import re
+import sys
+import math
+import numpy as np
+import pandas as pd
+from scipy.stats import describe
+
+# Visualization
+import matplotlib.pyplot as plt
+import matplotlib.cm as cmap
+%matplotlib inline
+
+from wordcloud import WordCloud
+import networkx as nx
+
+# Data files
+
+# article_id, article_url
+SRC_ARTICLES = '../data/guardian-100000/articles-100000.csv'
+
+# author_id, comment_author
+SRC_AUTHORS = '../data/guardian-100000/authors-100000.csv'
+
+# article_id, author_id, comment_id, comment_text, parent_comment_id, timestamp, upvotes
+SRC_COMMENTS = '../data/guardian-100000/sorted_comments-100000.csv'
+
+OUTPUT_DIR = './intro-plots'
+
+articles_df = pd.read_csv(SRC_ARTICLES)
+authors_df = pd.read_csv(SRC_AUTHORS)
+comments_df = pd.read_csv(SRC_COMMENTS)
+
+def adjacency_matrix(article_id):
+    # Collect data
+    article_comments = comments_df[comments_df['article_id'] == article_id]
+    edges = article_comments[['comment_id', 'parent_comment_id']]
+    text_lengths = list(article_comments['comment_text'].str.len())
+    having_parent_comment = list(article_comments['parent_comment_id'].str.isdigit() == True)
+    
+    # Transform edges into adjacency matrix
+    index_to_id_map = dict(enumerate(article_comments['comment_id']))
+    id_to_index_map = dict((y, x) for (x, y) in index_to_id_map.items())
+    
+    comment_amount = len(article_comments)
+    adj_matrix = np.zeros((comment_amount, comment_amount))
+    for index, (source, target) in edges.iterrows():
+        # If there is no parent comment don't create a graph connection
+        if not str(target).isdigit():
+            continue
+        # Do the same for invalid parent ids
+        if not target in id_to_index_map:
+            # e.g. there is not comment with id '14593723' at all.
+            continue
+        from_ = id_to_index_map[source]
+        to_ = id_to_index_map[target]
+        adj_matrix[from_, to_] = 1
+    return pd.DataFrame(adj_matrix), text_lengths, having_parent_comment
+
+def plot_relations_graph(article_id, adj_matrix, node_weights, nodes_is_start):
+    G = nx.from_pandas_adjacency(adj_matrix)
+    G.name = 'Comments relations'
+    pos=nx.spring_layout(G, scale=10)
+    
+    # Output stats and visualization
+    with open(os.path.join(OUTPUT_DIR, 'comment_relations_{}.stats'.format(article_id)), 'w') as f:
+        f.write(nx.info(G))
+        print(nx.info(G))
+        f.write('\nDescribe text length:\nObservations={}\nMin-Max={}\nMean={}\nVar={}\nSkewness={}\nKurtosis={}'.format(*describe(node_weights)))
+        print('\nDescribe text length:\nObservations={}\nMin-Max={}\nMean={}\nVar={}\nSkewness={}\nKurtosis={}'.format(*describe(node_weights)))
+    # Adjust node sizes determining on the comments text length
+    plt.figure(figsize=(12,12))
+    nx.draw(G, pos, node_size=[x**0.7 for x in node_weights], node_color=nodes_is_start)
+    plt.savefig(os.path.join(OUTPUT_DIR, 'comment_relations_{}.pdf'.format(article_id)))
+
+def analyse_relations(article_id):
+    adj_matrix, node_weights, nodes_is_start = adjacency_matrix(article_id)
+    plot_relations_graph(article_id, adj_matrix, node_weights, nodes_is_start)
+
+comments_by_articles = comments_df.groupby('article_id').describe()
+articles_comments = comments_by_articles['author_id', 'count']
+# top 5 most popular articles
+articles_comments.sort_values(0, ascending=False).head(5)
+
+comments_by_authors = comments_df.groupby('author_id').describe()
+authors_comments = comments_by_authors['article_id', 'count']
+# top 5 most active comment authors
+authors_comments.sort_values(0, ascending=False).head(5)
+
+short_comments = comments_df[comments_df['comment_text'].str.len() < 200]
+short_comments[short_comments['comment_text'].str.contains('Merkel')][['article_id', 'author_id', 'comment_text', 'upvotes']]
+
+wordcloud = WordCloud().generate(' '.join(comments_df['comment_text'].tail(1000)))
+plt.imshow(wordcloud)
+
+# Replace all characters not matching letters and numbers with a whitespace
+authors_name_parts = re.sub(r'[^a-zA-Z0-9]', ' ', ' '.join(authors_df['comment_author']))
+wordcloud = WordCloud().generate(authors_name_parts)
+plt.imshow(wordcloud)
+
+analyse_relations(1)
+
+analyse_relations(10)
+
+analyse_relations(100)
+
+analyse_relations(1001)
+
+analyse_relations(1110)
+
+# TODO:
+feature_names = ['text_length', 'full_responses', 'direct_responses', 'names_of_politicians', 'upvotes', 'authors_comments', 'popular_topics']  # popular_topic -> extract top words from its WordCloud
+comments_features = []
+
+# TODO: Visualize correlations
+
+# TODO: Most common phrase
+# TODO: Cut last year? Which is the biggest timespan between date of article and comment
+# TODO: Writing comments vs. responding to comments
+# TODO: Toxic words
+# TODO: Comments per authors .values() plot

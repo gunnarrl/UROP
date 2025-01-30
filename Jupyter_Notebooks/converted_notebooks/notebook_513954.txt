@@ -1,0 +1,95 @@
+import pandas as pd
+from clickhouse_driver import Client
+
+%matplotlib inline
+import matplotlib.pyplot as plt
+
+import matplotlib
+
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
+import numpy as np
+
+import eli5
+
+matplotlib.rcParams["figure.figsize"] = (15, 5)
+
+client = Client('localhost')
+
+gas_stats = client.execute("""
+    SELECT *
+    FROM (
+        SELECT toInt64(blockNumber / 1000) * 1000 AS block, quantile(0.5)(gasPrice) * 1e9, quantile(0.2)(gasPrice) * 1e9
+        FROM eth_internal_transaction
+        WHERE 
+            (block > 6500000)
+        AND
+            to NOT IN (SELECT address FROM eth_contract)
+        AND
+            value > 0
+        AND 
+            type = 'call'
+        AND 
+            id LIKE '%.0'
+        GROUP BY block
+    )
+    ANY INNER JOIN (
+        SELECT number AS block, timestamp
+        FROM eth_block
+    )
+    USING block
+""")
+
+gas_stats_df = pd.DataFrame(gas_stats, columns=["block", "gas", "minGas", "datetime"])
+
+gas_stats_df.sort_values("block").plot(x="datetime", y="gas", logy=True)
+
+gas_stats_df["dayofmonth"] = gas_stats_df["datetime"].dt.day
+gas_stats_df["dayofweek"] = gas_stats_df["datetime"].dt.dayofweek
+gas_stats_df["hour"] = gas_stats_df["datetime"].dt.hour
+gas_stats_df["minute"] = gas_stats_df["datetime"].dt.minute
+
+dataset = gas_stats_df.sort_values("block").set_index("datetime")
+
+columns_for_prediction = ["dayofmonth", "dayofweek", "hour", "minute", "block"]
+
+train_X = dataset[dataset["block"] <= 7000000][columns_for_prediction]
+train_y = dataset[dataset["block"] <= 7000000]["gas"]
+test_X = dataset[(dataset["block"] > 7000000) & (dataset["block"] < 7200000)][columns_for_prediction]
+test_y = dataset[(dataset["block"] > 7000000) & (dataset["block"] < 7200000)]["gas"]
+
+train_y.plot()
+
+test_y.plot()
+
+GWEI_THRESHOLD = 5
+low_price = gas_stats_df.set_index("block")["minGas"]
+
+def lmfao(estimator, X, y_true):
+    y_pred = estimator.predict(X)
+    high_fee = ((y_true - y_pred) > GWEI_THRESHOLD)
+    will_stuck = (y_pred < low_price.loc[X["block"]].tolist())
+    is_proper = ~(high_fee | will_stuck)
+    return is_proper.sum() / is_proper.shape[0]
+
+grid = {
+    'n_estimators': np.arange(100, 1000, 100)
+}
+model = RandomForestRegressor()
+split = TimeSeriesSplit(n_splits=10).split(train_X, train_y)
+search = GridSearchCV(model, grid, cv=split, scoring=lmfao, verbose=10)
+
+search.fit(train_X, train_y)
+
+eli5.explain_weights(search.best_estimator_, feature_names=train_X.columns.tolist())
+
+predicted_test_y = pd.DataFrame(search.predict(test_X), index=test_y.index)
+
+plt.plot(test_y, label="Median fee", color="green")
+plt.plot(predicted_test_y, label="Predicted fee", color="blue")
+plt.plot(test_y + GWEI_THRESHOLD, label="Too high fee", color="red")
+plt.plot(test_y.index, low_price.loc[test_X["block"]].tolist(), label="Too low fee", color="red")
+plt.ylim((-3, 20))
+plt.legend()
+
+lmfao(search, test_X, test_y)

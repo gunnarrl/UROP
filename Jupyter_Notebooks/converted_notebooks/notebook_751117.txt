@@ -1,0 +1,271 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from numpy.linalg import inv
+from mpl_toolkits.mplot3d import axes3d
+from matplotlib import cm
+
+def linear_function(w, x):
+    return np.dot(x, w)
+
+w = np.array([0.7, 0.3])[...,np.newaxis]
+print(w.shape)
+noise = 0.10
+n_points = 20
+np.random.seed(500)
+
+# we add an extra dimension to make it a column vector
+x_samples = np.linspace(3, 5, n_points)[..., np.newaxis]
+# then we add a column of ones in order to have the constant term a*x + b*1 = y
+augmented_x = np.concatenate([x_samples, np.ones(shape=(n_points,1))], axis=1)
+print("samples shape: "+str(augmented_x.shape))
+# adding gaussian noise to the data
+y_samples = linear_function(w, augmented_x) + np.random.normal(loc=0.0, scale=noise, size=(n_points,1))
+print("target shape: "+str(y_samples.shape))
+fig, ax = plt.subplots(figsize=(12,7))
+ax.plot(x_samples, linear_function(w, augmented_x), label="Real solution")
+ax.scatter(x_samples, y_samples, label="Samples", s=70)
+ax.legend(fontsize=14)
+ax.set_xlabel("x", fontsize=14)
+ax.set_ylabel("y", fontsize=14)
+plt.show()
+
+# Least square solution
+estimated_w = inv(augmented_x.T @ augmented_x) @ augmented_x.T @ y_samples
+# MSE
+error = np.linalg.norm(y_samples - linear_function(estimated_w, augmented_x))**2/len(y_samples)
+# eigenvectors and eigenvalues of the covariance matrix
+eg_values, eg_vectors = np.linalg.eig(augmented_x.T @ augmented_x)
+print("estimated w:" +str(estimated_w))
+print("mean squared error: "+str(error))
+print("eigenvalues: "+str(eg_values))
+print("eigenvectos: "+str(eg_vectors))
+
+# making error maningfold
+X_array = np.arange(-1, 2.5, 0.05)
+Y_array = np.arange(-1, 2.5, 0.05)
+X, Y = np.meshgrid(X_array, Y_array)
+Z = np.zeros(shape=(len(X_array), len(Y_array)))
+
+for i, x in enumerate(X_array):
+    for j, y in enumerate(Y_array):
+        w_loop = np.array([x, y])[..., np.newaxis]
+        Z[i, j] = np.linalg.norm(y_samples - linear_function(w_loop, augmented_x))**2/len(y_samples)
+
+fig, (ax, ax2) = plt.subplots(1, 2, figsize=(15,7))
+ax.plot(x_samples, linear_function(w, augmented_x), label="Real solution")
+ax.scatter(x_samples, y_samples, label="Samples", s=70)
+ax.plot(x_samples, linear_function(estimated_w, augmented_x), label="Estimated solution")
+ax.legend(fontsize=14)
+ax.set_xlabel("x", fontsize=14)
+ax.set_ylabel("y", fontsize=14)
+
+levels = np.linspace(0, np.amax(Z), 100)
+cont = ax2.contourf(X, Y, Z, levels = levels)#,cmap="inferno")
+soa = np.concatenate([np.roll(np.repeat(estimated_w.T, 2, axis=0), shift=1), eg_vectors], axis=1)*1.0
+X2, Y2, U, V = zip(*soa)
+ax2.quiver(X2, Y2, U, V, angles='xy', scale_units='xy', scale=1,
+           color="y", label="eigen vectors of covariance matrix")
+ax2.legend(fontsize=14)
+ax2.set_xlabel("MSE for each w", fontsize=14)
+plt.show()
+
+fig = plt.figure(figsize=(12, 7))
+ax2 = fig.add_subplot(1, 1, 1, projection='3d')
+surf = ax2.plot_surface(X, Y, Z, rstride=1, cstride=1, cmap=cm.coolwarm,
+                       linewidth=0, antialiased=False)
+ax2.set_ylabel("w[1]", fontsize=14)
+ax2.set_xlabel("x[0]", fontsize=14)
+plt.show()
+
+w = np.array([-2, 0.6, 0.7])[...,np.newaxis]
+noise = 1.2
+n_points = 20
+train_size = 10
+test_size = n_points - train_size
+
+np.random.seed(0)
+
+x_samples = np.linspace(-2, 2, n_points)[..., np.newaxis]
+# Making quadratic polinomial
+augmented_x = np.concatenate([x_samples**2, x_samples, x_samples**0], axis=1)
+y_samples = linear_function(w, augmented_x) + np.random.normal(loc=0.0, scale=noise, size=(n_points,1))
+x_plot = np.linspace(-2,2,100)[..., np.newaxis]
+aug_x_plot = np.concatenate([x_plot**2, x_plot, x_plot**0], axis=1)
+
+# Dividing in train and test set
+indexes = np.arange(start=0, stop=n_points,step=1)
+np.random.shuffle(indexes)
+train_index = indexes[:train_size]
+test_index = indexes[train_size:]
+x_train = x_samples[train_index, ...]
+aug_x_train = augmented_x[train_index, ...]
+y_train = y_samples[train_index, ...]
+x_test = x_samples[test_index, ...]
+aug_x_test = augmented_x[test_index, ...]
+y_test = y_samples[test_index, ...]
+
+fig, ax = plt.subplots(figsize=(12,7))
+ax.plot(x_plot, linear_function(w, aug_x_plot), label="Real solution")
+ax.scatter(x_train, y_train, label="train samples", s=70)
+ax.scatter(x_test, y_test, label="test samples", s=70)
+ax.legend(fontsize=14)
+ax.set_xlabel("x", fontsize=14)
+ax.set_ylabel("y", fontsize=14)
+plt.show()
+
+# Linear, Quadratic 5 and 10 degree polynomial fit.
+linear_coef = np.polyfit(x_train[:, 0], y_train[:, 0], deg=1, full=True) 
+qd_coef = np.polyfit(x_train[:, 0], y_train[:, 0], deg=2,full=True)
+deg5_coef = np.polyfit(x_train[:, 0], y_train[:, 0], deg=5, full=True) 
+deg10_coef = np.polyfit(x_train[:, 0], y_train[:, 0], deg=10, full=True) 
+p1 = np.poly1d(linear_coef[0])
+p2 = np.poly1d(qd_coef[0])
+p3 = np.poly1d(deg5_coef[0])
+p4 = np.poly1d(deg10_coef[0])
+error1 = np.linalg.norm(y_test[:, 0] - p1(x_test[:, 0]))**2/len(y_test)
+error2 = np.linalg.norm(y_test[:, 0] - p2(x_test[:, 0]))**2/len(y_test)
+error3 = np.linalg.norm(y_test[:, 0] - p3(x_test[:, 0]))**2/len(y_test)
+error4 = np.linalg.norm(y_test[:, 0] - p4(x_test[:, 0]))**2/len(y_test)
+
+print("Generalization errors")
+print("linear: "+str(error1))
+print("quadratic: "+str(error2))
+print("deg5: "+str(error3))
+print("deg10: "+str(error4))
+fig, ax = plt.subplots(figsize=(12,7))
+ax.plot(x_plot, linear_function(w, aug_x_plot), label="Real solution", lw=3)
+ax.scatter(x_train, y_train, label="train samples", s=70)
+ax.scatter(x_test, y_test, label="test samples", s=70)
+ax.plot(x_plot, p1(x_plot),'--' ,label="linear (Underfitting)")
+ax.plot(x_plot, p2(x_plot),'--' , label="quadratic (Appropiate Capacity)")
+ax.plot(x_plot, p3(x_plot),'--' , label="5 deg (Not too overfitted)" )
+ax.plot(x_plot, p4(x_plot),'--' , label="10 deg (Overfitting)")
+ax.legend(fontsize=14)
+ax.set_xlabel("x", fontsize=14)
+ax.set_ylabel("y", fontsize=14)
+ax.set_ylim([-15, 5])
+plt.show()
+
+# Same model as before
+w = np.array([-2, 0.6, 0.7])[...,np.newaxis]
+noise = 1.2
+n_points = 20
+train_size = 10
+test_size = n_points - train_size
+np.random.seed(0)    
+
+x_samples = np.linspace(-2, 2, n_points)[..., np.newaxis]
+augmented_x = np.concatenate([x_samples**2, x_samples, x_samples**0], axis=1)
+y_samples = linear_function(w, augmented_x) + np.random.normal(loc=0.0, scale=noise, size=(n_points,1))
+x_plot = np.linspace(-2,2,100)[..., np.newaxis]
+aug_x_plot = np.concatenate([x_plot**2, x_plot, x_plot**0], axis=1)
+
+indexes = np.arange(start=0, stop=n_points,step=1)
+np.random.shuffle(indexes)
+train_index = indexes[:train_size]
+test_index = indexes[train_size:]
+x_train = x_samples[train_index, ...]
+aug_x_train = augmented_x[train_index, ...]
+y_train = y_samples[train_index, ...]
+x_test = x_samples[test_index, ...]
+aug_x_test = augmented_x[test_index, ...]
+y_test = y_samples[test_index, ...]
+
+# Now we do it for high capacity model
+deg = 10
+x_deg = []
+for i in range(deg+1):
+    x_deg.append(x_samples**(deg-i))
+x_deg = np.concatenate(x_deg, axis=1)
+x_deg_train = x_deg[train_index, ...]
+x_deg_test = x_deg[test_index, ...]
+
+# Least square solution
+reg_values = [10**7, 0.5, 0]
+labels = ["Too large lambda (Underfitting)", "appropiate lambda", "no regularization (Overfitting)"]
+reg_w = []
+solution = []
+for i, lam in enumerate(reg_values):
+    # we save the regularized solution for each lambda
+    reg_w.append(inv(x_deg_train.T @ x_deg_train + lam*np.identity(deg+1)) @ x_deg_train.T @ y_train)
+    solution.append(np.poly1d(reg_w[-1][:,0]))
+
+fig, ax_array = plt.subplots(1,3,figsize=(15,5))
+for i, lam in enumerate(reg_values):
+    ax_array[i].plot(x_plot, linear_function(w, aug_x_plot), label="Real solution", lw=3)
+    ax_array[i].scatter(x_train, y_train, label="train samples", s=70)
+    ax_array[i].scatter(x_test, y_test, label="test samples", s=70)
+    p = solution[i]
+    ax_array[i].plot(x_plot, p(x_plot), label="Estimated solution")
+    ax_array[i].set_ylim([-10, 5])
+    ax_array[i].set_title(labels[i], fontsize=14)
+    ax_array[i].legend()
+    
+plt.show()
+
+def cross_validation(lam, x_subsets, y_subsets):
+    train_error = []
+    test_error = []
+    for i, x_test in enumerate(x_subsets):
+        x_train = np.concatenate([x for j, x in enumerate(x_subsets) if j!=i], axis=0)
+        y_train = np.concatenate([y for j, y in enumerate(y_subsets) if j!=i], axis=0)
+        y_test = y_subsets[i]
+        w = inv(x_train.T @ x_train + lam*np.identity(x_train.shape[1])) @ x_train.T @ y_train
+        p = np.poly1d(w[:,0])
+        test_error.append(np.linalg.norm(y_test[:, 0] - p(x_test[:, -2]))**2/len(y_test))
+        train_error.append(np.linalg.norm(y_train[:, 0] - p(x_train[:, -2]))**2/len(y_train))
+    return np.array(train_error), np.array(test_error)
+
+def kfold_cv(x_data, y_data, lam_array, kfold=4):
+    x_subsets = np.split(x_data, kfold)
+    y_subsets = np.split(y_data, kfold)
+    
+    train_error_mean = []
+    test_error_mean = []
+    train_error_std = []
+    test_error_std = []
+    for j, lam in enumerate(lam_array):
+        print('\r{}'.format(float(j/len(lam_array))*100), end='')
+        train_error, test_error = cross_validation(lam, x_subsets, y_subsets)
+        train_error_mean.append(np.mean(train_error))
+        train_error_std.append(np.std(train_error))
+        test_error_mean.append(np.mean(test_error))
+        test_error_std.append(np.std(test_error))
+    
+    return [np.array(train_error_mean), 
+           np.array(train_error_std), 
+           np.array(test_error_mean), 
+           np.array(test_error_std)]
+
+lam_array = np.linspace(0.01, 10**8, 10000)
+one_over_lambda = 1.0/lam_array
+train_error_mean, train_error_std, test_error_mean, test_error_std = kfold_cv(x_deg, y_samples, lam_array)
+optimal_lambda = lam_array[np.where(test_error_mean==np.amin(test_error_mean))[0]]
+
+fig, ax = plt.subplots(figsize=(12,7))
+ax.plot(lam_array, test_error_mean, label="test error")
+ax.plot(lam_array, train_error_mean, label="train error")
+ax.set_xscale("log")
+ax.set_yscale("log")
+ax.set_xlabel("lambda (Less capacity <--- ---> More capacity)", fontsize=14)
+ax.set_ylabel("errors log scale", fontsize=14)
+ax.set_title("Cross validation results", fontsize=14)
+ax.set_xlim([np.amax(lam_array), np.amin(lam_array)])
+ax.axvline(x=optimal_lambda, color='r', linestyle='--',
+           lw=4, label="Optimal lambda = "+str(optimal_lambda))
+ax.legend(fontsize=14)
+plt.show()
+
+deg_w = (inv(x_deg_train.T @ x_deg_train + optimal_lambda*np.identity(deg+1)) @ x_deg_train.T @ y_train)
+deg_p = np.poly1d(w[:,0])
+
+fig, ax = plt.subplots(figsize=(12,7))
+ax.plot(x_plot, linear_function(w, aug_x_plot), label="Real solution", lw=4)
+ax.scatter(x_train, y_train, label="train samples", s=70)
+ax.scatter(x_test, y_test, label="test samples", s=70)
+ax.plot(x_plot, deg_p(x_plot),'-o' ,label="regularized high capacity model", lw=1,ms=4)
+ax.legend(fontsize=14)
+ax.set_xlabel("x", fontsize=14)
+ax.set_ylabel("y", fontsize=14)
+ax.set_ylim([-15, 5])
+plt.show()

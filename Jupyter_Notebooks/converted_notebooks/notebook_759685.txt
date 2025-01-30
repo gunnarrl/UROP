@@ -1,0 +1,92 @@
+import nltk
+#nltk.download('punkt') # one time execution
+from nltk.corpus import stopwords
+from nltk import word_tokenize
+import unicodedata
+import re
+import pandas as pd
+
+REPLACE_BY_SPACE_RE = re.compile('[/(){}\[\]\|@,;]')
+BAD_SYMBOLS_RE = re.compile('[^0-9a-z %#+_]')
+STOPWORDS = set(stopwords.words('portuguese'))
+
+def strip_accents(text):
+
+    text = unicodedata.normalize('NFD', str(text))\
+           .encode('ascii', 'ignore')\
+           .decode("utf-8")
+
+    return str(text)
+
+STOPWORDS = [strip_accents(w) for w in STOPWORDS]
+
+def clean_text(text):
+    """
+        text: a string
+        
+        return: modified initial string
+    """
+    text = text.lower() # lowercase text
+    text = strip_accents(text) # remove accents
+    text = text.replace('\n', ' ')
+    text = REPLACE_BY_SPACE_RE.sub(' ', text) # replace REPLACE_BY_SPACE_RE symbols by space in text. substitute the matched string in REPLACE_BY_SPACE_RE with space.
+    text = BAD_SYMBOLS_RE.sub('', text) # remove symbols which are in BAD_SYMBOLS_RE from text. substitute the matched string in BAD_SYMBOLS_RE with nothing. 
+    text = text.replace('\W', '')
+    text = ' '.join(word for word in text.split() if word not in STOPWORDS) # remove stopwors from text
+    return text
+
+df_raw = pd.read_csv('../data/data_raw.csv')
+df_raw.head()
+
+df_raw['TEXT'].iloc[0]
+
+clean_text(df_raw['TEXT'].iloc[0])
+
+df_clean = df_raw.copy()
+
+df_clean['TEXT_CLEAN'] = df_clean['TEXT'].apply(clean_text)
+
+df_clean.head()
+
+#df_clean.drop('TEXT', axis=1)
+
+df_clean.to_csv('../data/data_clean.csv', index=False)
+
+df_feat = df_clean.copy()
+
+df_feat['NUM_STOPWORDS'] = df_feat['TEXT'].apply(lambda x: len([w for w in str(x).lower().split() if w in STOPWORDS]))
+print('maximum of num_stopwords in data',df_feat["NUM_STOPWORDS"].max())
+df_feat.head()
+
+import string
+df_feat['NUM_PUNCTUATIONS'] = df_feat['TEXT'].apply(lambda x: len([c for c in str(x) if c in string.punctuation]) )
+print('maximum of num_punctuations in data',df_feat["NUM_PUNCTUATIONS"].max())
+df_feat.head()
+
+df_feat['NUM_WORDS_UPPER'] = df_feat['TEXT'].apply(lambda x: len([w for w in str(x).split() if w.isupper()]))
+print('maximum of num_words_upper in data',df_feat["NUM_WORDS_UPPER"].max())
+df_feat.head()
+
+df_feat['NUM_CHARS'] = df_feat['TEXT'].str.len()
+print('maximum of num_chars in data',df_feat["NUM_CHARS"].max())
+df_feat.head()
+
+df_feat['NUM_WORDS'] = df_feat['TEXT'].str.split(' ').str.len()
+print('maximum of num_words in data',df_feat["NUM_WORDS"].max())
+df_feat.head()
+
+#df_feat['NUM_NUMS'] = df_feat['TEXT'].str.split(' ').str.len()
+#print('maximum of num_nums in data',df_feat["NUM_NUMS"].max())
+#df_feat.head()
+
+def avg_word(sentence):
+    if type(sentence) != str:
+        return 0
+    words = sentence.split()
+    return (sum(len(word) for word in words)/len(words))
+
+df_feat['AVG_WORD'] = df_feat['TEXT'].apply(avg_word)
+print('maximum of avg_word in data',df_feat["AVG_WORD"].max())
+df_feat.head()
+
+df_feat.to_csv('../data/data_feat.csv', index=False)

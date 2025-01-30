@@ -1,0 +1,227 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import math as m
+from scipy import stats as st
+from scipy.optimize import fsolve
+import time     
+
+plt.close('all')  # close all open figures
+
+N_young     = 1.0
+N_old     = 1.0
+alpha   = 0.3
+A       = 1
+beta    = 0.9
+delta   = 0.0
+tau_L   = 0.0
+tau_K   = 0.0
+t_y     = 0.0
+t_o     = 0.0
+#
+L       = 1
+
+#We essentially want to find x so that f(x) = 0 by defining a function of capital K so that func(K) = 0
+def func(K):
+    s = - K + N_young\
+    *((beta*(1+(1-tau_K)*(alpha*A*K**(alpha-1) - delta))* \
+    ((1-tau_L)*((1-alpha)*A*K**alpha) + t_y) - t_o) \
+    /((1+beta)*(1. + (1-tau_K)*(alpha*A*K**(alpha-1) - delta))))
+
+    return s
+
+#now, plotting s to see if there are any roots
+minimumK = 0.0001
+maximumK = 0.3
+
+# Span grid with gridpoints between minimumK and maximumK (kapital times life-time utility)
+Kv = np.linspace(minimumK, maximumK, 200)
+
+# Output vector prefilled with zeros
+fKv = np.zeros(len(Kv),float) # define column vector
+
+for i,K in enumerate(Kv):
+    fKv[i] = func(K)
+
+#print("fK=", fK) to show the graphically (and numerical) solution to K, which is found to be approximately 0.15.
+# To solve
+
+#By plotting capital (0,0001;0,3) and the output vector of zeros, we show that our model has a root.
+#It is also possible to see the approximate level of capital (0,20)
+fig, ax = plt.subplots()
+ax.plot(Kv, fKv, "m")
+# Plot horizontal line at zero in red
+ax.plot(Kv, np.zeros(len(Kv)), 'b')
+ax.set_title('Capital')
+plt.show()
+
+# We will be using the built in fsolve as a root-search-algorithm. 
+# Note that Kstar is a numpy array. To print the result we change Kstar to pure numbers 
+# such that the output is printable. 
+solutionK = fsolve(func, 2) # starting from K = 2
+Kstar = solutionK[0]
+Ystar = A*Kstar**alpha*L**(1-alpha)
+qstar = alpha*A*Kstar**(alpha-1)
+rstar = qstar - delta
+Rstar = 1. + (1-tau_K)*(qstar - delta)
+wstar = (1.-alpha)*A*Kstar**alpha
+
+#printing steady state values
+print("K* = {:6.4f}".format(Kstar))
+print("Y* = {:6.4f}".format(Ystar))
+print("q* = {:6.4f}".format(qstar))
+print("r* = {:6.4f}".format(rstar))
+print("R* = {:6.4f}".format(Rstar))
+print("w* = {:6.4f}".format(wstar))
+
+sstar = Kstar/N_young
+cystar= (1.-tau_L)*wstar + t_y - sstar
+costar= Rstar*sstar + t_o
+
+# Residual gov't consumption, thrown in the ocean
+Gstar = N_young*tau_L*wstar + N_old*tau_K*rstar*sstar
+
+# Aggregate consumption
+Cstar = N_young*cystar + N_old*costar
+
+# Check the goods market condition or Aggregate resource constraint
+ARC = Ystar - delta*Kstar - Cstar - Gstar
+
+print("ARC = {:6.4f}".format(ARC))
+
+# From our equatuation K we have one fucntion which can be solved using a root-finding algirithm.
+# To do so, we first set the parameters of the model such that we can solve numerically. 
+N_young     = 1.0
+N_old     = 1.0
+alpha   = 0.3
+A       = 1
+beta    = 0.9
+delta   = 0.0
+tau_L   = 0.4
+tau_K   = 0.25
+t_y     = 0.0
+t_o     = 0.0
+#
+L       = 1
+
+#Method 1 - Substitution
+#We essentially want to find x so that f(x) = 0 by defining a function of capital K so that func(K) = 0
+def func(K):
+    s = - K + N_young\
+    *((beta*(1+(1-tau_K)*(alpha*A*K**(alpha-1) - delta))* \
+    ((1-tau_L)*((1-alpha)*A*K**alpha) + t_y) - t_o) \
+    /((1+beta)*(1. + (1-tau_K)*(alpha*A*K**(alpha-1) - delta))))
+
+    return s
+
+#now, plotting s to see if there are any roots
+minimumK = 0.0001
+maximumK = 0.3
+
+# Span grid with gridpoints between minimumK and maximumK (kapital times life-time utility)
+Kv = np.linspace(minimumK, maximumK, 200)
+
+# Output vector prefilled with zeros
+fKv = np.zeros(len(Kv),float) # define column vector
+
+for i,K in enumerate(Kv):
+    fKv[i] = func(K)
+
+#print("fK=", fK) to show the graphically (and numerical) solution to K, which is found to be approximately 0.15.
+# To solve
+
+#By plotting capital (0,0001;0,3) and the output vector of zeros, we show that our model has a root.
+#It is also possible to see the approximate level of capital (0,10)
+fig, ax = plt.subplots()
+ax.plot(Kv, fKv, "m")
+# Plot horizontal line at zero in red
+ax.plot(Kv, np.zeros(len(Kv)), 'b')
+ax.set_title('Capital')
+plt.show()
+
+# We will be using the built in fsolve to root-search. 
+#Note that Kstar is a numpy array. To print the result we change Kstar to pure numbers 
+# such that the output is printable. 
+solutionK = fsolve(func, 2) # starting from K = 2
+Kstar = solutionK[0]
+Ystar = A*Kstar**alpha*L**(1-alpha)
+qstar = alpha*A*Kstar**(alpha-1)
+rstar = qstar - delta
+Rstar = 1. + (1-tau_K)*(qstar - delta)
+wstar = (1.-alpha)*A*Kstar**alpha
+
+#printing steady state values
+print("K* = {:6.4f}".format(Kstar))
+print("Y* = {:6.4f}".format(Ystar))
+print("q* = {:6.4f}".format(qstar))
+print("r* = {:6.4f}".format(rstar))
+print("R* = {:6.4f}".format(Rstar))
+print("w* = {:6.4f}".format(wstar))
+
+sstar = Kstar/N_young
+cystar= (1.-tau_L)*wstar + t_y - sstar
+costar= Rstar*sstar + t_o
+
+# Residual gov't consumption, thrown in the ocean
+Gstar = N_young*tau_L*wstar + N_old*tau_K*rstar*sstar
+
+# Aggregate consumption
+Cstar = N_young*cystar + N_old*costar
+
+# Check the goods market condition or Aggregate resource constraint
+ARC = Ystar - delta*Kstar - Cstar - Gstar
+
+print("ARC = {:6.4f}".format(ARC))
+
+# Guess capital stock
+glambda  = 0.5   # updating parameter
+Kold    = 0.4
+jerror  = 100
+iter    = 1
+while (iter<200) or (jerror>0.001):
+    # Solve for prices using expressions for w(K) and q(K)
+    q = alpha*A*Kold**(alpha-1)
+    w = (1-alpha)*A*Kold**alpha
+    R = 1 + (1-tau_K)*(q - delta)
+    Knew = N_young* (beta*R*((1-tau_L)*w + t_y) - t_o)/((1+beta)*R)
+    
+    # Now calculating variation between old and new capital stock
+    jerror = abs(Kold-Knew)/Kold
+    # Update capital stock
+    Kold    = glambda*Knew + (1-glambda)*Kold
+    iter = iter +1
+
+Kstar = Knew
+Ystar = A*Kstar**alpha*L**(1-alpha)
+wstar = w
+qstar = q
+Rstar = R
+rstar = qstar - delta
+
+# Back out solutions for the rest of the Economy
+# Household values
+sstar = Kstar/N_young
+cystar= (1-tau_L)*wstar + t_y - sstar
+costar= Rstar*sstar + t_o
+
+# Residual government consumption
+Gstar = N_young*tau_L*wstar + N_old*tau_K*rstar*sstar
+
+# Aggregate consumption
+Cstar = N_young*cystar + N_old*costar
+
+# Check the goods market condition or Aggregate resource constraint. 
+# If all resources are allocated, the ARC should hold. 
+ARC = Ystar - delta*Kstar - Cstar - Gstar
+
+#Printing steady state values
+print("K* = {:6.4f}".format(Kstar))
+print("Y* = {:6.4f}".format(Ystar))
+print("q* = {:6.4f}".format(qstar))
+print("r* = {:6.4f}".format(rstar))
+print("R* = {:6.4f}".format(Rstar))
+print("w* = {:6.4f}".format(wstar))
+
+#Checking if the aggregate resource contraint holds.
+print("ARC = {:6.4f}".format(ARC))
+
+print("Nr. of iterations = " +str(iter))

@@ -1,0 +1,103 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.neighbors import NearestNeighbors
+from scipy.sparse import csr_matrix
+from collections import Counter
+
+train_df = pd.read_csv("data/subset100playlists.csv")
+test_df = pd.read_csv("data/subset100playlists_test.csv")
+
+train_df.head()
+
+numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
+df_cleaned= train_df.select_dtypes(include=numerics)
+
+var_drop = ["index","pid","pos", "count", "Unnamed: 0"]
+df_cleaned = df_cleaned.drop(var_drop, axis =1)
+
+train = pd.concat([df_cleaned, train_df['track_uri']],axis=1)
+
+test_df_cleaned = test_df.select_dtypes(include=numerics)
+
+test_var_drop = ["index","pos", "count", "Unnamed: 0"]
+test_df_cleaned = test_df_cleaned.drop(test_var_drop, axis =1)
+
+test_df_cleaned = pd.concat([test_df_cleaned, test_df['track_uri']],axis=1)
+calibration, withheld = train_test_split(test_df_cleaned, test_size=0.8, random_state=209, stratify = test_df_cleaned['pid'])
+
+train.describe()
+
+train.drop_duplicates(subset ="track_uri",keep = False, inplace = True) 
+train.head()
+
+train = train.set_index('track_uri') 
+
+train.shape
+
+# pivot ratings into song features
+model_knn = NearestNeighbors(metric='cosine', algorithm='auto', n_neighbors=20, n_jobs=-1)# fit the dataset
+model_knn.fit(train)
+
+def make_recommendation(model_knn, playlist_id, n_neighbors, n_recommendations):
+    
+    calibration_songs = calibration[calibration['pid']==playlist_id]
+    calibration_songs_clean = calibration_songs.drop(columns=['pid', 'track_uri'])
+
+    song_freq_dict = {}
+
+    for index, song in calibration_songs_clean.iterrows():
+        distances, indices = model_knn.kneighbors(song.values.reshape(1,-1), n_neighbors=n_neighbors)
+
+        for index in indices[0]:
+            if song_freq_dict.get(index) is None:
+                song_freq_dict[index] = 1
+            else:
+                song_freq_dict[index] += 1
+
+    k = Counter(song_freq_dict) 
+
+    # Finding n highest values 
+    top_songs = [i[0] for i in k.most_common(n_recommendations)]    
+
+    rec_songs = train.iloc[top_songs].index
+
+    return rec_songs
+
+#Function to calculate r_precision (https://recsys-challenge.spotify.com/rules)
+#R-precision is the number of retrieved relevant tracks divided by the number of known relevant tracks (i.e., the number of withheld tracks) 
+
+def r_precision(preds, known):
+    for i in known:
+        if i in preds:
+            song = combined_df[combined_df['track_uri']==i]['track_name']
+            print(f'{song} appeared in both our predicted playlist and the known list of songs.')
+    score = np.sum(known.isin(preds))/known.shape[0]
+    return score
+
+n_neighbors, n_recommendations = 50, 100
+r_precision_scores = []
+
+#Loop through all unique playlists in test set to identify predicted songs
+for index, pid in enumerate(withheld['pid'].drop_duplicates()): 
+    print (index, pid)
+    pred_songs = make_recommendation(model_knn, pid, n_neighbors, n_recommendations)
+    validation_set = withheld[withheld.pid == pid].track_uri
+    print("Predicted songs\n", combined_df[combined_df['track_uri'].isin(pred_songs)]['track_name'])
+    print("Known songs\n", test_df[test_df['track_uri'].isin(validation_set)]['track_name'])
+    
+    rps = r_precision(list(pred_songs), validation_set)
+    r_precision_scores.append(rps)
+    
+    print(f'Playlist {pid}: The R precision score is {rps}')
+
+avg_rp = np.mean(r_precision_scores)
+
+print('Avg. R-Precision Score: ', avg_rp)
+
+def intersection(lst1, lst2): 
+    lst3 = [value for value in lst1 if value in lst2] 
+    return lst3 
+  
+print (len(intersection(list(withheld.track_uri), list(train.index))))
+print (len(list(withheld.track_uri)))

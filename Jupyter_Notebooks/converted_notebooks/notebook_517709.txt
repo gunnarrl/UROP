@@ -1,0 +1,422 @@
+"""
+Informações de usuários
+
+Representação: id, nome
+
+
+"""
+
+users = [
+    {"id": 0, "name": "João"},
+    {"id": 1, "name": "Pedro"},
+    {"id": 2, "name": "Arthur"},
+    {"id": 3, "name": "Clara"},
+    {"id": 4, "name": "Roberto"},
+    {"id": 5, "name": "Júlia"},
+    {"id": 6, "name": "Amanda"},
+    {"id": 7, "name": "André"},
+    {"id": 8, "name": "Eduardo"},
+    {"id": 9, "name": "Rafael"},
+]
+
+"""
+Rede de relacionamentos
+
+Aqui cada par é um relacionamento entre dois usuários representados através de ids
+
+(0, 1) -> João é amigo de Pedro [Relacionamento bi-direcional]
+
+"""
+
+friendship = [(0, 1), (0, 2), (1, 2), (1, 3), (2, 3), (3, 4),
+              (4, 5), (5, 6), (5, 7), (6, 8), (7, 8), (8, 9)]
+
+"""
+Salário anual por tempo trabalhado
+
+Representação: salário, tempo trabalhado (anos)
+
+"""
+
+salaries_and_tenures = [
+    (83000, 8.7), (88000, 8.1),
+    (48000, 0.7), (76000, 6),
+    (69000, 6.5), (76000, 7.5),
+    (60000, 2.5), (83000, 10),
+    (48000, 1.9), (63000, 4.2)
+                        ]
+
+"""
+Situação financeira (Contas em dias)
+
+Representação: tempo trabalhado, situação das contas
+
+"""
+
+paid_bills = {
+    0.7: "paid",
+    1.9: "unpaid",
+    2.5: "paid",
+    4.2: "unpaid",
+    6: "unpaid",
+    6.5: "unpaid",
+    7.5: "unpaid",
+    8.1: "unpaid",
+    8.7: "paid",
+    10: "paid"
+              }
+
+from collections import defaultdict
+
+"""
+    Salários e anos de experiência
+    
+"""
+
+print("Média de salários:: ")
+
+salary_by_tenure = defaultdict(list)
+
+for salary, tenure in salaries_and_tenures:
+    salary_by_tenure[tenure].append(salary)
+
+# Calculando média de salários por ano
+average_salary_by_tenure = {tenure: sum(salaries)/len(salaries) for tenure, salaries in salary_by_tenure.items()}
+print(average_salary_by_tenure)
+
+"""
+Agrupando dados para melhor visualização
+
+"""
+
+def tenure_bucket(tenure):
+    if tenure < 2:
+        return "Menos de dois anos"
+    elif tenure <= 5:
+        return "Entre dois e cinco anos"
+    else:
+        return "Mais que cinco anos"
+
+
+salary_by_tenure_bucket = defaultdict(list)
+
+for salary, tenure in salaries_and_tenures:
+    bucket = tenure_bucket(tenure)
+    salary_by_tenure_bucket[bucket].append(salary)
+    
+    
+print("Média de salários:: ")
+
+# Calculando média de salários com agrupamento
+average_salary_by_bucket = {tenure_bucket: round(sum(salaries)/len(salaries),2)
+                            for tenure_bucket, salaries in salary_by_tenure_bucket.items()}
+print(average_salary_by_bucket)
+
+"""
+    Bom pagador
+    
+"""
+
+
+def predict_paid_or_unpaid(year_experience):
+    if year_experience < 3.0:
+        return "paid"
+    elif year_experience < 8.5:
+        return "unpaid"
+    else:
+        return "paid"
+
+predict_paid_or_unpaid(9)
+
+# Criar chave amigos na estrutura de usuários
+for user in users:
+    user['friends'] = []
+
+# Preencher amigos de cada usuário (Relação bi-direcional)
+for i, j in friendship:
+    
+    users[i]['friends'].append(users[j]['id'])
+    users[j]['friends'].append(users[i]['id'])
+
+import numpy as np
+
+# Função para contar quantos amigos
+def number_of_friends(user):
+    # Retornar o comprimento da lista de amigos
+    return len(user["friends"])
+
+count_connections = [number_of_friends(user) for user in users]
+total_connections = sum(count_connections)
+print("Total de conexões:: %d" % total_connections)
+
+num_users = len(users)
+avg_connections = total_connections / num_users
+
+"""
+Média e Desvio Padrão
+
+Em estatística, média é definida como o valor que mostra para onde se concentram os dados de 
+uma distribuição como o ponto de equilíbrio das frequências em um histograma. Média também é 
+interpretada como um valor significativo de uma lista de números.
+
+Em probabilidade, o desvio padrão ou desvio padrão populacional
+é uma medida de dispersão em torno da média populacional de uma variável aleatória.
+
+Quanto menor o desvio padrão mais homogênea é a amostra
+
+"""
+
+print("Média de conexões:: %.2f" % avg_connections)
+print("Desvio Padrão das conexões:: %f" % np.std(count_connections))
+
+print(users[0])
+
+# Utiliza função da cell anterior
+num_friends_by_id = [(user["id"], number_of_friends(user)) for user in users]
+# Saida -> par (usuário, numero de amigos)
+print("Mais amigos sorteados:: ", sorted(num_friends_by_id, key=lambda num_friends: num_friends[1], reverse=True))
+
+
+def friends_of_friend_ids_bad(user):
+    # foaf = friend of a friend
+    return [foaf for friend in user['friends'] for foaf in users[friend]['friends']]
+
+
+print("Amigos de Amigos:: ")
+print("Recomendação de amigo para %s:: %s " % (users[0]['name'], friends_of_friend_ids_bad(users[0])))
+
+from collections import Counter
+import numpy as np
+
+def not_the_same(user, other_user):
+    return user['id'] != other_user['id']
+
+
+def not_friends(user, other_user):
+    return all(not_the_same(users[friend], other_user) for friend in user['friends'])
+
+
+def friends_of_friend_ids(user):
+    return [foaf for friend in user['friends'] for foaf in users[friend]['friends']
+                   if not_the_same(user, users[foaf]) and not_friends(user, users[foaf])]
+#     return Counter(foaf for friend in user['friends'] for foaf in users[friend]['friends']
+#                    if not_the_same(user, users[foaf]) and not_friends(user, users[foaf]))
+
+
+# Recommend 3 because they have 2 friends in common
+print("Recomendação de amigo para %s:: %s " % (users[0]['name'], np.unique(friends_of_friend_ids(users[0]))))
+
+"""
+Rede de interesse
+
+Representação: id, interesse
+
+"""
+
+interests = [
+    (0, "Hadoop"), (0, "Big Data"), (0, "HBase"), (0, "Java"),
+    (0, "Spark"), (0, "Storm"), (0, "Cassandra"),
+    (1, "NoSQL"), (1, "MongoDB"), (1, "Cassandra"), (1, "HBase"),
+    (1, "Postgres"), (2, "Python"), (2, "scikit-learn"), (2, "scipy"),
+    (2, "numpy"), (2, "statsmodels"), (2, "pandas"), (3, "R"), (3, "Python"),
+    (3, "statistics"), (3, "regression"), (3, "probability"),
+    (4, "machine learning"), (4, "regression"), (4, "decision trees"),
+    (4, "libsvm"), (5, "Python"), (5, "R"), (5, "Java"), (5, "C++"),
+    (5, "Haskell"), (5, "programming languages"), (6, "statistics"),
+    (6, "probability"), (6, "mathematics"), (6, "theory"),
+    (7, "machine learning"), (7, "scikit-learn"), (7, "Mahout"),
+    (7, "neural networks"), (8, "neural networks"), (8, "deep learning"),
+    (8, "Big Data"), (8, "artificial intelligence"), (9, "Hadoop"),
+    (9, "Java"), (9, "MapReduce"), (9, "Big Data")
+]
+
+
+"""
+    Tópicos de Interesse
+    
+"""
+
+words_and_counts = Counter(word for user, interest in interests for word in interest.lower().split())
+
+
+print("Topics of interest:: ")
+for word, count in words_and_counts.most_common():
+    if count > 1:
+        print(word, count)
+
+from collections import defaultdict
+
+def data_scientists_who_like(target_interest):
+    return [user_id for user_id, user_interest in interests if user_interest == target_interest]
+
+
+user_ids_by_interest = defaultdict(list)
+interest_by_user_id = defaultdict(list)
+unique_interest = set()
+
+for user_id, interest in interests:
+    user_ids_by_interest[interest].append(user_id)
+    interest_by_user_id[user_id].append(interest)
+    unique_interest.add(interest)
+
+# Ordena em ordem alfabética
+unique_interest = sorted(list(unique_interest))
+
+from collections import Counter
+
+popular_interests = Counter(interest for user in users for interest in interest_by_user_id[user['id']]) 
+
+def most_popular_new_interests(user_interests, max_results=5):
+    recommendations = [
+        (interest, frequency)
+        for interest, frequency in popular_interests.items()
+        if interest not in user_interests
+                      ]
+    return sorted(recommendations[:max_results], key=lambda x: -x[1])
+
+print("Recomendações para %s:: %s " % (users[0]['name'], most_popular_new_interests(interest_by_user_id[0])))
+
+import numpy as np
+
+"""
+Para comparar o quão dois usuários são parecidos, precisamos de uma métrica de (dis)similaridade
+
+    - Euclidiana
+    - Coseno 
+    - Correlação
+    
+"""
+
+def cosine_similarity(v, w):
+    return np.dot(v, w) / np.sqrt(np.dot(v, v) * np.dot(w, w))
+
+from collections import defaultdict
+
+"""
+Criar vetor para um determinado usuário (usuário x interesse)
+
+1 - Se o usuário tem
+0 - Contrário
+
+"""
+
+def make_user_vector(user_id):
+    return [1 if interest in interest_by_user_id[user_id] else 0 for interest in unique_interest]
+
+
+# Criar matrix de interesses (usuários x interesses)
+users_matrix = [make_user_vector(user) for user in interest_by_user_id]
+
+# Criar matrix de similaridade
+users_sim_matrix = [[cosine_similarity(interest_vector_v, interest_vector_w) 
+                     for interest_vector_w in users_matrix] 
+                    for interest_vector_v in users_matrix]
+
+def most_similar_users_to(user_id):
+    pairs = [(other_user_id, similarity)
+            for other_user_id, similarity in enumerate(users_sim_matrix[user_id])
+             if user_id != other_user_id and similarity > 0
+            ]
+    return sorted(pairs, key=lambda x: -x[1])
+
+## Usuários mais similares ao João
+# most_similar_users_to(0)
+
+"""
+Gerar recomendação baseado nos usuários mais similares
+
+"""
+
+def user_based_recommendations(user_id, include_current_interests=False):
+        predictions = defaultdict(float)
+        for other_user_id, similarity in most_similar_users_to(user_id):
+            for interest in interest_by_user_id[other_user_id]:
+                # Para cada interesse soma-se a similaridade dos usuários mais proxímos
+                predictions[interest] += similarity
+        
+        # converte as recomendações em uma lista ordenada
+        predictions = sorted(predictions.items(), key=lambda x: -x[1])
+        
+        # caso deseje incluir interesses existentes include_current_interests=True
+        if include_current_interests:
+            return predictions
+        
+        else:
+            return [(prediction, score) 
+                   for prediction, score in predictions
+                   if prediction not in interest_by_user_id[user_id]]
+
+## Lista de interesses do João
+# print(interest_by_user_id[0])
+# Lista de recomendações para o João
+user_based_recommendations(0)    
+
+from collections import defaultdict
+
+"""
+Criar vetor para um determinado interesse (interesse x usuários)
+
+1 - Se o interesse tem o usuário
+0 - Contrário
+
+"""
+
+def make_interest_vector(interest):
+    return [1 if interest in interest_by_user_id[user_id] else 0 for user_id in interest_by_user_id.keys()]
+
+
+# Criar matrix de interesses (usuários x interesses)
+interests_matrix = [make_interest_vector(interest) for interest in unique_interest]
+
+# Criar vetor de usuários
+def make_user_vector(user_id):
+    return [1 if interest in interest_by_user_id[user_id] else 0 for interest in unique_interest]
+
+# Criar matrix de similaridade
+users_sim_matrix = [[cosine_similarity(interest_vector_v, interest_vector_w) 
+                     for interest_vector_w in users_matrix] 
+                    for interest_vector_v in users_matrix]
+
+# Criar matrix de similaridade
+interests_sim_matrix = [[cosine_similarity(user_vector_v, user_vector_w) 
+                     for user_vector_w in interests_matrix] 
+                    for user_vector_v in interests_matrix]
+
+def most_similar_interests_to(interest_id):
+    similarities = interests_sim_matrix[interest_id]
+    pairs = [(unique_interest[other_interest_id], similarity) 
+            for other_interest_id, similarity in enumerate(similarities)
+            if interest_id != other_interest_id and similarity > 0]
+    return sorted(pairs, key=lambda x: -x[1])
+
+# Imprimir interesses mais similares ao Big Data
+# most_similar_interests_to(0)
+
+def item_based_suggestions(user_id, include_current_interests=False):
+    predictions = defaultdict(float)
+    user_vector = make_user_vector(user_id)
+    
+    for interest_id, is_interested in enumerate(user_vector):
+        if is_interested == 1:
+            similar_interests = most_similar_interests_to(interest_id)
+                        
+            for interest, similarity in similar_interests:
+                predictions[interest] += similarity
+
+     # converte as recomendações em uma lista ordenada
+    predictions = sorted(predictions.items(), key=lambda x: -x[1])
+
+    # caso deseje incluir interesses existentes include_current_interests=True
+    if include_current_interests:
+        return predictions
+
+    else:
+        return [(prediction, score) 
+               for prediction, score in predictions
+               if prediction not in interest_by_user_id[user_id]]
+        
+
+## Lista de interesses do João
+# print(interest_by_user_id[0])
+# Lista de recomendações para o João
+item_based_suggestions(0)

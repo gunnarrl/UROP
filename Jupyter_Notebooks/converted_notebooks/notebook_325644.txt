@@ -1,0 +1,284 @@
+%matplotlib inline
+
+%config InlineBackend.figure_format = 'retina'
+
+from matplotlib import rcParams
+rcParams["savefig.dpi"] = 100
+rcParams["figure.dpi"] = 100
+rcParams["figure.figsize"] = 12, 4
+rcParams["font.size"] = 16
+rcParams["text.usetex"] = False
+rcParams["font.family"] = ["sans-serif"]
+rcParams["font.sans-serif"] = ["cmss10"]
+rcParams["axes.unicode_minus"] = False
+
+# https://github.com/matplotlib/matplotlib/issues/12039
+try:
+    old_get_unicode_index
+except NameError:
+    print('Patching matplotlib.mathtext.get_unicode_index')
+    import matplotlib.mathtext as mathtext
+    old_get_unicode_index = mathtext.get_unicode_index
+    mathtext.get_unicode_index = lambda symbol, math=True:\
+        ord('-') if symbol == '-' else old_get_unicode_index(symbol, math)
+
+import numpy as np
+
+def ExpSquaredKernel(t1, t2=None, A=1.0, l=1.0):
+    """
+    Return the ``N x M`` exponential squared
+    covariance matrix.
+    
+    """
+    if t2 is None:
+        t2 = t1
+    T2, T1 = np.meshgrid(t2, t1)
+    return A ** 2 * np.exp(-0.5 * (T1 - T2) ** 2 / l ** 2)
+
+def ln_gp_likelihood(t, y, sigma=0, **kwargs):
+    """
+    
+    """
+    # The covariance and its determinant
+    npts = len(t)
+    kernel = ExpSquaredKernel
+    K = kernel(t, **kwargs) + sigma ** 2 * np.eye(npts)
+    
+    # The marginal log likelihood
+    log_like = -0.5 * np.dot(y.T, np.linalg.solve(K, y))
+    log_like -= 0.5 * np.linalg.slogdet(K)[1]
+    log_like -= 0.5 * npts * np.log(2 * np.pi)
+    
+    return log_like
+
+from scipy.linalg import cho_factor
+
+def draw_from_gaussian(mu, S, ndraws=1, eps=1e-12):
+    """
+    Generate samples from a multivariate gaussian
+    specified by covariance ``S`` and mean ``mu``.
+    
+    """
+    npts = S.shape[0]
+    L, _ = cho_factor(S + eps * np.eye(npts), lower=True)
+    L = np.tril(L)
+    u = np.random.randn(npts, ndraws)
+    x = np.dot(L, u) + mu[:, None]
+    return x.T
+
+def compute_gp(t_train, y_train, t_test, sigma=0, **kwargs):
+    """
+    
+    """
+    # Compute the required matrices
+    kernel = ExpSquaredKernel
+    Stt = kernel(t_train, **kwargs)
+    Stt += sigma ** 2 * np.eye(Stt.shape[0])
+    Spp = kernel(t_test, **kwargs)
+    Spt = kernel(t_test, t_train, **kwargs)
+
+    # Compute the mean and covariance of the GP
+    mu = np.dot(Spt, np.linalg.solve(Stt, y_train))
+    S = Spp - np.dot(Spt, np.linalg.solve(Stt, Spt.T))
+    
+    return mu, S
+
+# Generate the dataset
+import os
+l_true = 0.33
+t = np.linspace(0, 10, 1000)
+gp_mu, gp_S = compute_gp([], [], t, A=1.0, l=l_true)
+np.random.seed(3)
+y_true = draw_from_gaussian(gp_mu, gp_S)[0]
+sigma = np.ones_like(t) * 0.05
+y = y_true + sigma * np.random.randn(len(t))
+X = np.hstack((t.reshape(-1, 1), y.reshape(-1, 1), sigma.reshape(-1, 1)))
+if not (os.path.exists("data")):
+    os.mkdir("data")
+np.savetxt("data/sample_data.txt", X)
+
+import matplotlib.pyplot as plt
+t, y, sigma = np.loadtxt("data/sample_data.txt", unpack=True)
+plt.plot(t, y, "k.", alpha=0.5, ms=3)
+plt.xlabel("time")
+plt.ylabel("data");
+
+l = np.linspace(l_true - 0.1, l_true + 0.1, 300)
+lnlike = np.array([ln_gp_likelihood(t, y, sigma=sigma, l=li) for li in l])
+
+like = np.exp(lnlike - lnlike.max())
+plt.plot(l, like)
+plt.axvline(l_true, color="C1")
+plt.xlabel("timescale")
+plt.ylabel("relative likelihood");
+
+# Generate the data
+m_true = 3.10
+b_true = 17.4
+l_true = 1.25
+A_true = 3.50
+s_true = 2.00
+t = np.linspace(0, 10, 50)
+gp_mu, gp_S = compute_gp([], [], t, A=A_true, l=l_true)
+np.random.seed(9)
+y_true = m_true * t + b_true
+trend = draw_from_gaussian(gp_mu, gp_S)[0]
+noise = np.ones_like(t) * s_true
+y = y_true + trend + noise * np.random.randn(len(t))
+X = np.hstack((t.reshape(-1, 1), y.reshape(-1, 1), noise.reshape(-1, 1)))
+np.savetxt("data/sample_data_line.txt", X)
+np.savetxt("data/sample_data_line_truths.txt", [m_true, b_true, A_true, l_true])
+
+# Plot it
+t, y, sigma = np.loadtxt("data/sample_data_line.txt", unpack=True)
+plt.plot(t, y_true, "C0", label="truth")
+plt.plot(t, y_true + trend, "C1", alpha=0.5, label="truth + trend")
+plt.plot(t, y, "k.",  ms=5, label="observed")
+plt.legend(fontsize=12)
+plt.xlabel("time")
+plt.ylabel("data");
+
+t, y, sigma = np.loadtxt("data/sample_data_line.txt", unpack=True)
+m_true, b_true, A_true, l_true = np.loadtxt("data/sample_data_line_truths.txt", unpack=True)
+plt.errorbar(t, y, yerr=sigma, fmt="k.", label="observed")
+plt.plot(t, m_true * t + b_true, color="C0", label="truth")
+plt.legend(fontsize=12)
+plt.xlabel("time")
+plt.ylabel("data");
+
+def lnprob(p):
+    """
+    
+    """
+    m, b = p
+    if (m < 0) or (m > 10):
+        return -np.inf
+    elif (b < 0) or (b > 30):
+        return -np.inf
+    model = m * t + b
+    lnlike = ln_gp_likelihood(t, y - model, sigma, A=0, l=1)
+    return lnlike
+
+import emcee
+print("Using emcee version {0}".format(emcee.__version__))
+
+initial = [4.0, 15.0]
+ndim = len(initial)
+nwalkers = 32
+p0 = initial + 1e-3 * np.random.randn(nwalkers, ndim)
+sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob)
+
+print("Running burn-in...")
+p0, _, _ = sampler.run_mcmc(p0, 500)
+sampler.reset()
+
+print("Running production...")
+sampler.run_mcmc(p0, 1000);
+
+# Plot the data
+plt.errorbar(t, y, yerr=sigma, fmt=".k", capsize=0)
+
+# The positions where the prediction should be computed
+x = np.linspace(0, 10, 500)
+
+# Plot 24 posterior samples
+samples = sampler.flatchain
+for s in samples[np.random.randint(len(samples), size=24)]:
+    m, b = s
+    model = m * x + b
+    plt.plot(x, model, color="#4682b4", alpha=0.3)
+
+# Plot the truth
+plt.plot(x, m_true * x + b_true, "C1", label="truth")
+    
+plt.ylabel("data")
+plt.xlabel("time")
+plt.title("fit assuming uncorrelated noise");
+
+import corner
+labels = ["slope", "intercept"]
+truths = [m_true, b_true]
+corner.corner(sampler.flatchain, truths=truths, labels=labels, range=[[3, 4.4], [11, 18]]);
+
+def lnprob(p):
+    """
+    
+    """
+    m, b, A, l = p
+    if (m < 0) or (m > 10):
+        return -np.inf
+    elif (b < 0) or (b > 30):
+        return -np.inf
+    elif (A < 0) or (A > 10):
+        return -np.inf
+    elif (l < 0) or (l > 10):
+        return -np.inf
+    model = m * t + b
+    lnlike = ln_gp_likelihood(t, y - model, sigma, A=A, l=l)
+    return lnlike
+
+initial = [4.0, 15.0, 2.0, 1.0]
+ndim = len(initial)
+nwalkers = 32
+p0 = initial + 1e-3 * np.random.randn(nwalkers, ndim)
+sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob)
+
+print("Running burn-in...")
+p0, _, _ = sampler.run_mcmc(p0, 1500)
+sampler.reset()
+
+print("Running production...")
+sampler.run_mcmc(p0, 2000);
+
+# Plot the data
+plt.errorbar(t, y, yerr=sigma, fmt=".k", capsize=0, label="data")
+
+# The positions where the prediction should be computed
+x = np.linspace(0, 10, 500)
+
+# Plot 24 posterior samples
+samples = sampler.flatchain
+label = "sample"
+for s in samples[np.random.randint(len(samples), size=24)]:
+    m, b, A, l = s
+    model = m * x + b
+    plt.plot(x, model, color="#4682b4", alpha=0.3, label=label)
+    label = None
+
+# Plot the truth
+plt.plot(x, m_true * x + b_true, "C1", label="truth")
+    
+plt.ylabel("data")
+plt.xlabel("time")
+plt.legend(fontsize=12)
+plt.title("fit assuming correlated noise");
+
+import corner
+labels = ["slope", "intercept", r"$A$", r"$l$"]
+truths = [m_true, b_true, A_true, l_true]
+corner.corner(sampler.flatchain, truths=truths, labels=labels);
+
+# Plot the data
+plt.errorbar(t, y, yerr=sigma, fmt=".k", capsize=0, label="data")
+
+# The positions where the prediction should be computed
+x = np.linspace(0, 10, 500)
+
+# Plot 24 posterior samples
+samples = sampler.flatchain
+label = "sample"
+for s in samples[np.random.randint(len(samples), size=24)]:
+    m, b, A, l = s
+    model = m * x + b
+    gp_mu, gp_S = compute_gp(t, y - (m * t + b), x, sigma=sigma, A=A, l=l)
+    trend = draw_from_gaussian(gp_mu, gp_S)[0]
+    plt.plot(x, model + trend, color="#4682b4", alpha=0.3, label=label)
+    label = None
+
+# Plot the truth
+plt.plot(x, m_true * x + b_true, "C1", label="truth")
+    
+plt.ylabel("data")
+plt.xlabel("time")
+plt.legend(fontsize=12)
+plt.title("fit assuming correlated noise");

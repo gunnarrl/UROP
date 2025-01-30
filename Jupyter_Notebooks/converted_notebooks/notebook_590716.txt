@@ -1,0 +1,452 @@
+import matplotlib.pyplot as plt
+%matplotlib inline
+import numpy as np
+from importlib import reload
+
+from rbvfit import model as m
+reload(m)
+
+import emcee
+import corner
+import scipy.optimize as op
+import sys
+
+width = 30    # for plotting formatting...
+
+wave=np.arange(1520.,1530.,0.01)
+n_clouds = 1
+logN=np.array([15.])
+b=np.array([20.])
+v=np.array([0.])
+
+zabs     = np.zeros((n_clouds))
+lambda_rest = 1526.9 * np.ones((n_clouds))
+
+s=m.create_voigt(zabs,lambda_rest)
+theta=np.concatenate((logN,b,v))
+outflux= s.model_flux(theta,wave)
+
+orig_values = np.array([ logN, b, v ])
+
+# Add error
+fnorm= outflux + np.random.normal(0., .02, len(wave))
+enorm= 0.02 * np.ones((len(wave),))
+
+plt.step(wave,fnorm)
+plt.ylim([0.,1.2])
+
+#los=np.arange(-100.,100.,1)
+def estimate_parameter_single_cell(log_rho, log_los_cm, log_solar, log_f_c, vel_p, log_temp):
+    # Convert the number density to actual ion number density 
+    # Set metallicity
+    O_H_Solar    = 10.**(-3.31);
+    C_H_Solar    = 10.**(-3.61);
+    Ne_H_Solar   = 10.**(-4.00);
+    N_H_Solar    = 10.**(-4.07);
+    Si_H_Solar   = 10.**(-4.46);
+    Mg_H_Solar   = 10.**(-4.46);
+    
+    KBOLTZMANN = 1.3806488e-16;
+    
+    # Atomic Mass unit, grams.
+    AMU          = 1.6605388*10.**(-24.);
+    kmpsToCmps   = 1.0*10.**(5.);
+    oxygenMass   = 15.999 * AMU;
+    carbonMass   =  6.000 * AMU;
+    neonMass     = 10.000 * AMU;
+    nitrogenMass = 7.000 * AMU;
+    silliconMass = 14.00 * AMU;
+    magnesiumMass= 12.00 *AMU; 
+    
+    X_mass= silliconMass
+    X_H_Solar= Si_H_Solar
+
+    # Compute b assuming it is thermal at temperature Temp
+    b = np.ones_like(log_rho)*(1.0*10.**(-5.)*np.sqrt(2.0 *KBOLTZMANN * 10.0**log_temp / X_mass))
+
+    metallicity = 10.0**(log_solar)*X_H_Solar
+    
+    # Set ionization fraction, total column density, and log column density
+    rho_ion= (10.0**(log_rho) * metallicity * 10.0**(log_f_c) )
+    rho_ion= rho_ion + 1e-99   
+    col_per_cell=rho_ion*10.0**(log_los_cm)
+    logN=np.log10(col_per_cell)
+    
+    return np.array(logN), np.array(b), np.array(vel_p)
+
+
+
+def model_guess(beta,wave):
+    log_rho    = np.array([beta[0]])
+    log_los_cm = np.array([beta[1]])
+    log_solar  = np.array([beta[2]])
+    log_f_c    = np.array([beta[3]])
+    vel_p      = np.array([beta[4]])
+    log_temp   = np.array([beta[5]])
+    
+    Temp = 10.0**log_temp    #3e4 # Fixed
+        
+    logN, b, vel_p= estimate_parameter_single_cell(log_rho, log_los_cm, log_solar, log_f_c, vel_p, log_temp)
+    #print(beta)
+    #print(logN,b,vel_p)
+    theta  = np.concatenate((logN,b,vel_p))
+    outflux= s.model_flux(theta,wave)
+    
+    return outflux
+
+def print_and_plot_results(sampler, wave, fnorm):
+    samples=sampler.chain[:, np.rint(no_of_steps/5).astype(np.int):, :].reshape((-1, ndim))#sampler.flatchain
+    st=np.median(samples,axis=0)#np.median(sampler.flatchain, axis=0)
+    theta_prime=st[:-1]
+
+    #print("Input values were  (logN,b,v): ({:8.4f}, {:8.4f}, {:8.4f})".format(orig_values.flatten()[0], orig_values.flatten()[1], orig_values.flatten()[2]))
+    derived_values = [estimate_parameter_single_cell(*theta_prime)[ijk] for ijk in range(3)]
+    print("Derived values are (logN,b,v): ({:8.4f}, {:8.4f}, {:8.4f})".format(derived_values[0],derived_values[1],derived_values[2]))
+
+    best_fit = model_guess(theta_prime,wave)
+
+    plt.step(wave,fnorm, label='Target Signal')
+    plt.plot(wave,best_fit,color='k',linewidth=1,label='mcmc')
+    plt.legend()
+    plt.ylim([0.,1.2])
+    
+    return best_fit
+    
+def make_corner_plots(sampler):
+    samples=sampler.chain[:, 100:, :].reshape((-1, ndim))#sampler.flatchain
+    st=np.median(samples,axis=0)#np.median(sampler.flatchain, axis=0)
+    figure=corner.corner(samples, labels=text_label, truths=st)
+    theta_prime=st
+
+    value1 =np.percentile(samples,32,axis=0)
+    value2 = np.percentile(samples,68,axis=0)    
+    axes = np.array(figure.axes).reshape((ndim, ndim))
+
+    # Loop over the diagonal
+    for i in range(ndim):
+        ax = axes[i, i]
+        ax.axvline(value1[i], color="aqua")
+        ax.axvline(value2[i], color="aqua")
+
+    # Loop over the histograms
+    for yi in range(ndim):
+        for xi in range(yi):
+            ax = axes[yi, xi]
+            ax.axvline(value1[xi],color="aqua")
+            ax.axvline(value2[xi],color="aqua")
+            #ax.axhline(value1[yi], color="g")
+            #ax.axhline(value2[yi], color="r")
+            #ax.plot(value1[xi], value1[yi], "sg")
+            #ax.plot(value2[xi], value2[yi], "sr")
+        
+#    best_fit = model_guess(theta_prime,wave)
+
+#    plt.step(wave,fnorm,linewidth=0.5)
+#    plt.step(wave,enorm,color='r',linewidth=0.5)
+
+#    ## Plot random solutions
+#    index=np.random.randint(0,high=len(samples), size=100)
+#    for i in range(len(index)):
+#	    plt.plot(wave,model_guess(samples[index[i],:],wave),color="k", alpha=0.1)
+
+    #plt.xlim([-500,1200])
+ #   plt.ylim([0,1.5])
+ #   plt.plot(wave,best_fit,color='r',linewidth=1)
+
+rho = 1e-4           # a semi-typical CGM density
+loc_cm = 3.086e+21   # a kpc
+solar =1.05
+f_c = 0.5
+vel_const = 0.
+Temp= 3e4
+
+logN_guess, b_guess, vel_p_guess= estimate_parameter_single_cell(np.log10(rho), np.log10(loc_cm), np.log10(solar), np.log10(f_c), vel_const, np.log10(Temp))
+    
+print(logN_guess, b_guess, vel_p_guess)
+
+theta=np.concatenate(([logN_guess],[b_guess],[vel_p_guess]))
+outflux_guess= s.model_flux(theta,wave)
+
+# Add error
+fnorm_guess= outflux_guess + np.random.normal(0., .02, len(wave))
+enorm_guess= 0.02 * np.ones((len(wave),))
+
+plt.step(wave,fnorm)
+plt.step(wave,fnorm_guess)
+plt.ylim([0.,1.2])
+
+perturbation=1e-1
+no_of_Chain=100
+no_of_steps=5000
+
+text_label=['rho', 'len', 'solar', 'f_c', 'vel_const', 'temp', 'lnf']
+lb   = [-10, 10, -4, -1, -500., 1, -np.inf]
+ub   = [2  , 25,  1,  0,  500., 9,  0.0   ]
+
+length_of_lb = len(lb)
+ndim, nwalkers = length_of_lb, no_of_Chain
+
+######## Computing Likelihoods######
+def lnprior(theta, lb, ub):
+    for index in range(0, len(lb)):
+        if (lb[index] > theta[index]) or (ub[index] < theta[index]):
+            #print("index,Lower,Upper,Actual")
+            #print(index,lb[index],ub[index],theta[index])
+            return -np.inf
+            break
+    return 0.0
+
+def lnlike(theta, model, x, y, yerr):
+    model_y = model(theta, x)
+#    inv_sigma2 = 1.0 / (yerr ** 2)
+    inv_sigma2 = 1.0/(yerr**2 + model_y**2*np.exp(2*theta[-1]))
+    return -0.5 * (np.sum((y - model_y) ** 2 * inv_sigma2 - np.log(inv_sigma2) ))
+
+def lnprob(theta, lb, ub, model, x, y, yerr):
+    lp = lnprior(theta, lb, ub)
+    if not np.isfinite(lp):
+        #print('prior violation...')
+        return -np.inf
+    return lp + lnlike(theta, model, x, y, yerr)
+
+def optimize_guess(model, theta, lb, ub, x, y, yerr):
+    nll = lambda *args: -lnprob(*args)
+    result = op.minimize(nll, [theta], args=(lb, ub, model, x, y, yerr))
+    p = result["x"]
+    return p
+
+rho    = 1e-3           # a semi-typical CGM density
+loc_cm = 3.086e+21      # a kpc
+solar  =1.05
+f_c    = 0.5
+vel_const = 0.
+temp   =3e5
+initial_beta_guess = [np.log10(rho), np.log10(loc_cm), np.log10(solar), np.log10(f_c), vel_const, np.log10(temp),  1e-5]
+
+
+beta = initial_beta_guess
+logN_, b_, vel_p_= estimate_parameter_single_cell(beta[0], beta[1], beta[2], beta[3], beta[4], beta[5])
+
+print("Current Starting Position")
+print(logN_, b_, vel_p_)
+print("Input values were (logN,b,v):")
+print(orig_values.flatten())
+#[ 0.14122014 22.17361361  0.1615893  -0.41391099 -0.32890792]
+
+
+print('Optimizing Guess ***********')
+popt = optimize_guess(model_guess, beta, lb, ub, wave, fnorm, enorm)
+print(popt)
+
+outflux_opt_guess= model_guess( popt, wave)
+
+# Add error
+fnorm_opt_guess= outflux_opt_guess #+ np.random.normal(0., .02, len(wave))
+enorm_opt_guess= 0.02 * np.ones((len(wave),))
+
+plt.step(wave,fnorm, label='Target Signal')
+plt.step(wave,fnorm_opt_guess, label='Optimized')
+plt.legend()
+plt.ylim([0.,1.2])
+
+guesses = [popt + perturbation * np.random.randn(ndim) for i in range(nwalkers)]
+print("Starting emcee ***********")
+burntime = np.round(no_of_steps * .2)
+sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, threads=8, args=(lb, ub, model_guess, wave, fnorm, enorm))
+print("Start Burntime Calculations ***********")
+
+pos, prob, state = sampler.run_mcmc(guesses, burntime)  #First Burning some steps
+sampler.reset()
+
+print("Done Burning Steps! Now starting the Final Calculations:")
+print("*****************")
+for i, result in enumerate(sampler.sample(pos, iterations=no_of_steps)):
+    n = int((width+1) * float(i) / no_of_steps)
+    sys.stdout.write("\r[{0}{1}]".format('#' * n, ' ' * (width - n)))
+sys.stdout.write("\n")
+
+best_fit = print_and_plot_results(sampler, wave, fnorm)
+
+make_corner_plots(sampler)
+
+wave=np.arange(1520.,1538.,0.01)
+# We are setting up 3 clumps at z = 0
+# For SiII 1526 absorption
+# With default 6.5 pixel FWHM of HST/COS and Gaussian convolution
+n_clouds = 3
+zabs=np.zeros((n_clouds))
+lambda_rest = 1526.9 * np.ones((n_clouds))
+s=m.create_voigt(zabs,lambda_rest)
+
+#Properties of the lines (column density, dopler b, velocity)
+logN=np.array([14.,13., 16.])
+b=np.array([20.,21.,29.])
+v=np.array([10.,-100.,-200.])
+theta=np.concatenate((logN,b,v))
+
+outflux= s.model_flux(theta,wave)
+orig_values = np.array([logN, b, v])
+
+# Add error
+fnorm= outflux + np.random.normal(0., .05, len(wave))
+enorm= 0.02 * np.ones((len(wave),))
+
+plt.step(wave,fnorm)
+plt.ylim([0.,1.2])
+
+beta = initial_beta_guess
+logN_, b_, vel_p_= estimate_parameter_single_cell(beta[0], beta[1], beta[2], beta[3], beta[4], beta[5])
+print("Current Starting Position (logN,b,vel_p): ({:8.4f},{:8.4f},{:8.4f})".format(logN_,b_,vel_p_))
+print("Input values were (logN,b,v): ({:8.4f},{:8.4f},{:8.4f})".format(orig_values.flatten()[0],orig_values.flatten()[1],orig_values.flatten()[2]))
+
+print('Optimizing Guess ***********')
+popt = optimize_guess(model_guess, beta, lb, ub, wave, fnorm, enorm)
+
+######
+guesses = [popt + perturbation * np.random.randn(ndim) for i in range(nwalkers)]
+print("Starting emcee ***********")
+burntime = np.round(no_of_steps * .2)
+sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, threads=8, args=(lb, ub, model_guess, wave, fnorm, enorm))
+print("Start Burntime Calculations ***********")
+
+pos, prob, state = sampler.run_mcmc(guesses, burntime)     #First Burning some steps
+sampler.reset()
+
+print("Done Burning Steps!  Now starting the Final Calculations:")
+for i, result in enumerate(sampler.sample(pos, iterations=no_of_steps)):
+    n = int((width+1) * float(i) / no_of_steps)
+    sys.stdout.write("\r[{0}{1}]".format('#' * n, ' ' * (width - n)))
+sys.stdout.write("\n")
+
+best_fit = print_and_plot_results(sampler, wave, fnorm)
+
+fnorm_2 = fnorm - best_fit + 1.0
+plt.step(wave,fnorm)
+plt.step(wave,best_fit)
+plt.plot(wave,fnorm_2)
+
+beta = initial_beta_guess
+logN_, b_, vel_p_= estimate_parameter_single_cell(beta[0], beta[1], beta[2], beta[3], beta[4], beta[5])
+
+print('Optimizing Guess ***********')
+popt = optimize_guess(model_guess, beta, lb, ub, wave, fnorm_2, enorm)
+
+guesses = [popt + perturbation * np.random.randn(ndim) for i in range(nwalkers)]
+print("Starting emcee ***********")
+burntime = np.round(no_of_steps * .2)
+sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, threads=8, args=(lb, ub, model_guess, wave, fnorm_2, enorm))
+print("Start Burntime Calculations ***********")
+
+pos, prob, state = sampler.run_mcmc(guesses, burntime) #First Burning some steps
+sampler.reset()
+
+print("Done Burning Steps!  Now starting the Final Calculations:")
+print("*****************")
+#Now Running mcmc
+for i, result in enumerate(sampler.sample(pos, iterations=no_of_steps)):
+    n = int((width+1) * float(i) / no_of_steps)
+    sys.stdout.write("\r[{0}{1}]".format('#' * n, ' ' * (width - n)))
+sys.stdout.write("\n")
+
+best_fit = print_and_plot_results(sampler, wave,fnorm_2)
+
+fnorm_3 = fnorm_2 - best_fit + 1.0
+plt.step(wave,fnorm)
+plt.step(wave,best_fit)
+plt.plot(wave,fnorm_3)
+
+wave=np.arange(1520.,1538.,0.01)
+# We are setting up 3 clumps at z = 0
+# For SiII 1526 absorption
+# With default 6.5 pixel FWHM of HST/COS and Gaussian convolution
+n_clouds = 3
+zabs=np.zeros((n_clouds))
+lambda_rest = 1526.9 * np.ones((n_clouds))
+s=m.create_voigt(zabs,lambda_rest)
+
+#Properties of the lines (column density, dopler b, velocity)
+logN=np.array([14.,13., 16.])
+b=np.array([20.,21.,29.])
+v=np.array([10.,-100.,-200.])
+theta=np.concatenate((logN,b,v))
+
+outflux= s.model_flux(theta,wave)
+orig_values = np.array([logN, b, v])
+
+# Add error
+fnorm= outflux + np.random.normal(0., .05, len(wave))
+enorm= 0.02 * np.ones((len(wave),))
+
+plt.step(wave,fnorm)
+perturbation=1e-1
+no_of_Chain=100
+no_of_steps=5000
+plt.ylim([0.,1.2])
+
+perturbation=1e-1
+no_of_Chain=10
+no_of_steps=1500
+
+plt.plot(wave,fnorm)
+plt.show()
+
+cloud_fluxes = np.ones(  (5,fnorm.shape[0])  )
+
+print(cloud_fluxes.shape)
+
+n_iterations = 5
+correction_factors= np.ones((n_iterations))
+correction_factors[0]=0.7
+correction_factors[1]=0.8
+correction_factors[1]=0.9
+
+orig_target = fnorm
+
+for iteration in range(n_iterations):
+    for cloud_number in range(2):
+        current_fitting_needs = orig_target
+        for cl_nr in range(2):
+            if(cloud_number != cl_nr):
+                current_fitting_needs -= (cloud_fluxes[cl_nr,:] - 1.0) * correction_factors[iteration]
+        plt.plot(wave,current_fitting_needs, label='Begin: Target')
+        plt.show()
+        
+        beta = initial_beta_guess
+        logN_, b_, vel_p_= estimate_parameter_single_cell(beta[0], beta[1], beta[2], beta[3], beta[4], beta[5])
+        #print("Current Starting Position (logN,b,vel_p): ({:8.4f},{:8.4f},{:8.4f})".format(logN_,b_,vel_p_))
+        #print("Input values were (logN,b,v): ({:8.4f},{:8.4f},{:8.4f})".format(orig_values.flatten()[0],orig_values.flatten()[1],orig_values.flatten()[2]))
+
+        print('Optimizing Guess ***********')
+        popt = optimize_guess(model_guess, beta, lb, ub, wave, current_fitting_needs, enorm)
+
+        ######
+        guesses = [popt + perturbation * np.random.randn(ndim) for i in range(nwalkers)]
+        print("Starting emcee ***********")
+        burntime = np.round(no_of_steps * .2)
+        sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, threads=8, args=(lb, ub, model_guess, wave, current_fitting_needs, enorm))
+        print("Start Burntime Calculations ***********")
+
+        pos, prob, state = sampler.run_mcmc(guesses, burntime)     #First Burning some steps
+        sampler.reset()
+
+        print("Done Burning Steps!  Now starting the Final Calculations:")
+        for i, result in enumerate(sampler.sample(pos, iterations=no_of_steps)):
+            n = int((width+1) * float(i) / no_of_steps)
+            sys.stdout.write("\r[{0}{1}]".format('#' * n, ' ' * (width - n)))
+        sys.stdout.write("\n")
+
+        cloud_fluxes[cloud_number,:] = print_and_plot_results(sampler, wave, current_fitting_needs)
+        plt.show()
+
+        plt.step(wave,orig_target)
+
+        current_fitting_needs = orig_target
+        for cl_nr in range(2):
+            current_fitting_needs -= (cloud_fluxes[cl_nr,:] - 1.0)
+            plt.step(wave,cloud_fluxes[cl_nr,:], label="Cloud {:d}".format(cl_nr))
+
+        plt.plot(wave,current_fitting_needs,label='remaining')
+        plt.legend()
+        plt.show()
+
+

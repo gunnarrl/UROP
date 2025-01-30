@@ -1,0 +1,411 @@
+import numpy as np
+import autograd.numpy as npa
+
+import copy
+
+import matplotlib as mpl
+mpl.rcParams['figure.dpi']=100
+
+import matplotlib.pylab as plt
+
+from autograd.scipy.signal import convolve as conv
+from skimage.draw import circle
+
+import ceviche
+from ceviche import fdfd_ez, jacobian
+from ceviche.optimizers import adam_optimize
+from ceviche.modes import insert_mode
+
+import collections
+# Create a container for our slice coords to be used for sources and probes
+Slice = collections.namedtuple('Slice', 'x y')
+
+# Projection that drives rho towards a "binarized" design with values either 0 or 1 
+def operator_proj(rho, eta=0.5, beta=100, N=1):
+    """Density projection
+    eta     : Center of the projection between 0 and 1
+    beta    : Strength of the projection
+    N       : Number of times to apply the projection
+    """
+    for i in range(N):
+        rho =  npa.divide(npa.tanh(beta * eta) + npa.tanh(beta * (rho - eta)), 
+                          npa.tanh(beta * eta) + npa.tanh(beta * (1 - eta)))
+    
+    return rho
+
+# Blurring filter that results in smooth features of the structure
+# First we define a function to create the kernel
+def _create_blur_kernel(radius):
+    """Helper function used below for creating the conv kernel"""
+    rr, cc = circle(radius, radius, radius+1)
+    kernel = np.zeros((2*radius+1, 2*radius+1), dtype=np.float)
+    kernel[rr, cc] = 1
+    return  kernel/kernel.sum()
+
+# Then we define the function to apply the operation
+def operator_blur(rho, radius=2, N=1):
+    """Blur operator implemented via two-dimensional convolution
+    radius    : Radius of the circle for the conv kernel filter
+    N         : Number of times to apply the filter
+    
+    Note that depending on the radius, the kernel is not always a
+    perfect circle due to "pixelation" / stair casing
+    """
+    
+    kernel = _create_blur_kernel(radius)
+    
+    for i in range(N):
+        # For whatever reason HIPS autograd doesn't support 'same' mode, so we need to manually crop the output
+        rho = conv(rho, kernel, mode='full')[radius:-radius,radius:-radius]
+    
+    return rho
+
+# Specify a range of values for the blur radius
+blur_radii = [2, 3, 4, 5, 6]
+
+# Number of times to apply the blur filter
+N_blur = 1
+
+# Define a random 2D array to test our blur filter on
+rho = np.random.rand(50, 50)
+
+# Create a figure with panels to plot into
+fig, axs = plt.subplots(2, len(blur_radii)+1,figsize=(12,4), constrained_layout=True)
+
+# First, plot a dummy conv filter
+axs[0,0].set_title('Initial random image')
+axs[0,0].imshow(np.zeros((1,1)), vmin=0, cmap='Greys')
+# And also plot the initial random image
+axs[1,0].imshow(rho)
+
+# Now, loop over the blur radii and visualize each result
+for i, radius in enumerate(blur_radii):
+    kernel = _create_blur_kernel(radius)
+    
+    kernel_pad = np.pad(kernel, (2+np.max(blur_radii)-radius, 2+np.max(blur_radii)-radius),
+                        'constant', constant_values=(0, 0))
+    axs[0,i+1].imshow(kernel_pad, vmin=0)
+    
+    axs[0,i+1].set_title('radius = %d' % radius)
+
+    rho_p = operator_blur(rho, radius=radius, N=N_blur)
+    axs[1,i+1].imshow(rho_p)
+
+axs[0,0].set_yticks([])
+axs[0,0].set_xticks([])
+axs[0,0].set_ylabel('Conv filter')
+axs[1,0].set_ylabel('Image')
+
+fig.align_labels()
+plt.show()
+
+rho = np.linspace(-0.5, +1.5, 999)
+
+# Visualize different values of the projection strength
+plt.figure()
+for beta in [5, 10, 50, 100]:
+    plt.plot(rho, operator_proj(rho, beta=beta), label=r"$\beta$ = %d" % beta)
+
+plt.xlabel(r"Input $\rho$")
+plt.ylabel(r"Projected $\hat{\rho}$")
+plt.legend()
+plt.show()
+
+# Specify a range of values for the blur radius
+blur_radii = [2, 3, 4, 5, 6, 10]
+
+# Number of times to apply the blur filter
+N_blur = 1
+
+# Number of times to apply the projection operator
+N_proj = 1
+
+# Specify beta value to use for projection
+beta = 200
+
+# Specify eta value to use for projection
+eta = 0.5
+
+# Define a random 2D array to test our blur filter on
+rho = np.random.rand(100, 100)
+
+# Create a figure with panels to plot into
+fig, axs = plt.subplots(2, len(blur_radii)+1,figsize=(12,4), constrained_layout=True)
+
+# First, plot a dummy conv filter
+axs[0,0].set_title('Initial random image')
+axs[0,0].imshow(np.zeros((1,1)), vmin=0, cmap='Greys')
+# And also plot the initial random image
+axs[1,0].imshow(rho)
+
+# Now, loop over the blur radii and visualize each result
+for i, radius in enumerate(blur_radii):
+    kernel = _create_blur_kernel(radius)
+    
+    kernel_pad = np.pad(kernel, (2+np.max(blur_radii)-radius, 2+np.max(blur_radii)-radius),
+                        'constant', constant_values=(0, 0))
+    axs[0,i+1].imshow(kernel_pad, vmin=0)
+    
+    axs[0,i+1].set_title('radius = %d' % radius)
+
+    rho_p = operator_blur(rho, radius=radius, N=N_blur)
+    rho_p = operator_proj(rho_p, beta=beta, eta=eta, N=N_proj)
+    axs[1,i+1].imshow(rho_p)
+
+axs[0,0].set_yticks([])
+axs[0,0].set_xticks([])
+axs[0,0].set_ylabel('Conv filter')
+axs[1,0].set_ylabel('Image')
+
+fig.align_labels()
+plt.show()
+
+# Angular frequency of the source in 1/s
+omega=2*np.pi*200e12
+# Spatial resolution in meters
+dl=40e-9
+# Number of pixels in x-direction
+Nx=120
+# Number of pixels in y-direction
+Ny=120
+# Number of pixels in the PMLs in each direction
+Npml=20
+# Minimum value of the relative permittivity
+epsr_min=1.0
+# Maximum value of the relative permittivity
+epsr_max=12.0
+# Radius of the smoothening features
+blur_radius=5
+# Number of times to apply the blur
+N_blur=1
+# Strength of the binarizing projection
+beta=500.0
+# Middle point of the binarizing projection
+eta=0.5
+# Number of times to apply the blur
+N_proj=1
+# Space between the PMLs and the design region (in pixels)
+space=10
+# Width of the waveguide (in pixels)
+wg_width=12
+# Length in pixels of the source/probe slices on each side of the center point
+space_slice=8
+
+# Number of epochs in the optimization 
+Nsteps=50
+# Step size for the Adam optimizer
+step_size=5e-3
+
+def init_domain(Nx, Ny, Npml, space=10, wg_width=10, space_slice=5):
+    """Initializes the domain and design region
+
+    space       : The space between the PML and the structure
+    wg_width    : The feed and probe waveguide width
+    space_slice : The added space for the probe and source slices
+    """
+    rho = np.zeros((Nx, Ny))  
+    bg_rho = np.zeros((Nx, Ny))  
+    design_region = np.zeros((Nx, Ny))
+    
+    # Input waveguide
+    bg_rho[0:int(Npml+space),int(Ny/2-wg_width/2):int(Ny/2+wg_width/2)] = 1
+
+    # Input probe slice
+    input_slice = Slice(x=np.array(Npml+1), 
+        y=np.arange(int(Ny/2-wg_width/2-space_slice), int(Ny/2+wg_width/2+space_slice)))
+    
+    # Output waveguide 
+    bg_rho[int(Nx-Npml-space)::,int(Ny/2-wg_width/2):int(Ny/2+wg_width/2)] = 1
+    
+    # Output probe slice
+    output_slice = Slice(x=np.array(Nx-Npml-1), 
+                         y=np.arange(int(Ny/2-wg_width/2-space_slice), int(Ny/2+wg_width/2+space_slice)))
+    
+    design_region[Npml+space:Nx-Npml-space, Npml+space:Ny-Npml-space] = 1
+    
+    # Const init
+    rho[Npml+space:Nx-Npml-space, Npml+space:Ny-Npml-space] = 0.5
+    # Random init
+    # rho = design_region * np.random.rand(Nx, Ny)
+
+    return rho, bg_rho, design_region, input_slice, output_slice
+
+def viz_sim(epsr, source, slices=[]):
+    """Solve and visualize a simulation with permittivity 'epsr'
+    """
+    simulation = fdfd_ez(omega, dl, epsr, [Npml, Npml])
+    Hx, Hy, Ez = simulation.solve(source)
+    
+    fig, ax = plt.subplots(1, 2, constrained_layout=True, figsize=(6,3))
+    ceviche.viz.real(Ez, outline=epsr, ax=ax[0], cbar=False)
+    for sl in slices:
+        ax[0].plot(sl.x*np.ones(len(sl.y)), sl.y, 'b-')
+    ceviche.viz.abs(epsr, ax=ax[1], cmap='Greys');
+    plt.show()
+    
+    return (simulation, ax)
+
+def mask_combine_rho(rho, bg_rho, design_region):
+    """Utility function for combining the design region rho and the background rho
+    """
+    return rho*design_region + bg_rho*(design_region==0).astype(np.float)
+
+def epsr_parameterization(rho, bg_rho, design_region, radius=2, N_blur=1, beta=100, eta=0.5, N_proj=1):
+    """Defines the parameterization steps for constructing rho
+    """
+    # Combine rho and bg_rho; Note: this is so the subsequent blur sees the waveguides
+    rho = mask_combine_rho(rho, bg_rho, design_region)
+    
+    rho = operator_blur(rho, radius=radius, N=N_blur)
+    rho = operator_proj(rho, beta=beta, eta=eta, N=N_proj)
+    
+    # Final masking undoes the blurring of the waveguides
+    rho = mask_combine_rho(rho, bg_rho, design_region)
+    
+    return epsr_min + (epsr_max-epsr_min) * rho
+
+def mode_overlap(E1, E2):
+    """Defines an overlap integral between the sim field and desired field
+    """
+    return npa.abs(npa.sum(npa.conj(E1)*E2))
+
+# Initialize the parametrization rho and the design region
+rho, bg_rho, design_region, input_slice, output_slice = \
+    init_domain(Nx, Ny, Npml, space=space, wg_width=wg_width, space_slice=space_slice)
+
+# Compute the permittivity from rho_init, including blurring and projection
+epsr_init = epsr_parameterization(rho, bg_rho, design_region, \
+                                  radius=blur_radius, N_blur=N_blur, beta=beta, eta=eta, N_proj=N_proj)
+
+# Setup source
+source = insert_mode(omega, dl, input_slice.x, input_slice.y, epsr_init, m=1)
+
+# Setup probe
+probe = insert_mode(omega, dl, output_slice.x, output_slice.y, epsr_init, m=2)
+
+# Simulate initial device
+simulation, ax = viz_sim(epsr_init, source, slices=[input_slice, output_slice])
+
+# get normalization factor (field overlap before optimizing)
+_, _, Ez = simulation.solve(source)
+E0 = mode_overlap(Ez, probe)
+
+def objective(rho):
+    """Objective function called by optimizer
+    
+    1) Takes the density distribution as input
+    2) Constructs epsr
+    2) Runs the simulation
+    3) Returns the overlap integral between the output wg field 
+       and the desired mode field
+    """
+    rho = rho.reshape((Nx, Ny))
+    epsr = epsr_parameterization(rho, bg_rho, design_region, \
+                             radius=blur_radius, N_blur=N_blur, beta=beta, eta=eta, N_proj=N_proj)
+    simulation.eps_r = epsr
+    _, _, Ez = simulation.solve(source)
+    return mode_overlap(Ez, probe) / E0
+
+# Compute the gradient of the objective function using revere-mode differentiation
+objective_jac = jacobian(objective, mode='reverse')
+
+# Maximize the objective function using an ADAM optimizer
+(rho_optimum, loss) = adam_optimize(objective, rho.flatten(), objective_jac,
+                         Nsteps=Nsteps, direction='max', step_size=step_size)
+
+# Simulate optimal device
+rho_optimum = rho_optimum.reshape((Nx, Ny))
+epsr = epsr_parameterization(rho_optimum, bg_rho, design_region, \
+                                  radius=blur_radius, N_blur=N_blur, beta=beta, eta=eta, N_proj=N_proj)
+
+viz_sim(epsr, source, slices=[input_slice, output_slice]);
+
+fig, axs = plt.subplots(1,3,constrained_layout=True,sharex=True,sharey=True, figsize=(8.5,3))
+Z = mask_combine_rho(rho_optimum, bg_rho, design_region)
+ceviche.viz.abs(Z, cmap='Greys', ax=axs[0])
+axs[0].set_xlabel('')
+axs[0].set_xticks([])
+axs[0].set_ylabel('')
+axs[0].set_yticks([])
+axs[0].set_title('Raw input density')
+
+Z = mask_combine_rho(rho_optimum, bg_rho, design_region)
+Z = operator_blur(Z, radius=blur_radius, N=N_blur)
+# Z = operator_proj(Z, beta=beta, eta=eta)
+Z = mask_combine_rho(Z, bg_rho, design_region)
+ceviche.viz.abs(Z, cmap='Greys', ax=axs[1])
+axs[1].set_xlabel('')
+axs[1].set_ylabel('')
+axs[1].set_title('Blurred density')
+
+Z = rho_optimum
+Z = mask_combine_rho(Z, bg_rho, design_region)
+Z = operator_blur(Z, radius=blur_radius, N=N_blur)
+Z = operator_proj(Z, beta=beta, eta=eta, N=N_proj)
+Z = mask_combine_rho(Z, bg_rho, design_region)
+ceviche.viz.abs(Z, cmap='Greys', ax=axs[2])
+axs[2].set_xlabel('')
+axs[2].set_ylabel('')
+axs[2].set_title('Projected density (final structure)');
+
+def objective(rho, penalty_weight=1e8): 
+    rho = rho.reshape((Nx, Ny))
+    epsr = epsr_parameterization(rho, bg_rho, design_region, \
+                             radius=blur_radius, N_blur=N_blur, beta=beta, eta=eta, N_proj=N_proj)
+    simulation.eps_r = epsr
+    _, _, Ez = simulation.solve(source)
+    
+    # This penalty term is directly proportional to the material area
+    # penalty = penalty_weight * (design_region*(epsr-1)).sum() # penalty_weight = 1e-10
+    
+    # This penalty term is the L2-norm of the raw density
+    penalty = penalty_weight * npa.linalg.norm(rho)
+    
+    return mode_overlap(Ez, probe) / E0 - penalty
+
+# Initialize the parametrization rho and the design region
+rho, bg_rho, design_region, input_slice, output_slice = \
+    init_domain(Nx, Ny, Npml, space=space, wg_width=wg_width, space_slice=space_slice)
+
+# Compute the permittivity from rho_init, including blurring and projection
+epsr_init = epsr_parameterization(rho, bg_rho, design_region, \
+                                  radius=blur_radius, N_blur=N_blur, beta=beta, eta=eta, N_proj=N_proj)
+
+# Setup source
+source = insert_mode(omega, dl, input_slice.x, input_slice.y, epsr_init, m=1)
+
+# Setup probe
+probe = insert_mode(omega, dl, output_slice.x, output_slice.y, epsr_init, m=2)
+
+# Simulate initial device
+viz_sim(epsr_init, source, slices=[input_slice, output_slice])
+
+# Run optimization
+objective_jac = jacobian(objective, mode='reverse')
+(rho_optimum, loss) = adam_optimize(objective, rho.flatten(), objective_jac,
+                         Nsteps=Nsteps, direction='max', step_size=step_size)
+
+# Simulate optimal device
+rho_optimum = rho_optimum.reshape((Nx, Ny))
+epsr_pen = epsr_parameterization(rho_optimum, bg_rho, design_region, \
+                                  radius=blur_radius, N_blur=N_blur, beta=beta, eta=eta, N_proj=N_proj)
+viz_sim(epsr_pen, source, slices=[input_slice, output_slice]);
+
+# Calculate areas
+def calc_design_area(design_region, epsr_max, epsr_min, epsr, dl):
+    """Computes the area of material used in the design region
+    """
+    A = ((epsr-epsr_min)/epsr_max * design_region).sum() * dl**2 * 1e12
+    A_design_region = design_region.sum() * (dl)**2 * 1e12
+    return A, A_design_region
+
+_, A_design_region = calc_design_area(design_region, epsr_max, epsr_min, epsr, dl)
+A_original, _ = calc_design_area(design_region, epsr_max, epsr_min, epsr, dl)
+A_pen, _ = calc_design_area(design_region, epsr_max, epsr_min, epsr_pen, dl)
+
+# Print summary
+print('Design region area: %.2f um^2' % A_design_region)
+print('Unpenalized design area: %.2f um^2' % A_original)
+print('Penalized design area: %.2f um^2' % A_pen)
+print('---')
+print('Improvement: %.2f%%' % (100*(1-A_pen/A_original)))

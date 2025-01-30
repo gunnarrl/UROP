@@ -1,0 +1,102 @@
+import pandas as pd
+
+df = pd.read_csv('olympics.csv', index_col=0, skiprows=1)
+
+for col in df.columns:
+    if col[:2]=='01':
+        df.rename(columns={col:'Gold'+col[4:]}, inplace=True)
+    if col[:2]=='02':
+        df.rename(columns={col:'Silver'+col[4:]}, inplace=True)
+    if col[:2]=='03':
+        df.rename(columns={col:'Bronze'+col[4:]}, inplace=True)
+    if col[:1]=='№':
+        df.rename(columns={col:'#'+col[1:]}, inplace=True)
+
+names_ids = df.index.str.split('\s\(') # split the index by '('
+
+df.index = names_ids.str[0] # the [0] element is the country name (new index) 
+df['ID'] = names_ids.str[1].str[:3] # the [1] element is the abbreviation or ID (take first 3 characters from that)
+
+df = df.drop('Totals')
+df.head()
+
+# You should write your whole answer within the function provided. The autograder will call
+# this function and compare the return value against the correct solution value
+def answer_zero():
+    # This function returns the row for Afghanistan, which is a Series object. The assignment
+    # question description will tell you the general format the autograder is expecting
+    return df.iloc[0]
+
+# You can examine what your function returns by calling it in the cell. If you have questions
+# about the assignment formats, check out the discussion forums for any FAQs
+answer_zero() 
+
+def answer_one():
+    return df[df['Gold'] == max(df['Gold'])].iloc[0].name
+
+answer_one()
+
+def answer_two():
+    return df.loc[(df['Gold'] - df['Gold.1']).idxmax()].name
+
+answer_two()
+
+def answer_three():
+    df_1 = df[(df['Gold']>=1) & (df['Gold.1']>=1)]
+    return df_1.loc[(abs(df_1['Gold'].astype('f') - df_1['Gold.1'].astype('f'))/df_1['Gold.2'].astype('f')).idxmax()].name
+
+abs(-1)
+
+answer_three()
+
+def answer_four():
+    points = df['Gold.2']*3 + df['Silver.2']*2 + df['Bronze.2']*1
+    points.rename('Points', inplace=True)
+    return points
+
+answer_four()
+
+census_df = pd.read_csv('census.csv')
+census_df.head()
+
+def answer_five():
+    census_df_50 = census_df[census_df['SUMLEV'] == 50]
+    #census_df_50 = census_df_50.reset_index()
+    #census_df_50 = census_df_50.set_index(['STNAME'])
+    census_df_50 = census_df_50.groupby(['STNAME']).sum()
+    
+    return census_df_50.loc[census_df_50['COUNTY'].idxmax()].name
+
+answer_five()
+
+def answer_six():
+    census_df_50 = census_df[census_df['SUMLEV'] == 50]
+    census_df_50 = census_df_50.groupby(['STNAME'])['CENSUS2010POP'].nlargest(3)
+    census_df_50 = census_df_50.reset_index()
+    census_df_50 = census_df_50.groupby(['STNAME']).sum()
+    census_df_50= census_df_50.sort(['CENSUS2010POP'], ascending=False)[:3]
+    return list(census_df_50.index)
+
+answer_six()
+
+def answer_seven():
+    census_df_50 = census_df[census_df['SUMLEV'] == 50]
+    #census_df_50 = census_df_50.reset_index()
+    #census_df_50 = census_df_50.set_index(['STNAME'])
+    col_list = ['POPESTIMATE2010', 'POPESTIMATE2011','POPESTIMATE2012','POPESTIMATE2013','POPESTIMATE2014', 'POPESTIMATE2015']
+    census_df_50 = census_df_50.groupby(['CTYNAME']).sum()
+    
+    census_df_50['POPE_DIFF_ABS'] = census_df_50[col_list].max(axis=1) - census_df_50[col_list].min(axis=1) 
+    #census_df_50 = census_df_50.sort(['POPE_DIFF_ABS'], ascending=False).iloc[0]
+    return census_df_50.loc[census_df_50['POPE_DIFF_ABS'].idxmax()].name
+
+answer_seven()
+
+def answer_eight():
+    census_df_50 = census_df[census_df['SUMLEV'] == 50]
+    census_df_50 = census_df_50[(census_df_50['REGION'] == 1) |(census_df_50['REGION'] == 2 )]
+    census_df_50 = census_df_50[census_df_50['CTYNAME'].str.startswith('Washington')]
+    census_df_50 = census_df_50[census_df_50['POPESTIMATE2015'] > census_df_50['POPESTIMATE2014'] ]
+    return census_df_50.filter(items=['STNAME', 'CTYNAME'])
+
+answer_eight()

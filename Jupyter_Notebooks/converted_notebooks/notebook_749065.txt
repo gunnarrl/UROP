@@ -1,0 +1,279 @@
+import os.path
+from IPython.display import Image
+
+from util import Util
+u = Util()
+
+import numpy as np
+# Explicit random seed for reproducibility
+np.random.seed(1337)
+
+# Used for progress bar callback
+# Use only in Jupyter Notebooks
+import uuid
+from IPython.display import HTML, Javascript, display
+
+from keras.callbacks import ModelCheckpoint, Callback
+from keras.models import Sequential
+from keras.layers import Dense, Dropout, Activation, Flatten
+from keras.layers import Convolution2D, MaxPooling2D
+from keras.utils import np_utils
+from keras.preprocessing.image import ImageDataGenerator
+from keras.layers import Merge
+from keras import backend as K
+
+import dataset_generator as dataset
+
+batch_size = 512
+nb_classes = 22
+nb_epoch = 800
+# checkpoint path
+checkpoints_dir = os.path.join("checkpoints", "09_22-classes")
+
+# number of networks for ensamble learning
+number_of_models = 5
+
+# input image dimensions
+img_rows, img_cols = 34, 56
+# number of convolutional filters to use
+nb_filters1 = 50
+nb_filters2 = 100
+# size of pooling area for max pooling
+pool_size1 = (2, 2)
+pool_size2 = (3, 3)
+# convolution kernel size
+kernel_size1 = (4, 4)
+kernel_size2 = (5, 5)
+# dense layer size
+dense_layer_size1 = 250
+# dropout rate
+dropout = 0.15
+# activation
+activation = 'relu'
+
+(X_train, y_train, X_test, y_test, labels) = dataset.generate_all_chars_with_class(verbose=0, plot=True)
+
+idx = np.random.choice(np.arange(len(X_train)), 9, replace=False)
+u.plot_images(X_train[idx], labels[y_train[idx]], img_shape=(56,34))
+idx = np.random.choice(np.arange(len(X_train)), 9, replace=False)
+u.plot_images(X_train[idx], labels[y_train[idx]], img_shape=(56,34))
+idx = np.random.choice(np.arange(len(X_train)), 9, replace=False)
+u.plot_images(X_train[idx], labels[y_train[idx]], img_shape=(56,34))
+
+if K.image_dim_ordering() == 'th':
+    X_train = X_train.reshape(X_train.shape[0], 1, img_rows, img_cols)
+    X_test = X_test.reshape(X_test.shape[0], 1, img_rows, img_cols)
+    input_shape = (1, img_rows, img_cols)
+else:
+    X_train = X_train.reshape(X_train.shape[0], img_rows, img_cols, 1)
+    X_test = X_test.reshape(X_test.shape[0], img_rows, img_cols, 1)
+    input_shape = (img_rows, img_cols, 1)
+
+X_train = X_train.astype('float32')
+X_test = X_test.astype('float32')
+X_train /= 255
+X_test /= 255
+print('X_train shape:', X_train.shape)
+print(X_train.shape[0], 'train samples')
+print(X_test.shape[0], 'test samples')
+
+# convert class vectors to binary class matrices
+Y_train = np_utils.to_categorical(y_train, nb_classes)
+Y_test = np_utils.to_categorical(y_test, nb_classes)
+
+datagen = ImageDataGenerator(
+    rotation_range=30,
+    width_shift_range=0.05,
+    height_shift_range=0.05,
+    zoom_range=0.1,
+    horizontal_flip=False)
+
+# compute quantities required for featurewise normalization
+# (std, mean, and principal components if ZCA whitening is applied)
+datagen.fit(X_train)
+
+def initialize_network(model, dropout1=dropout, dropout2=dropout):
+    model.add(Convolution2D(nb_filters1, kernel_size1[0], kernel_size1[1],
+                            border_mode='valid',
+                            input_shape=input_shape, name='covolution_1_' + str(nb_filters1) + '_filters'))
+    model.add(Activation(activation, name='activation_1_' + activation))
+    model.add(MaxPooling2D(pool_size=pool_size1, name='max_pooling_1_' + str(pool_size1) + '_pool_size'))
+    model.add(Convolution2D(nb_filters2, kernel_size2[0], kernel_size2[1]))
+    model.add(Activation(activation, name='activation_2_' + activation))
+    model.add(MaxPooling2D(pool_size=pool_size2, name='max_pooling_1_' + str(pool_size2) + '_pool_size'))
+    model.add(Dropout(dropout))
+
+    model.add(Flatten())
+    model.add(Dense(dense_layer_size1, name='fully_connected_1_' + str(dense_layer_size1) + '_neurons'))
+    model.add(Activation(activation, name='activation_3_' + activation))
+    model.add(Dropout(dropout))
+    model.add(Dense(nb_classes, name='output_' + str(nb_classes) + '_neurons'))
+    model.add(Activation('softmax', name='softmax'))
+
+    model.compile(loss='categorical_crossentropy',
+                  optimizer='adadelta',
+                  metrics=['accuracy', 'precision', 'recall'])
+
+# pseudo random generation of seeds
+seeds = np.random.randint(10000, size=number_of_models)
+
+# initializing all the models
+models = [None] * number_of_models
+
+for i in range(number_of_models):
+    models[i] = Sequential()
+    initialize_network(models[i])
+
+def try_load_checkpoints(model, checkpoints_filepath, warn=False):
+    # loading weights from checkpoints 
+    if os.path.exists(checkpoints_filepath):
+        model.load_weights(checkpoints_filepath)
+    elif warn: 
+        print('Warning: ' + checkpoints_filepath + ' could not be loaded')
+
+def fit(model, checkpoints_name='test', seed=1337, initial_epoch=0, 
+        verbose=1, window_size=(-1), plot_history=False, evaluation=True, show_progress=True):
+    
+    if window_size == (-1):
+        window = 10 + np.random.randint(40)
+    else:
+        window = window_size
+    if window >= nb_epoch:
+        window = nb_epoch - 1
+    
+    print("Not pre-processing " + str(window) + " epoch(s)")
+    
+    checkpoints_filepath = os.path.join(checkpoints_dir, '09_ICR_weights.best_' + checkpoints_name + '.hdf5')
+
+    try_load_checkpoints(model, checkpoints_filepath, True)
+    
+    # checkpoint
+    checkpoint = ModelCheckpoint(checkpoints_filepath, monitor='val_precision', verbose=verbose, save_best_only=True, mode='max')
+    
+    # Use only in Jupyter Notebooks
+    class Progress(Callback):
+        def on_train_begin(self, logs={}):
+            print("Training... ")
+            self.divid = str(uuid.uuid4())
+            pb = HTML(
+            """
+            <div style="border: 1px solid black; width:500px">
+              <div id="%s" style="background-color:blue; width:0%%">&nbsp;</div>
+            </div> 
+            """ % self.divid)
+            display(pb)
+
+        def on_train_end(self, logs={}):
+            display(Javascript("$('div#%s').width('%i%%')" % (self.divid, 100)))
+            print("Training ended!")
+
+        def on_epoch_end(self, epoch, logs={}):
+            display(Javascript("$('div#%s').width('%i%%')" % (self.divid, 100 * epoch/nb_epoch)))
+    
+    if show_progress:
+        progress = Progress()
+        callbacks_list = [checkpoint, progress]
+    else:
+        callbacks_list = [checkpoint]
+
+    # fits the model on batches with real-time data augmentation, for nb_epoch-100 epochs
+    history = model.fit_generator(datagen.flow(X_train, Y_train, 
+                                               batch_size=batch_size, 
+                                               # save_to_dir='distorted_data', 
+                                               # save_format='png'
+                                               seed=1337),
+                            samples_per_epoch=len(X_train), nb_epoch=(nb_epoch-window), verbose=0, 
+                            validation_data=(X_test, Y_test), callbacks=callbacks_list)
+
+    # ensuring best val_precision reached during training
+    try_load_checkpoints(model, checkpoints_filepath)
+
+    # fits the model on clear training set, for nb_epoch-700 epochs
+    history_cont = model.fit(X_train, Y_train, batch_size=batch_size, nb_epoch=window,
+                                    verbose=0, validation_data=(X_test, Y_test), callbacks=callbacks_list)
+
+    # ensuring best val_precision reached during training
+    try_load_checkpoints(model, checkpoints_filepath)
+    
+    if plot_history:
+        print("History: ")
+        u.plot_history(history)
+        u.plot_history(history, 'precision')
+        print("Continuation of training with no pre-processing:")
+        u.plot_history(history_cont)
+        u.plot_history(history_cont, 'precision')
+    if evaluation:
+        print('Evaluating model ' + str(index))
+        score = model.evaluate(X_test, Y_test, verbose=0)
+        print('Test accuracy:', score[1]*100, '%')
+        print('Test error:', (1-score[2])*100, '%')
+        
+    return history, history_cont
+
+for index in range(number_of_models):
+    print("Training model " + str(index) + " ...")
+    if index == 0:
+        window_size = 30
+        plot_history = True
+    else:
+        window_size = (-1)
+        plot_history = False
+    history, history_cont = fit(models[index], 
+                                str(index), 
+                                seed=seeds[index],
+                                initial_epoch=0,
+                                verbose=0, 
+                                window_size=window_size, 
+                                plot_history=plot_history)
+    print("Done.\n\n")
+
+merged_model = Sequential()
+merged_model.add(Merge(models, mode='ave'))
+
+merged_model.compile(loss='categorical_crossentropy',
+                     optimizer='adadelta',
+                     metrics=['accuracy', 'precision', 'recall'])
+
+print('Evaluating ensemble')
+score = merged_model.evaluate([np.asarray(X_test)] * number_of_models, 
+                              Y_test, 
+                              verbose=0)
+print('Test accuracy:', score[1]*100, '%')
+print('Test error:', (1-score[2])*100, '%')
+print('Test recall:', score[3]*100, '%')
+
+# The predict_classes function outputs the highest probability class
+# according to the trained classifier for each input example.
+predicted_classes = merged_model.predict_classes([np.asarray(X_test)] * number_of_models)
+
+# Check which items we got right / wrong
+correct_indices = np.nonzero(predicted_classes == y_test)[0]
+incorrect_indices = np.nonzero(predicted_classes != y_test)[0]
+
+idx = np.random.choice(np.arange(len(correct_indices)), 9, replace=False)
+u.plot_images(X_test[correct_indices[idx]], y_test[correct_indices[idx]], 
+              predicted_classes[correct_indices[idx]], img_shape=(56,34), 
+              with_labels=True, labels=labels)
+idx = np.random.choice(np.arange(len(correct_indices)), 9, replace=False)
+u.plot_images(X_test[correct_indices[idx]], y_test[correct_indices[idx]], 
+              predicted_classes[correct_indices[idx]], img_shape=(56,34), 
+              with_labels=True, labels=labels)
+idx = np.random.choice(np.arange(len(correct_indices)), 9, replace=False)
+u.plot_images(X_test[correct_indices[idx]], y_test[correct_indices[idx]], 
+              predicted_classes[correct_indices[idx]], img_shape=(56,34), 
+              with_labels=True, labels=labels)
+
+idx = np.random.choice(np.arange(len(incorrect_indices)), 9, replace=False)
+u.plot_images(X_test[incorrect_indices[idx]], y_test[incorrect_indices[idx]], 
+              predicted_classes[incorrect_indices[idx]], img_shape=(56,34), 
+              with_labels=True, labels=labels)
+idx = np.random.choice(np.arange(len(incorrect_indices)), 9, replace=False)
+u.plot_images(X_test[incorrect_indices[idx]], y_test[incorrect_indices[idx]], 
+              predicted_classes[incorrect_indices[idx]], img_shape=(56,34), 
+              with_labels=True, labels=labels)
+idx = np.random.choice(np.arange(len(incorrect_indices)), 9, replace=False)
+u.plot_images(X_test[incorrect_indices[idx]], y_test[incorrect_indices[idx]], 
+              predicted_classes[incorrect_indices[idx]], img_shape=(56,34), 
+              with_labels=True, labels=labels)
+
+u.plot_confusion_matrix(y_test, nb_classes, predicted_classes, with_labels=True, labels=labels)

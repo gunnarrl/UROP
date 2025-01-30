@@ -1,0 +1,142 @@
+import pandas as pd
+import glob
+import json
+import re 
+
+
+data_sources = glob.glob("data_sources/*")
+print("> Your available sources are: %s" % ", ".join(data_sources))
+
+all_apps = pd.read_csv("data_sources/apps.csv", error_bad_lines=False, encoding = "ISO-8859-1")
+
+metadata_file = open("data_sources/meta_Apps_for_Android.json", "r") 
+reviews_file = open("data_sources/reviews_Apps_for_Android.json", "r")
+
+
+def parse(file):
+    for l in file:
+        yield eval(l)
+    
+def get_df(file):
+    i = 0
+    df = {}
+    for d in parse(file):
+        df[i] = d
+        i += 1
+    return pd.DataFrame.from_dict(df, orient='index')
+
+metadata_df = get_df(metadata_file)
+reviews_df = get_df(reviews_file)
+
+
+# Delete apps name that contains , or ; because this in csv format is another column, and this will crash in Neo4j.
+# also delete this which its name is only ???? due to them contain extrange characters.
+all_apps = all_apps.dropna()
+all_apps = all_apps[[False if ',' in app or '?' in app or ';' in app or '"' in app else True for app in  all_apps['name']]]
+apps_name = list(all_apps['name'])
+
+# Delete nan from metadata and reviews
+metadata_df = metadata_df[['asin', 'related', 'categories']].dropna()
+reviews_df = reviews_df.dropna()
+
+# If asin_name.json already exist, load it
+import json
+
+
+with open('asin_name.json', 'r') as f:
+    asin_name = json.load(f)
+
+# Generate dictonary of, which asin is each App Name
+from web_scraper import Scraper
+import time
+import urllib
+import json
+
+
+all_asin = list(metadata_df['asin'])
+amazon_scraper = Scraper()
+for i in range(0,100):    
+    asin = all_asin[i]
+    if asin not in asin_name:
+        print(">(%d/100) Processing asin [%s]" %  (i,asin))
+        try:
+            app_name = amazon_scraper.main("https://www.amazon.com/dp/%s" % asin)   
+            print("> App name is: [%s] " % app_name)
+            asin_name[asin] = app_name
+        except urllib.error.HTTPError:
+            print(">(%d/100) HTTP ERROR" % i)
+        time.sleep(10)
+
+
+with open('asin_name.json', 'w+') as fp:
+    json.dump(asin_name, fp)
+
+# App table: Dataframe with all Applications using information provided by Kaggle playstore dataset.
+
+def gen_app_table(all_apps):
+    app_table = all_apps.copy()
+    app_table = app_table[['name', 'price', 'aggregateRating']]
+    app_table = app_table.rename(index = str, columns={"name": "app", "numDownloadsMin":"downloadsMin", 
+                                          "price": "price", 'aggregateRating': "rating"})
+    return app_table
+
+# Categories table: which category for each app.
+
+def gen_categories_table(metadata, asin_name):
+    values = []
+    asin = list(metadata['asin'])
+    categories = list(metadata['categories'])
+    for i in range(0, metadata.shape[0]-1):
+        for category in categories[i][0]:
+            if asin[i] in asin_name:
+                values.append((asin_name[asin[i]], category))          
+    return pd.DataFrame(values, columns=("app", "category"))
+
+# Related table: which apps are related with which.
+
+def gen_related_table(metadata, asin_name):
+    values = []
+    asin = list(metadata['asin'])
+    related = list(metadata['related'])
+    for i in range(0, metadata.shape[0]-1):
+        app_asin = asin[i]
+        if app_asin in asin_name:
+            app = asin_name[app_asin]
+            relations = related[i]
+            for kind_relation in  relations.keys():
+                for app_related in relations[kind_relation]:
+                    if app_related in asin_name:
+                        values.append((app, asin_name[app_related], kind_relation))                
+    return pd.DataFrame(values, columns=("app", "related", "kind"))
+
+
+
+# Review table, which review corresponds to each.
+
+def gen_reviews_table(reviews, asin_name):
+    values = []
+    asin = list(reviews['asin'])
+    reviewerID = list(reviews['reviewerID'])
+    reviewerName = list(reviews['reviewerName'])
+    helpful = list(reviews['helpful'])
+    overall = list(reviews['overall'])
+    review = list(reviews['summary'])
+    for i in range(0, reviews.shape[0]):
+        if asin[i] in asin_name:
+            values.append((i, asin_name[asin[i]], reviewerID[i], reviewerName[i], review[i], overall[i]))
+    return pd.DataFrame(values, columns=("reviewID", "app", "reviewerID", "reviewerName", "review", "overall"))
+
+df_app_table = gen_app_table(all_apps)
+df_categories_table = gen_categories_table(metadata_df, asin_name)
+df_related_table = gen_related_table(metadata_df, asin_name)
+df_reviews_table = gen_reviews_table(reviews_df, asin_name)
+
+df_app_table.to_csv("integrated_data/app.csv")
+df_categories_table.to_csv("integrated_data/categories.csv")
+df_related_table.to_csv("integrated_data/related.csv")
+df_reviews_table.to_csv("integrated_data/reviews.csv")
+
+valid_apps = list(asin_name.values())
+df_app_table_reduced = df_app_table[[True if app in valid_apps else False for app in list(all_apps['name'])]]
+
+df_app_table_reduced.to_csv("integrated_data/app_reduced.csv")

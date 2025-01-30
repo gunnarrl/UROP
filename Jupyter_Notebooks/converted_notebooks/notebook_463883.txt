@@ -1,0 +1,31 @@
+from functools import partial
+
+def greet(greeting, name):
+    return "{0}! {1}".format(greeting, name)
+
+greet("Hello", "Klaus")
+
+good_evening_greet = partial(greet, "Good evening")
+
+good_evening_greet("Klaus")
+
+good_evening_greet("Engelbert")
+
+good_evening_greet
+
+def closure_greet(greeting):
+    def named_greet(name):
+        return "{0}! {1}".format(greeting, name)
+    return named_greet
+
+evening_closure_greet = closure_greet("Good evening my dear closure")
+
+evening_closure_greet("Klaus")
+
+greet_queen_mother = partial(greet, name="Queen Elizabeth the Queen Mother")
+
+greet_queen_mother("Nice to see you")
+
+good_evening_queen_mother = good_evening_greet("Queen Elizabeth the Queen Mother")
+
+good_evening_queen_mother

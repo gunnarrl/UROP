@@ -1,0 +1,123 @@
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import sklearn as sk
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.datasets import fetch_20newsgroups
+from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
+from sklearn.preprocessing import KBinsDiscretizer, OneHotEncoder, StandardScaler
+
+# # Algumas configurações para o matplotlib.
+# %matplotlib inline
+
+# from IPython.core.pylabtools import figsize
+
+
+# figsize(12, 8)
+
+# sns.set()
+
+countries = pd.read_csv("countries.csv")
+
+new_column_names = [
+    "Country", "Region", "Population", "Area", "Pop_density", "Coastline_ratio",
+    "Net_migration", "Infant_mortality", "GDP", "Literacy", "Phones_per_1000",
+    "Arable", "Crops", "Other", "Climate", "Birthrate", "Deathrate", "Agriculture",
+    "Industry", "Service"
+]
+
+countries.columns = new_column_names
+
+countries.head(5)
+
+countries.shape
+
+countries.info()
+
+countries['Country'] = countries['Country'].str.strip()
+
+countries['Region'] = countries['Region'].str.strip()
+
+for column in countries.columns:
+    if countries[column].dtype == np.dtype('O'):
+        countries[column] = countries[column].str.replace(',', '.')
+        try:
+            countries[column] = pd.to_numeric(countries[column])
+        except:
+            pass
+countries.head()
+
+def q1():
+    return sorted(countries['Region'].unique())
+q1()
+
+def q2():
+    discretizer = KBinsDiscretizer(n_bins=10, encode='ordinal', strategy='quantile')
+    pop_density = discretizer.fit_transform(countries[['Pop_density']])
+    return int(sum(pop_density[:,0] == 9))
+q2()
+
+def q3():
+    one_hot_encoder = OneHotEncoder(sparse=False, dtype=np.int)
+    region_climate_one_hot = one_hot_encoder.fit_transform(countries[["Region", "Climate"]].fillna(0))
+    return region_climate_one_hot.shape[1]
+q3()
+
+test_country = [
+    'Test Country', 'NEAR EAST', -0.19032480757326514,
+    -0.3232636124824411, -0.04421734470810142, -0.27528113360605316,
+    0.13255850810281325, -0.8054845935643491, 1.0119784924248225,
+    0.6189182532646624, 1.0074863283776458, 0.20239896852403538,
+    -0.043678728558593366, -0.13929748680369286, 1.3163604645710438,
+    -0.3699637766938669, -0.6149300604558857, -0.854369594993175,
+    0.263445277972641, 0.5712416961268142
+]
+
+def q4():
+    test_country_df = pd.DataFrame([test_country], columns=countries.columns)
+    nums_pipeline = Pipeline(steps=[
+        ('fill_median', SimpleImputer(missing_values=np.nan, strategy='median')),
+        ('standardize', StandardScaler())])
+    
+    nums = nums_pipeline.fit_transform(countries.iloc[:,2:])
+    nums = nums_pipeline.transform(test_country_df.iloc[:,2:])
+    return float(pd.DataFrame([nums[0]], columns=countries.columns[2:])['Arable'].round(3))
+q4()
+
+def q5():
+    q1 = countries['Net_migration'].quantile(0.25)
+    q3 = countries['Net_migration'].quantile(0.75)
+    iqr = q3 - q1
+    outlier_interval_iqr = [q1 - 1.5 * iqr, q3 + 1.5 * iqr]
+    
+    outliers_inferior = countries[countries['Net_migration'] < outlier_interval_iqr[0]]
+    outliers_superior = countries[countries['Net_migration'] > outlier_interval_iqr[1]]
+    
+    return (outliers_inferior.shape[0], outliers_superior.shape[0], False)
+q5()
+
+def q6():
+    categories = ['sci.electronics', 'comp.graphics', 'rec.motorcycles']
+    newsgroups = fetch_20newsgroups(subset="train", categories=categories, shuffle=True, random_state=42)
+    count_vectorizer = CountVectorizer()
+    newsgroups_count = count_vectorizer.fit_transform(newsgroups.data)
+    count_df = pd.DataFrame(newsgroups_count.toarray(), columns=count_vectorizer.get_feature_names())
+    
+    return int(count_df['phone'].sum())
+q6()
+
+def q7():
+    categories = ['sci.electronics', 'comp.graphics', 'rec.motorcycles']
+    newsgroups = fetch_20newsgroups(subset="train", categories=categories, shuffle=True, random_state=42)
+    count_vectorizer = CountVectorizer()
+    newsgroups_count = count_vectorizer.fit_transform(newsgroups.data)
+    words_idx = count_vectorizer.vocabulary_.get('phone')
+    
+    tfidf_vectorizer = TfidfVectorizer()
+    tfidf_vectorizer.fit(newsgroups.data)
+
+    newsgroups_tfidf_vectorized = tfidf_vectorizer.transform(newsgroups.data)
+    
+    return float(newsgroups_tfidf_vectorized[:, words_idx].toarray().sum().round(3))
+q7()

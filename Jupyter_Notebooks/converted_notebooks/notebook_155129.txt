@@ -1,0 +1,104 @@
+# Always have your imports at the top
+import random
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
+from sklearn.base import TransformerMixin
+from sklearn.model_selection import train_test_split
+from sklearn.impute import SimpleImputer
+
+from hashlib import sha1 # just for grading purposes
+import json # just for grading purposes
+
+from utils import get_dataset, workflow_steps, data_analysis_steps
+
+def _hash(obj, salt='none'):
+    if type(obj) is not str:
+        obj = json.dumps(obj)
+    to_encode = obj + salt
+    return sha1(to_encode.encode()).hexdigest()
+
+X, y = get_dataset()  # preloaded dataset
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33)
+
+print("Workflow steps:")
+for i in range(len(workflow_steps)):
+    print(i+1, ': ', workflow_steps[i])
+
+# Exercise 1.1. Filter and sort the names of the steps in the workflow_steps list
+# workflow_steps_answer = [...]
+
+# YOUR CODE HERE
+raise NotImplementedError()
+
+### BEGIN TESTS
+assert _hash([step.lower() for step in workflow_steps_answer], 'salt0') == '701e2306da9bfde36382bdb6feb80a354916ebf4'
+### END TESTS
+
+print("Data Analysis and Preparation steps:")
+for i in range(len(data_analysis_steps)):
+    print(i+1, ': ', data_analysis_steps[i])
+
+# Exercise 1.2. Filter and sort the names of the steps in the data_analysis_steps list
+# data_analysis_steps_answer = [...]
+
+# YOUR CODE HERE
+raise NotImplementedError()
+
+### BEGIN TESTS
+assert _hash([step.lower() for step in data_analysis_steps_answer], 'salt0') == '658ab90eff4a0cea2bfb51cc89c8db5b4121fa86'
+### END TESTS
+
+# Exercise 2.1. True or False, you should split your data in a training and test set
+# split_training_test = ...
+
+# Exercise 2.2. True or False, Scikit Pipelines are only useful in production environments
+# scikit_pipelines_useful = ...
+
+# Exercise 2.3. True or False, you should try to make a complex baseline, so you just have 
+#               to make simple improvements on it, later on.
+# baseline_complex = ...
+
+# Exercise 2.4. (optional) True or False, is Brian the Messiah?
+# is_brian_the_messiah = ...
+
+# YOUR CODE HERE
+raise NotImplementedError()
+
+### BEGIN TESTS
+assert _hash(split_training_test, 'salt1') == '569b45c42b5c7b490c92692b911af35f575c8a06'
+assert _hash(scikit_pipelines_useful, 'salt2') == 'ef07576cc7d3bcb2cf29e1a772aec2aad7f59158'
+assert _hash(baseline_complex, 'salt3') == 'f24a294afb4a09f7f9df9ee13eb18e7d341c439d'
+### END TESTS
+
+# Do some data analysis here
+
+
+# Create a pipeline step called RemoveEvilColumns that removes any
+# column whose name starts with the string 'evil'
+
+# YOUR CODE HERE
+raise NotImplementedError()
+
+### BEGIN TESTS
+assert _hash(sorted(RemoveLimbs().fit_transform(X).columns), 'salt5') == '71443dfc3077d773d4c74e958dadf91dc2cc148a'
+assert _hash(list(map(lambda col: col.startswith('arm') or col.startswith('leg'), RemoveLimbs().fit_transform(X_train).columns)), 'salt6') == 'ce45cf3759d2210f2d1315f1673b18f34e3ac711'
+### END TESTS
+
+# YOUR CODE HERE
+raise NotImplementedError()
+
+### BEGIN TESTS
+assert _hash(pipeline.steps[0][0], 'salt7') == '471b02068ac2c4f479c2e9f85f4b3dc2179bb841'
+assert _hash(pipeline.steps[1][0], 'salt8') == 'ca83eaea1a7e243fa5574cfa6f52831166ee0f32'
+assert _hash(pipeline.steps[-1][0], 'salt9') == '0d66ba4309ad4939673169e74f87088dcadd510b'
+### END TESTS
+
+pipeline.fit(X_train, y_train)
+
+y_pred = pipeline.predict(X_test)
+accuracy_score(y_test, y_pred)

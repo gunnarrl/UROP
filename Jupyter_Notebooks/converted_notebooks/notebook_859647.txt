@@ -1,0 +1,81 @@
+# Before we start, load our environment
+%matplotlib inline
+import os
+import re
+import sys
+import argparse
+import csv
+from sklearn.ensemble import RandomForestClassifier
+import pandas as pd
+import numpy as np
+
+def read_classifications(cf):
+    """
+    Read the classifications file. We expect that this has 4 tab-separated values.
+    :param cf: the classifications file
+    :return: two dicts of the hostname and environment. Recall, not everything has a hostname
+    """
+    hostname = {}
+    environment = {}
+    with open(cf, 'r') as f:
+        for l in f:
+            if l.startswith('genome_id'):
+                continue
+            p=l.strip().split("\t")
+            if p[2]:
+                hostname["PATRIC|{}".format(p[0])] = p[2]
+            if p[3]:
+                environment["PATRIC|{}".format(p[0])] = p[3]
+    return hostname, environment
+
+hostname, environment = read_classifications('patric_data/patric_metadata_isolation_host_env.tsv')                
+
+def read_focus_output(fof):
+    """
+    :param fof: focus output file
+    :return: a pandas data frame with the data
+    """
+    
+    df = pd.read_csv(fof, sep="\t", header=0, index_col=0,)
+    return df
+
+
+# NOTE: The following file is (28,705 x 18,920 and so takes a long time to read!)
+# focus = read_focus_output("metagenome_counts.tsv")
+# this file is 3,029 genomes x 99 metagenomes
+focus = read_focus_output('example_data/dev_counts_sel.tsv')
+focus.head(10)
+
+focus['environment'] = pd.Series(environment)
+focus['hostname'] = pd.Series(hostname)
+
+focus.head(10)
+
+# write this to a csv so I can get help!
+focus.to_csv("/home/redwards/Desktop/metagenomes_genomes.tsv", sep="\t")
+
+features = focus.columns[:-2]
+
+focus['is_train'] = np.random.uniform(0, 1, len(focus)) <= .75
+train, test = focus[focus['is_train']==True], focus[focus['is_train']==False]
+print("Data: {}\nTraining: {}\nTesting: {}".format(focus.shape, train.shape, test.shape))
+
+envfactors, labels = pd.factorize(train['environment'])
+labels
+
+clf = RandomForestClassifier(n_jobs=-1)
+
+clf.fit(train[features], envfactors)
+
+clf.predict(test[features])
+predictions=labels[clf.predict(test[features])]
+predictions[0:10]
+
+test.environment[0:10]
+
+hostname, environment = read_classifications('patric_data/patric_metadata_isolation_host_env.tsv')                
+focus = read_focus_output('example_data/dev_counts.tsv')
+focus.head()
+
+ft = focus.T
+ft.head()

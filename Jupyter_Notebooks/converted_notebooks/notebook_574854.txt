@@ -1,0 +1,297 @@
+#Imports of general requests library
+import requests
+
+#Imports for leaflet
+from ipyleaflet import Map, Marker, MarkerCluster, LayerGroup, GeoJSON
+
+#Import of widgets used in the notebook
+import ipywidgets as widgets
+
+
+def fetchAERONETSites():
+    sites = list()
+    page = requests.get('https://aeronet.gsfc.nasa.gov/aeronet_locations.txt', stream=True)
+    pageLines = list(page.iter_lines())
+    for location in pageLines[2:]:
+        (name, lon, lat, elev) = location.decode('utf-8').split(',')
+        site = { 
+            'name': str(name),
+            'lon': float(lon),
+            'lat': float(lat),
+            'elevation': float(elev),
+        }
+        sites.append(site)
+        # print(site)
+    return sites
+
+sites = fetchAERONETSites()
+
+markers = list()
+for site in sites:
+    marker = Marker(location=(site['lat'], site['lon']), title=site['name'], draggable=False)
+    markers.append(marker)
+marker_cluster = MarkerCluster(markers=markers)
+
+overview = Map(center=(45, 0), zoom=2, scroll_wheel_zoom=True)
+overview.add_layer(marker_cluster)
+
+display(overview)
+
+def fetchDatasets():
+    data = requests.get('https://proba-v-mep.esa.int/api/timeseries/v1.0/ts').json()
+    return [dataset['name'] for dataset in data['layers']]
+    
+    
+datasets = fetchDatasets()
+datasets.sort()
+print('Available datasets: %d' % len(datasets))
+datasets
+
+aeronet_data = None
+site_data = None
+
+def calculateTimeSeries():
+    
+    '''
+         Form callback - Calculate the timeseries when the form is submitted.
+    '''
+    global site_data, aeronet_data
+
+    site_selection_value = [site for site in sites if site['name'] == site_selection.value]
+    site_data = getSiteSeries(site_selection_value, dataset_selection.value, offset_selection.value)
+    
+    
+    if len(site_data) > 0: 
+        date_min = site_data.index.values[0]
+        date_max = site_data.index.values[-1]
+        aeronet_data = getAERONETSeries(site_selection_value, date_min, date_max)
+        showAREONETparams(aeronet_data)
+
+import dataclient
+
+def getSiteSeries(sites, dataset, offset):
+    '''
+         Retrieval of timeseries based on the selected site, offset and dataset
+    '''
+    for site in sites:
+        try:
+            print('Fetching %s site information for %s with an offset of %s m' % (site['name'], dataset, offset))
+            data = dataclient.get_timeseries(createGeometry(site, offset), dataset).dropna()
+            print('Retrieved information successfully')
+            if len(data) > 0:
+                data.name=site['name']
+                return data
+            else: 
+                print('There is no data available for %s' % site['name'])
+                return []
+        except:
+            print('')
+            return []
+
+from calendar import monthrange
+import zipfile
+import os
+
+def downloadAERONETdata(site, year_start, month_start, year_end, month_end):
+    '''
+         Download the data from the AERONET site (https://aeronet.gsfc.nasa.gov/)
+    '''
+    
+    # Calculate the last day of the ending month
+    last = monthrange(year_end, month_end)[1]
+
+    # Create request for calculating data 
+    form_data = dict()
+    form_data['site'] = site['name']
+    form_data['day'] = 1
+    form_data['month'] = month_start
+    form_data['year'] = year_start - 1900
+    form_data['day2'] = last
+    form_data['month2'] = month_end
+    form_data['year2'] = year_end - 1900
+    form_data['AOD15'] = 1
+    form_data['AVG'] = 20
+    
+    r = requests.post('https://aeronet.gsfc.nasa.gov/cgi-bin/print_warning_v3', data=form_data)
+
+    if r.status_code == 200:
+        # Create the download URL for the AREONET site based on the specified date range
+        date_range = '%02d%02d01_%02d%02d%02d'% (year_start, month_start, year_end, month_end, last)
+        aeronet_zip_name = date_range + '_' + str(site['name']) + '.zip'
+        aeronet_file_name = date_range + '_' + str(site['name']) + '.lev15'
+        aeronet_zip_url = 'https://aeronet.gsfc.nasa.gov/zip_files/V3/' + str(aeronet_zip_name)
+        print('Downloading %s' % aeronet_zip_url)
+        r = requests.get(aeronet_zip_url)
+        
+        if 'application/zip' in r.headers['Content-Type']:
+            with open(aeronet_zip_name, 'wb') as areonet_zip:
+                areonet_zip.write(r.content)
+                areonet_zip.close()
+
+            with zipfile.ZipFile(aeronet_zip_name, 'r') as zip_ref:
+                zip_ref.extractall('.')
+
+            # Cleanup ZIP file
+            os.remove(aeronet_zip_name)
+            return aeronet_file_name
+        else:
+            print('No AERONET data available for site %s during period of %d/%d - %d/%d' % (site['name'], year_start, month_start, year_end, month_end))
+
+
+    else:
+        print('Could not retrieve AERONET data')
+        return None
+
+import pandas as pd
+import os
+
+def getAERONETSeries(sites, date_start, date_end): 
+    '''
+         Retrieve the AERONET data as timeseries
+    '''
+    (year_start, month_start, day_start) = str(date_start).split('T')[0].split('-')
+    (year_end, month_end, day_end ) = str(date_end).split('T')[0].split('-')
+    
+    if int(year_end) >= 2017:
+        if int(year_start) < 2017:
+            year_start = 2017
+            month_start = 1            
+        for site in sites:
+            datafile = downloadAERONETdata(site, int(year_start), int(month_start), int(year_end), int(month_end))
+            if datafile:
+                print('Reading datafile %s for site %s' % (datafile, site['name']) )
+                dateparse = lambda x: pd.datetime.strptime(x, "%d:%m:%Y")
+                aeronet = pd.read_csv(datafile, skiprows=6,
+                                      na_values=['N/A', -999, '-999.000000'],
+                                      parse_dates={'times':[0]},
+                                      date_parser=dateparse)
+                os.remove(datafile)
+                return aeronet   
+            else:            
+                return None
+    else:
+        print('AREONET sites are only available after 2017')
+        return None
+
+        
+
+def showAREONETparams(data):
+    '''
+         Crate a widget containing all AERONET data parameters that can be plotted. When a selection is 
+         made, update the plot.
+    '''
+    selection = widgets.interactive(plotParam, parameter=data.columns[3:]);
+    selection.children[0].layout = widgets.Layout(flex='2 1', margin='10px 0px 10px 10px')
+    selection.children[0].description = '<b>AREONET parameter to plot:</b>'
+    selection.children[0].style ={'description_width': 'initial'}
+    display(selection)    
+
+from geojson import Feature,Point, Polygon, utils
+from pyproj import Proj, transform
+
+def createGeometry(site, offset):    
+    '''
+         Create a GEOSJON object that represents the location of site based on the chosen offset.
+    '''
+    if offset > 0:
+        (lat,lon) = transform(Proj(init='epsg:4326'), Proj(init='epsg:3857'), site['lon'], site['lat'])
+        (minX, maxX, minY, maxY) = (
+            lat - offset, 
+            lat + offset, 
+            lon - offset, 
+            lon + offset)   
+        geom = Polygon([[(minX, minY),( minX, maxY), (maxX, maxY), (maxX, minY), (minX, minY)]])
+        geom = utils.map_tuples(lambda c: transform(Proj(init='epsg:3857'), Proj(init='epsg:4326'), c[0], c[1]), geom)
+    else:
+        geom = Point((site['lon'],site['lat']))
+        
+    
+    return Feature(geometry=geom);'''
+         Download the data from the AERONET site (https://aeronet.gsfc.nasa.gov/)
+    '''
+
+def addMarker(site_selection, offset_selection):
+    '''
+         Form callback - Update the map based on selection within the form
+    '''
+    site_selection_value = [site for site in sites if site['name'] == site_selection]
+    addSiteMarker(site_selection_value)
+    addOffset(site_selection_value, offset_selection)
+
+def addOffset(sites, offset):
+    '''
+         Draw the offset on the map based on the selected site and offset
+    '''
+    site_map.layers = [layer for layer in site_map.layers if type(layer) is not GeoJSON]
+    for site in sites:
+        geojson = GeoJSON(data=createGeometry(site, offset))
+        site_map.add_layer(geojson)
+
+def addSiteMarker(sites): 
+    '''
+        Add a marker to the map based on the selected site
+    '''
+    site_map.layers = [layer for layer in site_map.layers if type(layer) is not Marker]
+    for site in sites:
+        marker = Marker(location=(site['lat'], site['lon']), title=site['name'], draggable=False)  
+        site_map.add_layer(marker)
+        site_map.center = (site['lat'], site['lon'])
+        site_map.zoom = 11
+
+def plotParam(parameter):
+    '''
+         Update the plot based on the selected AERONET parameter
+    '''
+    plotData(site_data, dataset_selection.value, aeronet_data, parameter)
+
+from matplotlib import pyplot as plt
+def plotData(site_data, dataset, aeronet_data, aeronet_param): 
+    '''
+         Create a plot based on the timeseries and AERONET site data
+    '''
+    if len(site_data) > 0:
+        plot_axis = site_data.plot(legend=True, label=dataset, figsize=(17,4))  
+    if not aeronet_data is None:
+        aeronet_data = aeronet_data[['times', aeronet_param]]
+        aeronet_data.plot(kind='line',x='times',y=aeronet_param, label=aeronet_param, ax=plot_axis)
+    plt.show()
+
+site_map = Map(center=(45, 0), zoom=2, scroll_wheel_zoom=True)
+
+site_names = [str(site['name']) for site in sites]    
+site_names.sort()
+
+
+style = {'description_width': 'initial'}
+
+site_selection = widgets.Dropdown(
+    options=site_names,
+    layout = widgets.Layout(flex='3 1', margin='10px 10px 10px 0px'),
+    description = '<b>Select AERONET site:</b>',
+    style = style
+)
+
+dataset_selection = widgets.Dropdown(
+    options=datasets,
+    layout = widgets.Layout(flex='4 1', margin='10px 10px 10px 10px'),
+    description = '<b>Select dataset:</b>',
+    style = style
+)
+
+offset_selection = widgets.Dropdown(
+    options=[0,3,5,10, 100, 200, 500, 1000],
+    layout = widgets.Layout(flex='2 1', margin='10px 0px 10px 10px'),
+    description = '<b>Select site offset (m):</b>',
+    style = style
+)
+
+
+box = widgets.Box([site_selection, offset_selection, dataset_selection], layout=widgets.Layout(display='flex', align_items='stretch', overflow='hidden', margin='20px 0px 0px 0px'))
+out = widgets.interactive_output(addMarker, {'site_selection': site_selection, 'offset_selection': offset_selection})
+
+display(box)
+calculate_button = widgets.interact_manual(calculateTimeSeries)
+calculate_button.widget.children[0].description = 'Calculate'
+calculate_button.widget.children[0].layout=widgets.Layout(margin='0px 0px 20px 0px')
+
+display(site_map)

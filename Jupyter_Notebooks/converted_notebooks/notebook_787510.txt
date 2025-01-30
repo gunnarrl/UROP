@@ -1,0 +1,184 @@
+import cv2
+import os
+import csv
+import tensorflow as tf
+import numpy as np
+from matplotlib import pyplot as plt
+from keras.models import Sequential
+from keras.layers import Dense, Activation, Convolution2D, MaxPooling2D, Flatten, Dropout
+from keras.utils import to_categorical
+from keras.preprocessing.text import Tokenizer
+
+IMAGE_PATH = 'data/images/'
+LABEL_PATH = 'data/'
+TRAIN_FILE_NAME = 'train.csv'
+TEST_FILE_NAME = 'test.csv'
+COMMON_HEIGHT_WIDTH = 50
+
+
+def load_images(path):
+    images = os.listdir(path)
+    loaded_images = []
+    
+    for i in range(num):
+        loaded_images.append(path + images[i])
+    return loaded_images
+
+def image_resize(file_name, hw):
+    image = cv2.imread(file_name, 0)
+    new_img = cv2.resize(image, (int(hw), int(hw)))
+    return np.reshape(new_img, (int(hw), int(hw), 1))
+
+def load_labels(file_path):
+    labels = []
+    with open(file_path, 'r', encoding='utf-8') as file:
+        csv_reader = csv.reader(file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        # Skip the first line
+        next(csv_reader)
+        # Remove empty lines
+        lines = list(line for line in csv_reader if line)
+        for line in lines:
+            label = {}
+            label['id'] = int(line[0])
+            label['species'] = line[1]
+            labels.append(label)
+    
+    return labels
+
+def combine_images_and_labels(images, labels):
+    id = []
+    x = []
+    y = []
+    for image in images:
+        for label in labels:
+            if image['id'] == label['id']:
+                x.append(image['image'])
+                y.append(label['species'])
+                id.append( image['id'])
+    
+    return {
+        'id': np.array(id),
+        'x': np.array(x),
+        'y': np.array(y)
+    }
+
+def constructDicitionary(labels):
+    uniqueLabels = list(set(list(map(lambda x: x["species"], labels))))
+    dictionary = []
+    for i in range(len(uniqueLabels)):
+        dictionary.append({
+            "number": i,
+            "text": uniqueLabels[i]
+        })
+    return dictionary
+
+def encode(dictionary, text):
+    for i in range(len(dictionary)):
+        if dictionary[i]["text"] == text:
+            return dictionary[i]["number"]
+    
+    return None
+
+def decode(dictionary, number):
+    for i in range(len(dictionary)):
+        if dictionary[i]["number"] == number:
+            return dictionary[i]["text"]
+    
+    return None
+
+images = load_images(IMAGE_PATH)
+train_labels = load_labels(LABEL_PATH + TRAIN_FILE_NAME)
+resized_images = []
+
+dictionary = constructDicitionary(train_labels)
+
+for i in range(len(images)):
+    resized_image = image_resize(images[i], COMMON_HEIGHT_WIDTH)
+    record = {}
+    record['id'] = int(images[i].split('.')[0].split('/')[2])
+    record['image'] = resized_image
+    resized_images.append(record)
+    
+## for img in resized_images:
+##     plt.imshow(img)
+##     plt.show()
+
+for j in range(len(train_labels)):
+    train_labels[j]["species"] = encode(dictionary, train_labels[j]["species"])
+
+train_data = combine_images_and_labels(resized_images, train_labels)
+train_x = train_data['x']
+train_y = train_data['y']
+
+
+print(np.shape(train_y))
+
+
+model = Sequential()
+
+model.add(Convolution2D(32, 3, 3, input_shape=(50, 50, 1)))       
+model.add(Activation('relu'))
+model.add(MaxPooling2D(pool_size=(2, 2)))
+
+model.add(Convolution2D(32, 3, 3))
+model.add(Activation('relu'))
+model.add(MaxPooling2D(pool_size=(2, 2)))
+
+model.add(Convolution2D(64, 3, 3))
+model.add(Activation('relu'))
+model.add(MaxPooling2D(pool_size=(2, 2)))
+
+model.add(Flatten())
+model.add(Dense(64))
+model.add(Activation('relu'))
+model.add(Dropout(0.5))
+model.add(Dense(99, activation=tf.nn.softmax))
+
+model.summary()
+
+model.compile(optimizer='adam',
+             loss='sparse_categorical_crossentropy',
+             metrics=['accuracy'])
+
+print(np.shape(train_x))
+print(np.shape(train_y))
+model.fit(train_x, train_y, epochs=30)
+
+test_labels = load_labels(LABEL_PATH + TEST_FILE_NAME)
+
+for k in range(len(test_labels)):
+    test_labels[k]["species"] = encode(dictionary, test_labels[k]["species"])
+
+test_data = combine_images_and_labels(resized_images, test_labels)
+
+test_x = test_data['x']
+test_y = test_data['y']
+
+
+output = model.predict(test_x)
+
+
+    
+
+with open('submission.csv', 'w', newline='') as csvfile:
+    fieldnames = ['id']
+    
+    label_fieldslist = list(set(list(map(lambda x: x["species"], train_labels))))
+    for i in range(len(label_fieldslist)):
+        fieldnames.append(decode(dictionary, label_fieldslist[i]))
+        
+    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+    writer.writeheader()
+    
+    for n in range(len(output)):
+        #print(np.argmax(output[n]))
+        row = {}
+        for field in fieldnames:
+            species = decode(dictionary, np.argmax(output[n]))
+            row["id"] = test_data['id'][n]
+            row[species] = 1
+            if field not in ["id", species]:
+                row[field] = 0
+        writer.writerow(row)
+

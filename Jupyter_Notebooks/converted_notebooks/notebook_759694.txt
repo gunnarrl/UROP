@@ -1,0 +1,174 @@
+from fastai import *
+from fastai.vision import *
+
+# I do the initial tests for CIFAR-100
+path = Path('/home/kushaj/Desktop/Data/cifar100/')
+path.ls()
+
+data = (ImageList.from_folder(path)
+                 .split_by_folder(valid='test')
+                 .label_from_folder()
+                 .transform(get_transforms(), size=(32,32))
+                 .databunch(bs=128, val_bs=512, num_workers=8)
+                 .normalize(cifar_stats))
+
+data.show_batch(3, figsize=(6,6))
+
+# Extra Classes for the head of our model
+class AdaptiveConcatPool2d(nn.Module):
+    "Layer that concats `AdaptiveAvgPool2d` and `AdaptiveMaxPool2d`."
+    def __init__(self, sz=None):
+        "Output will be 2*sz or 2 if sz is None"
+        super().__init__()
+        self.output_size = sz or 1
+        self.ap = nn.AdaptiveAvgPool2d(self.output_size)
+        self.mp = nn.AdaptiveMaxPool2d(self.output_size)
+    def forward(self, x): 
+        return torch.cat([self.mp(x), self.ap(x)], 1)
+
+class Flatten(nn.Module):
+    "Flatten `x` to a single dimension, often used at the end of a model. `full` for rank-1 tensor"
+    def __init__(self, full:bool=False):
+        super().__init__()
+        self.full = full
+    def forward(self, x):
+        return x.view(-1) if self.full else x.view(x.size(0), -1)
+
+class BasicBlock(nn.Module):
+    def __init__(self, c_in, c_out, stride=1):
+        super().__init__()
+        self.conv1 = nn.Conv2d(c_in, c_out, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(c_out)
+        self.conv2 = nn.Conv2d(c_out, c_out, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(c_out)
+        
+        if stride != 1 or c_in != c_out:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(c_in, c_out, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(c_out)
+            )
+        
+    def forward(self, x):
+        shortcut = self.shortcut(x) if hasattr(self, 'shortcut') else x
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += shortcut
+        return F.relu(out)
+
+class Resnet(nn.Module):
+    """
+    Forward function can be divided into two parts. First the main backbone of the model
+    which is implemented using
+    
+        out = F.relu(self.bnorm1(self.conv1(x)))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+    
+    So if you want to add multi-samply dropout to your own models, you don't have to worry
+    about changing about your backbone.
+    
+    Multi-Sample code
+    Here I separate the loss computation and the generation of multi-samples. So in the model
+    I only create a list and then store my samples in it.
+    """
+    def __init__(self, num_blocks=[9,9,9], num_classes:int=100, num_samples:int=1):
+        super().__init__()
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bnorm1 = nn.BatchNorm2d(16)
+        self.layer1 = self.make_group(16, 16, num_blocks[0], stride=1)
+        self.layer2 = self.make_group(16, 32, num_blocks[1], stride=2)
+        self.layer3 = self.make_group(32, 64, num_blocks[2], stride=2)
+        
+        # The layers that form my head
+        self.pool = AdaptiveConcatPool2d()
+        self.flat = Flatten()
+        self.bn1 = nn.BatchNorm1d(128)
+        self.lin1 = nn.Linear(128, 128)
+        self.bn2 = nn.BatchNorm1d(128)
+        self.lin2 = nn.Linear(128, num_classes)
+        
+        self.num_samples = num_samples
+
+    def make_group(self, c_in, c_out, num_blocks, stride):
+        layers = [BasicBlock(c_in, c_out, stride)]
+        for i in range(num_blocks-1):
+            layers.append(BasicBlock(c_out, c_out, stride=1))
+        return nn.Sequential(*layers)
+    
+    def forward(self, x):
+        out = F.relu(self.bnorm1(self.conv1(x)))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        
+        # Multi Sample Dropout
+        out_samples = []
+        
+        # I store the horizontal flip of the feature maps in f_map_flip so as to
+        # avoid duplicate computation.
+        if self.num_samples > 1:
+            f_map_flip = torch.flip(out, dims=[3])
+            f_map_flip = self.bn1(self.flat(self.pool(f_map_flip)))
+        f_map = self.bn1(self.flat(self.pool(out)))
+        
+        for i in range(self.num_samples):
+            if i%2 == 0:
+                # Do not flip the feature map
+                out_s = F.dropout(f_map)
+            else:
+                # Flip the feature map
+                out_s = F.dropout(f_map_flip)
+            
+            out_s = self.lin1(out_s)
+            out_s = F.relu(out_s)
+            out_s = self.bn2(out_s)
+            out_s = F.dropout(out_s)
+            out_s = self.lin2(out_s)
+            
+            out_samples.append(out_s)
+        
+        return out_samples
+
+def MultiSampleLoss(input, target, num_samples:int=1):
+    total = 0
+    for sample in input:
+        total += F.cross_entropy(sample, target)
+    return total/float(num_samples)
+
+multiSampleLoss = partial(MultiSampleLoss, num_samples=1)
+
+def accuracy_msd(input, targs):
+    for sample in input:
+        F.softmax(sample)
+
+learn = Learner(data, 
+                Resnet(), 
+                loss_func=multiSampleLoss,
+                wd=1e-4, 
+                path='.',
+                callback_fns=ShowGraph)
+
+learn.lr_find()
+
+learn.recorder.plot()
+
+learn.fit_one_cycle(5, max_lr=1e-1)
+
+multiSampleLoss = partial(MultiSampleLoss, num_samples=2)
+learn = Learner(data, 
+                Resnet(num_samples=2), 
+                loss_func=multiSampleLoss,
+                wd=1e-4, 
+                path='.',
+                callback_fns=ShowGraph)
+learn.fit_one_cycle(5, max_lr=1e-1)
+
+multiSampleLoss = partial(MultiSampleLoss, num_samples=8)
+learn = Learner(data, 
+                Resnet(num_samples=8), 
+                loss_func=multiSampleLoss,
+                wd=1e-4, 
+                path='.',
+                callback_fns=ShowGraph)
+learn.fit_one_cycle(5, max_lr=1e-1)

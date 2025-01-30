@@ -1,0 +1,694 @@
+import numpy as np
+
+def create_known_environment_states():
+    """Creates known environment states.
+
+    Returns:
+        num_states: int, number of states.
+        num_term_states: int, number of terminal states.
+        num_non_term_states: int, number of non terminal states.
+    """
+    num_states = 16
+    num_term_states = 2
+    num_non_term_states = num_states - num_term_states
+
+    return num_states, num_term_states, num_non_term_states
+
+def create_known_environment_actions(num_non_term_states):
+    """Creates environment actions.
+
+    Args:
+        num_non_term_states: int, number of non terminal states.
+
+    Returns:
+        max_num_actions: int, max number of actions possible.
+        num_actions_per_non_term_state: array[int], number of actions per
+            non terminal state.
+    """
+    max_num_actions = 4
+
+    num_actions_per_non_term_state = np.repeat(
+        a=max_num_actions, repeats=num_non_term_states)
+
+    return max_num_actions, num_actions_per_non_term_state
+
+def create_known_environment():
+    """Creates known environment.
+
+    Returns:
+        num_states: int, number of states.
+        num_term_states: int, number of terminal states.
+        num_non_term_states: int, number of non terminal states.
+        max_num_actions: int, max number of actions possible.
+        num_actions_per_non_term_state: array[int], number of actions per
+            non terminal state.
+    """
+    (num_states,
+     num_term_states,
+     num_non_term_states) = create_known_environment_states()
+
+    (max_num_actions,
+     num_actions_per_non_term_state) = create_known_environment_actions(
+        num_non_term_states)
+
+    return (num_states,
+            num_term_states,
+            num_non_term_states,
+            max_num_actions,
+            num_actions_per_non_term_state)
+
+class Environment:
+    """Class to hold all environment properties.
+
+    Fields:
+        num_sp: array[int], number of successor states s' that can be reached
+            from state s by taking action a.
+        sp_idx: array[int], state indices of new state s' of taking action a
+            from state s.
+        p: array[float], transition probability to go from state s to s' by
+            taking action a.
+        r: array[float], reward from new state s' from state s by taking
+            action a.
+    """
+    def __init__(self, num_states, num_non_term_states, max_num_actions):
+        # Create environment state-action successor state arrrays
+        self.num_sp = np.ones(
+            shape=[num_states, max_num_actions], dtype=np.int64)
+
+        self.sp_idx = np.reshape(
+            a=np.array([1, 0, 14, 4,
+                        2, 1, 0, 5,
+                        2, 2, 1, 6,
+                        4, 14, 3, 7,
+                        5, 0, 3, 8,
+                        6, 1, 4, 9,
+                        6, 2, 5, 10,
+                        8, 3, 7, 11,
+                        9, 4, 7, 12,
+                        10, 5, 8, 13,
+                        10, 6, 9, 15,
+                        12, 7, 11, 11,
+                        13, 8, 11, 12,
+                        15, 9, 12, 13],
+                       dtype=np.int64),
+            newshape=(num_non_term_states, max_num_actions, 1))
+        self.p = np.reshape(
+            a=np.repeat(
+                a=1.0, repeats=num_non_term_states * max_num_actions * 1),
+            newshape=(num_non_term_states, max_num_actions, 1))
+        self.r = np.reshape(
+            a=np.repeat(
+                a=-1.0, repeats=num_non_term_states * max_num_actions * 1),
+            newshape=(num_non_term_states, max_num_actions, 1))
+
+class Model:
+    """Class to hold all model properties.
+
+    Fields:
+        num_seen_non_term_states: int, number of seen non-terminal states.
+        seen_non_term_s_stack: array[int], stack to hold all seen non-terminal
+            states.
+        seen_non_term_s_stack_rev_lu: array[int], reverse lookup of stack
+            that holds all seen non-terminal states.
+        num_seen_non_term_s_a: array[int], number of seen non-terminal
+            state-action pairs.
+        seen_non_term_s_a_stack: array[int], stack to hold all seen
+            non-terminal state-action pairs.
+        seen_non_term_s_a_stack_rev_lu: array[int], reverse lookup of stack
+            that holds all seen non-terminal states-action pairs.
+        num_sp: array[int], number of successor states s' that can be reached
+            from state s by taking action a.
+        sp_idx: array[int], state indices of new state s' of taking action a
+            from state s.
+        p: array[float], transition probability to go from state s to s' by
+            taking action a.
+        r: array[float], reward from new state s' from state s by taking
+            action a.
+        s_a_ss_num_visits: array[int], number of visits to a particular
+            (s, a, s') tuple.
+    """
+    def __init__(self, num_states, num_non_term_states, max_num_actions):
+        # Create model state visit counters
+        self.num_seen_non_term_states = 0
+        self.seen_non_term_s_stack = np.zeros(
+            shape=[num_non_term_states], dtype=np.int64)
+        self.seen_non_term_s_stack_rev_lu = np.zeros(
+            shape=[num_non_term_states], dtype=np.int64)
+
+        # Create model state-action visit counters
+        self.num_seen_non_term_s_a = np.zeros(
+            shape=[num_non_term_states], dtype=np.int64)
+        self.seen_non_term_s_a_stack = np.zeros(
+            shape=[num_non_term_states, max_num_actions], dtype=np.int64)
+        self.seen_non_term_s_a_stack_rev_lu = np.zeros(
+            shape=[num_non_term_states, max_num_actions], dtype=np.int64)
+
+        # Create model state-action successor state arrrays
+        self.num_sp = np.zeros(
+            shape=[num_states, max_num_actions], dtype=np.int64)
+
+        self.sp_idx = np.array(
+            object=[[[0] if s_idx == 0 and a_idx == 0 else []
+                     for a_idx in range(0, max_num_actions)]
+                    for s_idx in range(0, num_states)],
+            dtype=np.object)
+        self.p = np.array(
+            object=[[[0.0] if s_idx == 0 and a_idx == 0 else []
+                     for a_idx in range(0, max_num_actions)]
+                    for s_idx in range(0, num_states)],
+            dtype=np.object)
+        self.r = np.array(
+            object=[[[0.0] if s_idx == 0 and a_idx == 0 else []
+                     for a_idx in range(0, max_num_actions)]
+                    for s_idx in range(0, num_states)],
+            dtype=np.object)
+        self.s_a_ss_num_visits = np.array(
+            object=[[[0] if s_idx == 0 and a_idx == 0 else []
+                     for a_idx in range(0, max_num_actions)]
+                    for s_idx in range(0, num_states)],
+            dtype=np.object)
+
+        del self.sp_idx[0, 0][0]
+        del self.p[0, 0][0]
+        del self.r[0, 0][0]
+        del self.s_a_ss_num_visits[0, 0][0]
+
+    def update_model_seen_state_actions(self, s_idx, a_idx):
+        """Updates what state and actions the model has seen.
+
+        Args:
+            s_idx: int, current state index.
+            a_idx: int, current action index.
+        """
+        # Check to see if state has already been visited
+        if (self.num_seen_non_term_states == 0 or
+            (self.seen_non_term_s_stack_rev_lu[s_idx] == 0 and
+             self.seen_non_term_s_stack[0] != s_idx)):  # if new state
+            # Add to state stack
+            # 1, 3, 2, 0, 4
+            self.seen_non_term_s_stack[self.num_seen_non_term_states] = s_idx
+            # 3, 0, 2, 1, 4
+            num_seen = self.num_seen_non_term_states
+            self.seen_non_term_s_stack_rev_lu[s_idx] = num_seen
+
+            # Add to action stack
+            # 2, 0, 3, 1
+            action_idx = self.num_seen_non_term_s_a[s_idx]
+            self.seen_non_term_s_a_stack[s_idx][action_idx] = a_idx
+            # 1, 3, 0, 2
+            lookup = self.num_seen_non_term_s_a[s_idx]
+            self.seen_non_term_s_a_stack_rev_lu[s_idx][a_idx] = lookup
+
+            # Increment counters
+            self.num_seen_non_term_s_a[s_idx] += 1
+            self.num_seen_non_term_states += 1
+        else:  # if already visited state
+            # Check to see if action has already been visited
+            if (self.seen_non_term_s_a_stack_rev_lu[s_idx][a_idx] == 0 and
+                    self.seen_non_term_s_a_stack[s_idx][0] != a_idx):
+                # Add to action stack
+                # 2, 0, 3, 1
+                action_idx = self.num_seen_non_term_s_a[s_idx]
+                self.seen_non_term_s_a_stack[s_idx][action_idx] = a_idx
+                # 1, 3, 0, 2
+                num_seen = self.num_seen_non_term_s_a[s_idx]
+                self.seen_non_term_s_a_stack_rev_lu[s_idx][a_idx] = num_seen
+
+                # Increment counters
+                self.num_seen_non_term_s_a[s_idx] += 1
+
+    def update_model_of_environment_from_experience(
+            self, s_idx, a_idx, reward, next_s_idx):
+        """Updates the model from environment experience.
+
+        Args:
+            s_idx: int, current state index.
+            a_idx: int, current action index.
+            reward: float, reward of taking action a_idx in state s_idx.
+            next_s_idx: int, next state index.
+        """
+        # Update model successor arrays
+        if next_s_idx in self.sp_idx[s_idx, a_idx]:
+            self.suc_idx = self.sp_idx[s_idx, a_idx].index(next_s_idx)
+            self.s_a_ss_num_visits[s_idx, a_idx][self.suc_idx] += 1
+        else:
+            self.num_sp[s_idx, a_idx] += 1
+            self.sp_idx[s_idx, a_idx].append(next_s_idx)
+            self.r[s_idx, a_idx].append(reward)
+            self.s_a_ss_num_visits[s_idx, a_idx].append(1)
+
+        self.s_a_ss_num_visits_sum = np.sum(
+            a=np.asarray(a=self.s_a_ss_num_visits[s_idx, a_idx]))
+        self.p[s_idx, a_idx] = [
+            float(self.s_a_ss_num_visits[s_idx, a_idx][suc_idx]) /
+            self.s_a_ss_num_visits_sum
+            for suc_idx in range(0, self.num_sp[s_idx, a_idx])
+        ]
+
+    def model_simulate_planning(
+            self,
+            num_planning_steps,
+            num_non_term_states,
+            max_num_actions,
+            alpha,
+            gamma,
+            q):
+        """Uses model to simulate experience and plan best actions.
+
+        Args:
+            num_planning_steps: int, number of steps for the planning stage.
+            num_non_term_states: int, number of non terminal states.
+            max_num_actions: int, max number of actions possible.
+            alpha: float, alpha > 0, learning rate.
+            gamma: float, 0 <= gamma <= 1, amount to discount future reward.
+            q: array[float], keeps track of the estimated value of each
+                state-action pair Q(s, a).
+        Returns:
+            q: array[float], keeps track of the estimated value of each
+                state-action pair Q(s, a).
+        """
+        for i in range(0, num_planning_steps):
+            # Randomly choose state indices from previously seen states
+            s_idx = self.seen_non_term_s_stack[np.random.randint(
+                low=0, high=self.num_seen_non_term_states, dtype=np.int64)]
+
+            # Randomly choose action indices from previously seen actions in
+            # previously seen states
+            a_idx = self.seen_non_term_s_a_stack[
+                s_idx,
+                np.random.randint(
+                    low=0,
+                    high=self.num_seen_non_term_s_a[s_idx],
+                    dtype=np.int64)
+            ]
+
+            # Get reward
+            sst_idx = np.random.choice(
+                a=np.arange(
+                    self.num_sp[s_idx, a_idx]),
+                p=np.asarray(a=self.p[s_idx, a_idx], dtype=np.float64))
+
+            # Get reward from state and action */
+            reward = self.r[s_idx, a_idx][sst_idx]
+
+            # Get next state */
+            next_s_idx = self.sp_idx[s_idx, a_idx][sst_idx]
+
+            # Check to see if we actioned into a terminal state */
+            if next_s_idx >= num_non_term_states:
+                q[s_idx, a_idx] += alpha * (reward - q[s_idx, a_idx])
+            else:
+                # Get next action, max action of next state
+                max_action_value = np.max(a=q[s_idx, :])
+                max_action_stack = np.extract(
+                    condition=q[s_idx, :] == max_action_value,
+                    arr=np.arange(max_num_actions))
+
+                next_a_idx = np.random.choice(a=max_action_stack)
+
+                # Update state-action-function using quintuple SARSargmax(a,Q)
+                delta = gamma * q[next_s_idx, next_a_idx] - q[s_idx, a_idx]
+                q[s_idx, a_idx] += alpha * (reward + delta)
+
+        return q
+
+def set_hyperparameters():
+    """Sets hyperparameters.
+
+    Returns:
+        num_episodes: int, number of episodes to train over.
+        maximum_episode_length: int, max number of timesteps for an episode.
+        num_planning_steps: int, number of steps for the planning stage.
+        alpha: float, alpha > 0, learning rate.
+        epsilon: float, 0 <= epsilon <= 1, exploitation-exploration trade-off,
+            higher means more exploration.
+        gamma: float, 0 <= gamma <= 1, amount to discount future reward.
+    """
+    num_episodes = 40000
+    maximum_episode_length = 2000
+    num_planning_steps = 5
+    alpha = 0.001
+    epsilon = 0.05
+    gamma = 1.0
+
+    return (num_episodes,
+            maximum_episode_length,
+            num_planning_steps,
+            alpha,
+            epsilon,
+            gamma)
+
+def create_value_function_arrays(num_states, max_num_actions):
+    """Creates value function arrays.
+
+    Args:
+        num_states: int, number of states.
+        max_num_actions: int, max number of actions possible.
+    Returns:
+        q: array[float], keeps track of the estimated value of each
+            state-action pair Q(s, a).
+    """
+    return np.zeros(shape=[num_states, max_num_actions], dtype=np.float64)
+
+def create_policy_arrays(num_non_term_states, max_num_actions):
+    """Creates policy arrays.
+
+    Args:
+        num_non_term_states: int, number of non terminal states.
+        max_num_actions: int, max number of actions possible.
+    Returns:
+        policy: array[float], learned stochastic policy of which
+            action a to take in state s.
+    """
+    policy = np.repeat(
+        a=1.0 / max_num_actions,
+        repeats=num_non_term_states * max_num_actions)
+
+    policy = np.reshape(
+        a=policy,
+        newshape=(num_non_term_states, max_num_actions))
+
+    return policy
+
+# Set random seed so that everything is reproducible
+np.random.seed(seed=0)
+
+def initialize_epsiode(num_non_term_states):
+    """Initializes epsiode with initial state and initial action.
+
+    Args:
+        num_non_term_states: int, number of non terminal states.
+    Returns:
+        init_s_idx: int, initial state index from set of non terminal states.
+    """
+    # Randomly choose an initial state from all non-terminal states
+    init_s_idx = np.random.randint(
+        low=0, high=num_non_term_states, dtype=np.int64)
+
+    return init_s_idx
+
+def epsilon_greedy_policy_from_state_action_function(
+        max_num_actions, q, epsilon, s_idx, policy):
+    """Create epsilon-greedy policy from state-action value function.
+
+    Args:
+        max_num_actions: int, max number of actions possible.
+        q: array[float], keeps track of the estimated value of each
+            state-action pair Q(s, a).
+        epsilon: float, 0 <= epsilon <= 1, exploitation-exploration trade-off,
+            higher means more exploration.
+        s_idx: int, current state index.
+        policy: array[float], learned stochastic policy of which action a to
+            take in state s.
+    Returns:
+        policy: array[float], learned stochastic policy of which action a to
+            take in state s.
+    """
+    # Save max state-action value and find the number of actions that have the
+    # same max state-action value
+    max_action_value = np.max(a=q[s_idx, :])
+    max_action_count = np.count_nonzero(a=q[s_idx, :] == max_action_value)
+
+    # Apportion policy probability across ties equally for state-action pairs
+    # that have the same value and zero otherwise
+    if max_action_count == max_num_actions:
+        max_policy_prob_per_action = 1.0 / max_action_count
+        remain_prob_per_action = 0.0
+    else:
+        max_policy_prob_per_action = (1.0 - epsilon) / max_action_count
+        remain_prob_per_action = epsilon / (max_num_actions - max_action_count)
+
+    policy[s_idx, :] = np.where(
+        q[s_idx, :] == max_action_value,
+        max_policy_prob_per_action,
+        remain_prob_per_action)
+
+    return policy
+
+def loop_through_episode(
+        num_non_term_states,
+        max_num_actions,
+        environment,
+        model,
+        q,
+        policy,
+        alpha,
+        epsilon,
+        gamma,
+        maximum_episode_length,
+        num_planning_steps,
+        s_idx):
+    """Loops through episode to iteratively update policy.
+
+    Args:
+        num_non_term_states: int, number of non terminal states.
+        max_num_actions: int, max number of actions possible.
+        environment: instance of `Environment` class that holds environment
+            properties that are hidden from us, but that we can sample.
+        model: instance of `Model` class that holds model properties
+            that we learn through experience.
+        q: array[float], keeps track of the estimated value of each
+            state-action pair Q(s, a).
+        policy: array[float], learned stochastic policy of which
+            action a to take in state s.
+        alpha: float, alpha > 0, learning rate.
+        epsilon: float, 0 <= epsilon <= 1, exploitation-exploration trade-off,
+            higher means more exploration.
+        gamma: float, 0 <= gamma <= 1, amount to discount future reward.
+        maximum_episode_length: int, max number of timesteps for an episode.
+        num_planning_steps: int, number of steps for the planning stage.
+        s_idx: int, current state index.
+    Returns:
+        q: array[float], keeps track of the estimated value of each
+            state-action pair Q(s, a).
+        policy: array[float], learned stochastic policy of which
+            action a to take in state s.
+        model: instance of `Model` class that holds model properties
+            that we learn through experience.
+    """
+    # Loop through episode steps until termination
+    for t in range(0, maximum_episode_length):
+        # Choose policy for chosen state by epsilon-greedy choosing from the
+        # state-action-value function
+        policy = epsilon_greedy_policy_from_state_action_function(
+            max_num_actions,
+            q,
+            epsilon,
+            s_idx,
+            policy)
+
+        # Get epsilon-greedy action
+        a_idx = np.random.choice(
+            a=max_num_actions, p=policy[s_idx, :])
+
+        # Update what state and actions the model has seen
+        model.update_model_seen_state_actions(s_idx, a_idx)
+
+        # Get reward
+        sst_idx = np.random.choice(
+            a=environment.num_sp[s_idx, a_idx],
+            p=environment.p[s_idx, a_idx, :])
+
+        reward = environment.r[s_idx, a_idx, sst_idx]
+
+        # Get next state
+        next_s_idx = environment.sp_idx[s_idx, a_idx, sst_idx]
+
+        # Check to see if we actioned into a terminal state
+        if next_s_idx >= num_non_term_states:
+            # Update state-action value function
+            q[s_idx, a_idx] += alpha * (reward - q[s_idx, a_idx])
+
+            # Update model from environment experience
+            model.update_model_of_environment_from_experience(
+                s_idx, a_idx, reward, next_s_idx)
+
+            # Use updated model to simulate experience in planning phase
+            q = model.model_simulate_planning(
+                num_planning_steps,
+                num_non_term_states,
+                max_num_actions,
+                alpha,
+                gamma,
+                q)
+
+            break  # episode terminated since we ended up in a terminal state
+        else:
+            # Get next action, max action of next state
+            max_action_value = np.max(a=q[s_idx, :])
+            max_action_stack = np.extract(
+                condition=q[s_idx, :] == max_action_value,
+                arr=np.arange(max_num_actions))
+
+            next_a_idx = np.random.choice(a=max_action_stack)
+
+            # Calculate state-action-function using quintuple SARSA
+            delta = gamma * q[next_s_idx, next_a_idx] - q[s_idx, a_idx]
+            q[s_idx, a_idx] += alpha * (reward + delta)
+
+            # Update model from environment experience
+            model.update_model_of_environment_from_experience(
+                s_idx, a_idx, reward, next_s_idx)
+
+            # Use updated model to simulate experience in planning phase
+            q = model.model_simulate_planning(
+                num_planning_steps,
+                num_non_term_states,
+                max_num_actions,
+                alpha,
+                gamma,
+                q)
+
+            # Update state and action to next state and action
+            s_idx = next_s_idx
+            a_idx = next_a_idx
+
+    return q, policy, model
+
+def off_policy_planning_and_learning_tabular_dyna_q(
+        num_non_term_states,
+        max_num_actions,
+        environment,
+        model,
+        q,
+        policy,
+        alpha,
+        epsilon,
+        gamma,
+        num_episodes,
+        maximum_episode_length,
+        num_planning_steps):
+    """Loops through episodes to iteratively update policy.
+
+    Args:
+        num_non_term_states: int, number of non terminal states.
+        max_num_actions: int, max number of actions possible.
+        environment: instance of `Environment` class that holds environment
+            properties that are hidden from us, but that we can sample.
+        model: instance of `Model` class that holds model properties
+            that we learn through experience.
+        q: array[float], keeps track of the estimated value of each
+            state-action pair Q(s, a).
+        policy: array[float], learned stochastic policy of which
+            action a to take in state s.
+        alpha: float, alpha > 0, learning rate.
+        epsilon: float, 0 <= epsilon <= 1, exploitation-exploration trade-off,
+            higher means more exploration.
+        gamma: float, 0 <= gamma <= 1, amount to discount future reward.
+        num_episodes: int, number of episodes to train over.
+        maximum_episode_length: int, max number of timesteps for an episode.
+        num_planning_steps: int, number of steps for the planning stage.
+    Returns:
+        q: array[float], keeps track of the estimated value of each
+            state-action pair Q(s, a).
+        policy: array[float], learned stochastic policy of which
+            action a to take in state s.
+        model: instance of `Model` class that holds model properties
+            that we learn through experience.
+    """
+    for episode in range(0, num_episodes):
+        # Initialize episode to get initial state
+        init_s_idx = initialize_epsiode(num_non_term_states)
+
+        # Loop through episode and update the policy
+        q, policy, model = loop_through_episode(
+            num_non_term_states,
+            max_num_actions,
+            environment,
+            model,
+            q,
+            policy,
+            alpha,
+            epsilon,
+            gamma,
+            maximum_episode_length,
+            num_planning_steps,
+            init_s_idx)
+
+    return q, policy, model
+
+def run_algorithm():
+    """Runs the algorithm.
+
+    Returns:
+        model: instance of `Model` class that holds model properties
+            that we learn through experience.
+    """
+    (num_states,
+     _,
+     num_non_term_states,
+     max_num_actions,
+     _) = create_known_environment()
+
+    environment = Environment(num_states, num_non_term_states, max_num_actions)
+    model = Model(num_states, num_non_term_states, max_num_actions)
+
+    (num_episodes,
+     maximum_episode_length,
+     num_planning_steps,
+     alpha,
+     epsilon,
+     gamma) = set_hyperparameters()
+
+    q = create_value_function_arrays(num_states, max_num_actions)
+
+    policy = create_policy_arrays(num_non_term_states, max_num_actions)
+
+    # Print initial arrays
+    print("\nInitial state-action value function")
+    print(q)
+
+    print("\nInitial policy")
+    print(policy)
+
+    # Run off policy planning and learning tabular dyna-Q
+    q, policy, model = off_policy_planning_and_learning_tabular_dyna_q(
+        num_non_term_states,
+        max_num_actions,
+        environment,
+        model,
+        q,
+        policy,
+        alpha,
+        epsilon,
+        gamma,
+        num_episodes,
+        maximum_episode_length,
+        num_planning_steps)
+
+    # Print final results
+    print("\nFinal state-action value function")
+    print(q)
+
+    print("\nFinal policy")
+    print(policy)
+
+    return model
+
+model = run_algorithm()
+
+# Print model seen arrays
+print("model.num_seen_non_term_states")
+print(model.num_seen_non_term_states)
+print("model.seen_non_term_s_stack")
+print(model.seen_non_term_s_stack)
+print("model.seen_non_term_s_stack_rev_lu")
+print(model.seen_non_term_s_stack_rev_lu)
+print("model.num_seen_non_term_s_a")
+print(model.num_seen_non_term_s_a)
+print("model.seen_non_term_s_a_stack")
+print(model.seen_non_term_s_a_stack)
+print("model.seen_non_term_s_a_stack_rev_lu")
+print(model.seen_non_term_s_a_stack_rev_lu)
+
+# Print model successor arrays
+print("model.num_sp")
+print(model.num_sp)
+print("model.sp_idx")
+print(model.sp_idx)
+print("model.p")
+print(model.p)
+print("model.r")
+print(model.r)
+print("model.s_a_ss_num_visits")
+print(model.s_a_ss_num_visits)

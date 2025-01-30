@@ -1,0 +1,222 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import ipywidgets as widgets
+plt.style.use("seaborn")
+import seaborn as sns
+
+
+# autoreload modules when code is run
+%load_ext autoreload
+%autoreload 2
+
+
+
+# a. load
+GDP_per_capita = pd.read_excel('GDP per cap.xlsx', skiprows=1)
+
+# b. drop columns
+drop_these = ['Indicator', 'Units', 'Scale', 'Measurement', 'Source',	'Seasonally adjusted',	'Base year price',	'Base year index',	'Historical end year',	'Historical end quarter',	'Date of last update',	'Source details',	'Additional source details',	'Indicator code',
+]
+GDP_per_capita.drop(drop_these, axis=1, inplace=True)
+
+# c. rename columns
+myDict = {}
+for i in range(1990, 2020+1): # range goes from 1990 to 2020
+    myDict[str(i)] = f'GDP{i}' 
+GDP_per_capita.rename(columns = myDict, inplace=True)
+
+# d. drop na: Remove all rows which do not have GDP data in all periods.
+GDP_per_capita = GDP_per_capita.dropna()
+
+#e. drop Eurozone 
+GDP_per_capita = GDP_per_capita[GDP_per_capita.Location != "Eurozone"]
+
+# f. convert dataset to long
+GDP_per_capita_long = pd.wide_to_long(GDP_per_capita, stubnames='GDP', i='Location', j='Year').reset_index()
+
+# g. show
+GDP_per_capita_long.head(5)
+
+
+# a. load
+pop = pd.read_excel('POP.xlsx', skiprows=1)
+
+
+# b. drop columns
+drop_these = ['Indicator', 'Units', 'Scale', 'Measurement', 'Source',	'Seasonally adjusted',	'Base year price',	'Base year index',	'Historical end year',	'Historical end quarter',	'Date of last update',	'Source details',	'Additional source details',	'Indicator code']
+pop.drop(drop_these, axis=1, inplace=True)
+
+# c. rename columns
+myDict_pop = {}
+for i in range(1990, 2020+1): # range goes from 1990 to 2020
+    myDict_pop[str(i)] = f'pop{i}' 
+pop.rename(columns = myDict_pop, inplace=True)
+pop.head(10)
+
+# d. drop na
+pop = pop.dropna()
+
+#e. drop Eurozone 
+pop = pop[pop.Location != "Eurozone"]
+
+# f. convert to long
+pop_long = pd.wide_to_long(pop, stubnames='pop', i='Location', j='Year').reset_index()
+
+# g. show
+pop_long.head(5)
+
+def plot_GDP(df, Location,Location2):
+    fig = plt.figure(figsize=(10,4))
+    ax = fig.add_subplot(1,1,1)
+
+    I = df['Location'] == Location
+    I2 = df['Location'] == Location2
+
+    ax.plot(df.loc[I,:]['Year'],df.loc[I,:]['GDP'])
+    ax.plot(df.loc[I2,:]['Year'],df.loc[I2,:]['GDP'])
+
+    ax.set_ylabel('USD')
+    ax.set_xlabel('Year')
+    ax.legend(['GDP per capita '+ str(Location),'GDP per capita '+ str(Location2)])
+
+
+widgets.interact(plot_GDP,
+df = widgets.fixed(GDP_per_capita_long),
+Location = widgets.Dropdown(description='Location1',
+options=GDP_per_capita_long.Location.unique(),
+value='Denmark', ),
+Location2 = widgets.Dropdown(description='Location2',
+options=GDP_per_capita_long.Location.unique(),
+value='Sweden', )
+
+);
+
+def plot_pop(df, Location,Location2):
+    fig = plt.figure(figsize=(10,4))
+    ax = fig.add_subplot(1,1,1)
+
+    I = df['Location'] == Location
+    I2 = df['Location'] == Location2
+
+    ax.plot(df.loc[I,:]['Year'],df.loc[I,:]['pop'])
+    ax.plot(df.loc[I2,:]['Year'],df.loc[I2,:]['pop'])
+
+    ax.set_ylabel('Population in thousands')
+    ax.set_xlabel('Year')
+    ax.legend(['Population '+ str(Location),'Population '+ str(Location2)])
+
+
+widgets.interact(plot_pop,
+df = widgets.fixed(pop_long),
+Location = widgets.Dropdown(description='Location1',
+options=pop_long.Location.unique(),
+value='Denmark', ),
+Location2 = widgets.Dropdown(description='Location2',
+options=pop_long.Location.unique(),
+value='Sweden', )
+
+);
+
+GDP_pop = pd.merge(GDP_per_capita_long, pop_long, how='inner',on=['Location code', 'Year'])
+drop_duplicate_location = ['Location_y']
+GDP_pop.drop(drop_duplicate_location, axis=1, inplace=True)
+GDP_pop.rename(columns = {'Location_x':'Location'}, inplace=True)
+GDP_pop.head(5)
+
+# We sort the data by left joining our data set on the data subset of 2019. This ensures the desired order of the data. 
+GDP_pop_start = GDP_pop[(GDP_pop.Year == 2019)]
+GDP_pop_1 = pd.merge(GDP_pop_start, GDP_pop, how='left',on=['Location code'])
+drop_these = ['Year_x', 'GDP_x', 'pop_x', 'Location_y']
+rename_these = {'Location_x':'Location', 'Location code': 'Location_code', 'Year_y':'year', 'GDP_y':'GDP', 'pop_y':'pop'}
+GDP_pop_1.drop(drop_these, axis=1, inplace=True)
+GDP_pop_1.rename(columns = rename_these, inplace=True)
+GDP_pop_1.head(100)
+
+# Take logs of GDP
+GDP_pop_1['log_GDP'] =  np.log(GDP_pop_1['GDP'])
+
+# Take logs of population 
+GDP_pop_1['log_pop'] =  np.log(GDP_pop_1['pop'])
+
+# GDP growth rates
+GDP_pop_1['growth_GDP'] = GDP_pop_1['log_GDP'].diff(1)
+
+# Population Growth rates
+GDP_pop_1['growth_pop'] = GDP_pop_1['log_pop'].diff(1)
+
+# Removing 1990 as there is no meaningful growth rate
+GDP_pop_1= GDP_pop_1[(GDP_pop_1.year > 1990)]
+GDP_pop_1.head(5)
+
+
+# Defining outliers as countries with unrealistic year to year growth exceeding 100% 
+GDP_pop_1[(GDP_pop_1.growth_GDP > 1)]
+
+
+# Removing the outliers found above
+GDP_pop_out=GDP_pop_1[(GDP_pop_1.Location_code != 'ERI') & (GDP_pop_1.Location_code != 'BLR') & (GDP_pop_1.Location_code != 'TKM')]
+
+
+# Defining the income groups based on GDP-quantiles in 2019.
+GDP_pop_group4 = GDP_pop_out[(GDP_pop_out.GDP <= GDP_pop_out.GDP.quantile(0.25)) & (GDP_pop_out.year == 2019)]
+GDP_pop_group3 = GDP_pop_out[(GDP_pop_out.GDP >= GDP_pop_out.GDP.quantile(0.25)) & (GDP_pop_out.GDP <= GDP_pop_out.GDP.quantile(0.5)) & (GDP_pop_out.year == 2019)]
+GDP_pop_group2 = GDP_pop_out[(GDP_pop_out.GDP >= GDP_pop_out.GDP.quantile(0.5)) & (GDP_pop_out.GDP <= GDP_pop_out.GDP.quantile(0.75)) & (GDP_pop_out.year == 2019)]
+GDP_pop_group1 = GDP_pop_out[(GDP_pop_out.GDP >= GDP_pop_out.GDP.quantile(0.75)) & (GDP_pop_out.year == 2019)]
+
+# group 1
+join_group1 = pd.merge(GDP_pop_group1, GDP_pop_out, how='left',on=['Location_code'])
+drop_these = ['year_x', 'GDP_x', 'pop_x', 'Location_y','log_GDP_x','log_pop_x','growth_GDP_x','growth_pop_x']
+rename_these = {'year_y':'year', 'GDP_y':'GDP', 'pop_y':'pop','log_GDP_y':'log_GDP','log_pop_y':'log_pop','growth_GDP_y':'growth_GDP','growth_pop_y':'growth_pop','Location_x':'Location'}
+join_group1.drop(drop_these, axis=1, inplace=True)
+join_group1.rename(columns = rename_these, inplace=True)
+join_group1['income_group'] = str("group_1")
+# group 2
+join_group2 = pd.merge(GDP_pop_group2, GDP_pop_out, how='left',on=['Location_code'])
+drop_these = ['year_x', 'GDP_x', 'pop_x', 'Location_y','log_GDP_x','log_pop_x','growth_GDP_x','growth_pop_x']
+rename_these = {'year_y':'year', 'GDP_y':'GDP', 'pop_y':'pop','log_GDP_y':'log_GDP','log_pop_y':'log_pop','growth_GDP_y':'growth_GDP','growth_pop_y':'growth_pop','Location_x':'Location'}
+join_group2.drop(drop_these, axis=1, inplace=True)
+join_group2.rename(columns = rename_these, inplace=True)
+join_group2['income_group'] = str("group_2")
+# group 3
+join_group3 = pd.merge(GDP_pop_group3, GDP_pop_out, how='left',on=['Location_code'])
+drop_these = ['year_x', 'GDP_x', 'pop_x', 'Location_y','log_GDP_x','log_pop_x','growth_GDP_x','growth_pop_x']
+rename_these = {'year_y':'year', 'GDP_y':'GDP', 'pop_y':'pop','log_GDP_y':'log_GDP','log_pop_y':'log_pop','growth_GDP_y':'growth_GDP','growth_pop_y':'growth_pop','Location_x':'Location'}
+join_group3.drop(drop_these, axis=1, inplace=True)
+join_group3.rename(columns = rename_these, inplace=True)
+join_group3['income_group'] = str("group_3")
+# group 4
+join_group4 = pd.merge(GDP_pop_group4, GDP_pop_out, how='left',on=['Location_code'])
+drop_these = ['year_x', 'GDP_x', 'pop_x', 'Location_y','log_GDP_x','log_pop_x','growth_GDP_x','growth_pop_x']
+rename_these = {'year_y':'year', 'GDP_y':'GDP', 'pop_y':'pop','log_GDP_y':'log_GDP','log_pop_y':'log_pop','growth_GDP_y':'growth_GDP','growth_pop_y':'growth_pop','Location_x':'Location'}
+join_group4.drop(drop_these, axis=1, inplace=True)
+join_group4.rename(columns = rename_these, inplace=True)
+join_group4['income_group'] = str("group_4")
+
+join_group4.head(5)
+
+# We plot the average growth rates in GDP per capita for each income group
+x_coordinates = [1991, 2020]
+y_coordinates = [0.02, 0.02]
+plt.plot(x_coordinates, y_coordinates, sns.xkcd_rgb["orange"])
+join_group1.groupby(["year"]).growth_GDP.mean().plot()
+join_group2.groupby(["year"]).growth_GDP.mean().plot().grid(True)
+join_group3.groupby(["year"]).growth_GDP.mean().plot().set_ylabel("Average growth in GDP per capita")
+join_group4.groupby(["year"]).growth_GDP.mean().plot().legend(["Reference line 2%","income group 1","income group 2","income group 3","income group 4"]);
+
+# Merge group tables
+outcome = pd.concat([join_group1, join_group2, join_group3, join_group4])
+
+
+# Scatter plot
+scatterx = outcome.groupby(["Location"]).growth_GDP.mean()
+scattery = outcome.groupby(["Location"]).growth_pop.mean()
+
+scatterdata1 = pd.merge(outcome, scatterx, how='left',on=['Location'])
+scatterdata2 = pd.merge(scatterdata1, scattery, how='left',on=['Location'])
+
+scatter = sns.scatterplot(x="growth_GDP_y", y="growth_pop_y", data=scatterdata2, hue= "income_group" , legend='full')
+plt.xlabel("Average growth in GDP per capita")
+plt.ylabel("Average growth in population");
+plt.grid(True)
+

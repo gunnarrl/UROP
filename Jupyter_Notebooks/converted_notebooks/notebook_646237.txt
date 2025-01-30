@@ -1,0 +1,339 @@
+# lets import our usual stuff
+import pandas as pd
+import numpy as np
+import ipywidgets
+%matplotlib inline
+#%matplotlib notebook
+
+# if you get a "No module named bqplot" -> install!
+
+#!pip install bqplot
+#!conda install -c conda-forge bqplot --yes # try first
+
+# it is possible you'll need:
+#!jupyter nbextension enable --py --sys-prefix bqplot
+#!jupyter nbextension enable --py --sys-prefix widgetsnbextension
+
+import bqplot
+
+data = np.random.random((10, 10))
+data
+
+# lets start by generating a quick heat map
+
+# (1)
+# create our first scale of our plot: just a color scale
+col_sc = bqplot.ColorScale() 
+# now we'll use bqplot's gridheatmap function
+#  with our randomly generated data & our scales to 
+#  make a heatmap like so:
+heat_map = bqplot.GridHeatMap(color = data, 
+                              scales = {'color': col_sc})
+# put our marks into our figure and lets go!
+fig = bqplot.Figure(marks = [heat_map])
+
+# (2) ok, this is fine and all, but lets add some reference for our 
+#  color scheme with a colorbar & also lets choose a different 
+#  color scheme
+col_sc = bqplot.ColorScale(scheme = "Reds")
+# lets plot some axes on our plot as well, in this case
+#  our axis will be a color bar, vertically on the right
+#  of our heatmap
+c_ax = bqplot.ColorAxis(scale = col_sc, 
+                        orientation = 'vertical', 
+                        side = 'right')
+# put it all together and lets take a look!
+heat_map = bqplot.GridHeatMap(color = data, 
+                              scales = {'color': col_sc})
+# generate fig!
+fig = bqplot.Figure(marks = [heat_map], axes = [c_ax])
+
+# (3) finally, lets add some axes labels on the x & y axis,
+#  we need to add their scales first
+# this scale will just count up the boxes in the vertical 
+#   & horizontal direction
+x_sc = bqplot.OrdinalScale()
+y_sc = bqplot.OrdinalScale()
+# add our axes objects
+x_ax = bqplot.Axis(scale = x_sc)
+y_ax = bqplot.Axis(scale = y_sc, 
+                   orientation = 'vertical')
+heat_map = bqplot.GridHeatMap(color = data, 
+                              scales = {'color': col_sc, 
+                                        'row': y_sc,
+                                        'column':x_sc})
+fig = bqplot.Figure(marks = [heat_map], 
+                    axes = [c_ax, y_ax, x_ax])
+
+
+fig
+
+# keep data from last time
+#import IPython
+#IPython.OutputArea.auto_scroll_threshold = 9999;
+from IPython import display
+
+# now add scales - colors, x & y
+col_sc = bqplot.ColorScale(scheme = "Reds")
+x_sc = bqplot.OrdinalScale()
+y_sc = bqplot.OrdinalScale()
+
+# create axis - for colors, x & y
+c_ax = bqplot.ColorAxis(scale = col_sc, 
+                        orientation = 'vertical', 
+                        side = 'right')
+x_ax = bqplot.Axis(scale = x_sc)
+y_ax = bqplot.Axis(scale = y_sc, 
+                   orientation = 'vertical')
+
+# lets now re-do our heat map & add in some interactivity:
+heat_map = bqplot.GridHeatMap(color = data,
+                              scales = {'color': col_sc,
+                                        'row': y_sc,
+                                        'column': x_sc},
+                              interactions = {'click': 'select'}, 
+                             anchor_style={"fill":"blue"})
+#NOTE: anchor_style seems not to do anything now...
+
+# stir and combine into 1 figure
+fig = bqplot.Figure(marks = [heat_map], 
+                    axes = [c_ax, y_ax, x_ax])
+
+#display(fig)
+#ipywidgets.HBox([fig])
+fig
+
+#  Ok fine, but our selection isn't linked to anything!
+#  lets check out what heat_map selected is
+heat_map.selected
+#  note if I select a different box & re-run this cell,
+#  I get out different values
+
+# so now, lets write a little function that links the data value
+#  to the selected & lets print this in a little ipywidgets label
+mySelectedLabel = ipywidgets.Label()
+
+# (1) 
+# lets write our linking function
+# there are a few ways to link this,
+#  here is a simple way first
+def get_data_value(change):
+    i,j = heat_map.selected[0]
+    v = data[i,j] # grab data value
+    mySelectedLabel.value = str(v) # set our label
+
+# (2) this is maybe in-elegant as we are 
+#  explicitly calling our origininal heat map!
+#  so, lets instead remind ourselves what "change" is here
+def get_data_value(change):
+    print(change)
+    i,j = heat_map.selected[0]
+    v = data[i,j] # grab data value
+    mySelectedLabel.value = str(v) # set our label
+# now we see when we click we get back a whole
+#  dictionary of information - if we recall, 
+#  "owner" here is our heat_map which "owns" 
+# this change.
+#  If we want to be able to apply our function to 
+#  this or any other heatmap figure we generate,
+#  we can re-write the above function as follows:
+
+# (3)
+#def get_data_value(change,mylab):
+def get_data_value(change):
+    #print(change['owner'].selected)
+    i,j = change['owner'].selected[0]
+    v = data[i,j] # grab data value
+    mySelectedLabel.value = str(v) # set our label
+    #mylab.value = str(v) # set our label
+# so, this now is applied to any map that we choose to input
+    
+# regenerate our heatmap to use in our fig canvas
+heat_map = bqplot.GridHeatMap(color = data,
+                              scales = {'color': col_sc,
+                                        'row': y_sc,
+                                        'column': x_sc},
+                              interactions = {'click': 'select'},
+                              anchor_style = {'fill':'blue'}, 
+                              selected_style = {'opacity': 1.0},
+                              unselected_style = {'opacity': 0.8})
+    
+# make sure we check out     
+heat_map.observe(get_data_value, 'selected')
+#heat_map.observe(self, mySelectedLabel)
+fig = bqplot.Figure(marks = [heat_map], 
+                    axes = [c_ax, y_ax, x_ax])
+
+ipywidgets.VBox([mySelectedLabel, fig])
+
+# now let's read in the kepler confirmed planets dataset
+planets = pd.read_csv('https://jnaiman.github.io/csci-p-14110/lesson06/data/planets_2019.07.12_17.16.25.csv', 
+                     sep=",", comment="#")
+
+planets.keys()
+
+# pl_orbsmax is in AU, semi-major axis
+planets[['pl_orbeccen','pl_orbsmax']]
+
+x = planets['pl_orbeccen']
+y = planets['pl_orbsmax']
+
+# only entries for no NaNs:
+xplot = x[~np.isnan(x) & ~np.isnan(y)]
+yplot = y[~np.isnan(x) & ~np.isnan(y)]
+
+myHist, xedges, yedges = np.histogram2d(xplot, yplot, 
+                                        bins=[10,10])
+
+myHist
+
+mySelectedLabel = ipywidgets.Label()
+
+col_sc = bqplot.ColorScale(scheme = "Reds")
+x_sc = bqplot.LinearScale()
+y_sc = bqplot.LinearScale()
+
+# create axis - for colors, x & y
+c_ax = bqplot.ColorAxis(scale = col_sc, 
+                        orientation = 'vertical', 
+                        side = 'right')
+x_ax = bqplot.Axis(scale = x_sc)
+y_ax = bqplot.Axis(scale = y_sc, 
+                   orientation = 'vertical')
+
+def get_data_value(change):
+    i,j = change['owner'].selected[0]
+    v = myHist[i,j] # grab data value
+    mySelectedLabel.value = str(v) # set our label
+    
+# regenerate our heatmap to use in our fig canvas
+heat_map = bqplot.GridHeatMap(color = myHist,
+                              scales = {'color': col_sc,
+                                        'row': y_sc,
+                                        'column': x_sc},
+                              interactions = {'click': 'select'},
+                              anchor_style = {'fill':'blue'}, 
+                              selected_style = {'opacity': 1.0},
+                              unselected_style = {'opacity': 0.8})
+    
+# make sure we check out     
+heat_map.observe(get_data_value, 'selected')
+fig = bqplot.Figure(marks = [heat_map], 
+                    axes = [c_ax, y_ax, x_ax])
+
+ipywidgets.VBox([mySelectedLabel, fig])
+
+# this is becuase the edges are bin edges, not centers
+y_centers = [(yedges[i]+yedges[i+1])*0.5 for i in range(len(yedges)-1)]
+x_centers = [(xedges[i]+xedges[i+1])*0.5 for i in range(len(xedges)-1)]
+
+mySelectedLabel = ipywidgets.Label()
+
+col_sc = bqplot.ColorScale(scheme = "Reds")
+x_sc = bqplot.LinearScale()
+y_sc = bqplot.LinearScale()
+
+# create axis - for colors, x & y
+c_ax = bqplot.ColorAxis(scale = col_sc, 
+                        orientation = 'vertical', 
+                        side = 'right')
+x_ax = bqplot.Axis(scale = x_sc, 
+                  label='Semi-major axis in AU')
+y_ax = bqplot.Axis(scale = y_sc, 
+                   orientation = 'vertical',
+                  label='Eccentricity')
+
+def get_data_value(change):
+    i,j = change['owner'].selected[0]
+    v = myHist[i,j] # grab data value
+    mySelectedLabel.value = str(v) # set our label
+    
+# regenerate our heatmap to use in our fig canvas
+heat_map = bqplot.GridHeatMap(color = myHist,
+                              row=x_centers,
+                              column=y_centers,
+                              scales = {'color': col_sc,
+                                        'row': y_sc,
+                                        'column': x_sc},
+                              interactions = {'click': 'select'},
+                              anchor_style = {'fill':'blue', 'stroke': 'blue'},
+                             opacity=0.5)
+    
+# make sure we check out     
+heat_map.observe(get_data_value, 'selected')
+fig = bqplot.Figure(marks = [heat_map], 
+                    axes = [c_ax, y_ax, x_ax])
+
+ipywidgets.VBox([mySelectedLabel, fig])
+
+theta = np.arange(0, 2*np.pi, 0.001)
+
+# Line's plot
+x_l_sc = bqplot.LinearScale()
+y_l_sc = bqplot.LinearScale()
+
+line_plot = bqplot.Lines(x=[], y=[], # start empty
+                         scales = {'x': y_l_sc,
+                                        'y': x_l_sc})
+
+x_l_ax = bqplot.Axis(scale = x_l_sc, 
+                     label='x in AU')
+y_l_ax = bqplot.Axis(scale = y_l_sc, 
+                     orientation = 'vertical',
+                     label='y in AU')
+fig_lines = bqplot.Figure(marks = [line_plot], 
+                          axes = [y_l_ax, x_l_ax])
+
+# quick check it out
+#fig_lines
+
+mySelectedLabel = ipywidgets.Label()
+
+col_sc = bqplot.ColorScale(scheme = "Reds")
+x_sc = bqplot.LinearScale()
+y_sc = bqplot.LinearScale()
+
+# create axis - for colors, x & y
+c_ax = bqplot.ColorAxis(scale = col_sc, 
+                        orientation = 'vertical', 
+                        side = 'right')
+x_ax = bqplot.Axis(scale = x_sc, 
+                  label='Semi-major axis in AU')
+y_ax = bqplot.Axis(scale = y_sc, 
+                   orientation = 'vertical',
+                  label='Eccentricity')
+
+def get_data_value(change):
+    i,j = change['owner'].selected[0]
+    v = myHist[i,j] # grab data value
+    mySelectedLabel.value = str(v) # set our label
+    # NOW ALSO update line data
+    semiMaj = y_centers[j]
+    ecc = x_centers[i]
+    #print(ecc)
+    # from our plot_ellipse function, with a not b
+    b = semiMaj*ecc
+    r = b/np.sqrt(1-ecc*(np.cos(theta))**2)
+    x = r*np.cos(theta)
+    y = r*np.sin(theta)
+    line_plot.x = x
+    line_plot.y = y
+    
+# regenerate our heatmap to use in our fig canvas
+heat_map = bqplot.GridHeatMap(color = myHist,
+                              row=x_centers,
+                              column=y_centers,
+                              scales = {'color': col_sc,
+                                        'row': y_sc,
+                                        'column': x_sc},
+                              interactions = {'click': 'select'},
+                              anchor_style = {'fill':'blue'}, # note: these below may not work
+                              selected_style = {'opacity': 1.0, 'color':'blue'},
+                              unselected_style = {'opacity': 0.1})
+    
+# make sure we check out     
+heat_map.observe(get_data_value, 'selected')
+fig = bqplot.Figure(marks = [heat_map], 
+                    axes = [c_ax, y_ax, x_ax])
+
+ipywidgets.VBox([mySelectedLabel, ipywidgets.HBox([fig,fig_lines])])

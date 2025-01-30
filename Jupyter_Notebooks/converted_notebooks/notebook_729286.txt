@@ -1,0 +1,85 @@
+import math
+
+dir(math)
+
+help(math.factorial)
+
+math.factorial(5) #this is an example of "calling" the function with input 5. The output should be 120
+
+math.factorial(0) # here we call the same function with input 0. The output should be 1.
+
+## Call the factorial function with an input argument of 4. What is the output?
+#TODO write code here.
+
+
+from IPython.display import display, HTML
+
+print("Exciting:")
+display(HTML("<h1>Hello</h1>"))
+print("Boring:")
+print("Hello")
+
+
+def print_title(text):
+    '''
+    This prints text to IPython.display as H1
+    '''
+    return display(HTML("<H1>" + text + "</H1>"))
+
+def print_normal(text):
+    '''
+    this prints text to IPython.display as normal text
+    '''
+    return display(HTML(text))
+
+
+print_title("Area of a Rectangle")
+length = float(input("Enter length: "))
+width = float(input("Enter width: "))
+area = length * width
+print_normal("The area is %.2f" % area)
+
+
+## TODO: Write your code here
+
+
+def CardIssuer(card):
+    '''This function takes a card number (card) as input, and returns the issuer name as output'''
+    ## TODO write code here they should be the same as lines 3-13 from the code above
+    
+    # the last line in the function should return the output
+    return issuer
+
+# Testing the CardIssuer() function
+print("WHEN card='40123456789' We EXPECT CardIssuer(card) to return Visa ACTUAL", CardIssuer("40123456789"))
+print("WHEN card='50123456789' We EXPECT CardIssuer(card) to return MasterCard ACTUAL", CardIssuer("50123456789"))
+
+## TODO: You write the remaining 3 tests, you can copy the lines and edit the values accordingly
+
+
+
+# TODO Re-write the program here, calling our function.
+
+
+# Todo: execute this code
+
+def checkLuhn(card):
+    ''' This Luhn algorithm was adopted from the pseudocode here: https://en.wikipedia.org/wiki/Luhn_algorithm'''
+    total = 0
+    length = len(card)
+    parity = length % 2
+    for i in range(length):
+        digit = int(card[i])
+        if i%2 == parity:
+            digit = digit * 2
+            if digit > 9:
+                digit = digit -9
+        total = total + digit
+    return total % 10 == 0
+
+
+#TODO Write your two tests here
+
+
+## TODO Write code here
+

@@ -1,0 +1,514 @@
+import os
+import sys
+import cv2
+import shutil
+import random
+import warnings
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from tensorflow import set_random_seed
+from sklearn.utils import class_weight
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, cohen_kappa_score, classification_report
+from keras import backend as K
+from keras.models import Model
+from keras.utils import to_categorical
+from keras import optimizers, applications
+from keras.preprocessing.image import ImageDataGenerator
+from keras.layers import Dense, Dropout, GlobalAveragePooling2D, Input
+from keras.callbacks import EarlyStopping, ReduceLROnPlateau, Callback, LearningRateScheduler
+
+def seed_everything(seed=0):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    set_random_seed(0)
+
+seed = 0
+seed_everything(seed)
+%matplotlib inline
+sns.set(style="whitegrid")
+warnings.filterwarnings("ignore")
+sys.path.append(os.path.abspath('../input/efficientnet/efficientnet-master/efficientnet-master/'))
+from efficientnet import *
+
+hold_out_set = pd.read_csv('../input/aptos-data-split/hold-out.csv')
+X_train = hold_out_set[hold_out_set['set'] == 'train']
+X_val = hold_out_set[hold_out_set['set'] == 'validation']
+test = pd.read_csv('../input/aptos2019-blindness-detection/test.csv')
+print('Number of train samples: ', X_train.shape[0])
+print('Number of validation samples: ', X_val.shape[0])
+print('Number of test samples: ', test.shape[0])
+
+# Preprocecss data
+X_train["id_code"] = X_train["id_code"].apply(lambda x: x + ".png")
+X_val["id_code"] = X_val["id_code"].apply(lambda x: x + ".png")
+test["id_code"] = test["id_code"].apply(lambda x: x + ".png")
+display(X_train.head())
+
+# Model parameters
+BATCH_SIZE = 8
+EPOCHS = 30
+WARMUP_EPOCHS = 5
+LEARNING_RATE = 1e-4
+WARMUP_LEARNING_RATE = 1e-3
+HEIGHT = 456
+WIDTH = 456
+CHANNELS = 3
+ES_PATIENCE = 5
+RLROP_PATIENCE = 3
+DECAY_DROP = 0.5
+LR_WARMUP_EPOCHS_1st = 2
+LR_WARMUP_EPOCHS_2nd = 5
+STEP_SIZE = (5 * (len(X_train) // BATCH_SIZE)) / 2
+
+train_base_path = '../input/aptos2019-blindness-detection/train_images/'
+test_base_path = '../input/aptos2019-blindness-detection/test_images/'
+train_dest_path = 'base_dir/train_images/'
+validation_dest_path = 'base_dir/validation_images/'
+test_dest_path =  'base_dir/test_images/'
+
+# Making sure directories don't exist
+if os.path.exists(train_dest_path):
+    shutil.rmtree(train_dest_path)
+if os.path.exists(validation_dest_path):
+    shutil.rmtree(validation_dest_path)
+if os.path.exists(test_dest_path):
+    shutil.rmtree(test_dest_path)
+    
+# Creating train, validation and test directories
+os.makedirs(train_dest_path)
+os.makedirs(validation_dest_path)
+os.makedirs(test_dest_path)
+
+def crop_image(img, tol=7):
+    if img.ndim ==2:
+        mask = img>tol
+        return img[np.ix_(mask.any(1),mask.any(0))]
+    elif img.ndim==3:
+        gray_img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        mask = gray_img>tol
+        check_shape = img[:,:,0][np.ix_(mask.any(1),mask.any(0))].shape[0]
+        if (check_shape == 0): # image is too dark so that we crop out everything,
+            return img # return original image
+        else:
+            img1=img[:,:,0][np.ix_(mask.any(1),mask.any(0))]
+            img2=img[:,:,1][np.ix_(mask.any(1),mask.any(0))]
+            img3=img[:,:,2][np.ix_(mask.any(1),mask.any(0))]
+            img = np.stack([img1,img2,img3],axis=-1)
+            
+        return img
+
+def circle_crop(img):
+    img = crop_image(img)
+
+    height, width, depth = img.shape
+    largest_side = np.max((height, width))
+    img = cv2.resize(img, (largest_side, largest_side))
+
+    height, width, depth = img.shape
+
+    x = width//2
+    y = height//2
+    r = np.amin((x, y))
+
+    circle_img = np.zeros((height, width), np.uint8)
+    cv2.circle(circle_img, (x, y), int(r), 1, thickness=-1)
+    img = cv2.bitwise_and(img, img, mask=circle_img)
+    img = crop_image(img)
+
+    return img
+    
+def preprocess_image(base_path, save_path, image_id, HEIGHT, WIDTH, sigmaX=10):
+    image = cv2.imread(base_path + image_id)
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    image = circle_crop(image)
+    image = cv2.resize(image, (HEIGHT, WIDTH))
+    image = cv2.addWeighted(image, 4, cv2.GaussianBlur(image, (0,0), sigmaX), -4 , 128)
+    cv2.imwrite(save_path + image_id, image)
+    
+# Pre-procecss train set
+for i, image_id in enumerate(X_train['id_code']):
+    preprocess_image(train_base_path, train_dest_path, image_id, HEIGHT, WIDTH)
+    
+# Pre-procecss validation set
+for i, image_id in enumerate(X_val['id_code']):
+    preprocess_image(train_base_path, validation_dest_path, image_id, HEIGHT, WIDTH)
+    
+# Pre-procecss test set
+for i, image_id in enumerate(test['id_code']):
+    preprocess_image(test_base_path, test_dest_path, image_id, HEIGHT, WIDTH)
+
+datagen=ImageDataGenerator(rescale=1./255, 
+                           rotation_range=360,
+                           horizontal_flip=True,
+                           vertical_flip=True,
+                           zoom_range=[0.75,1],
+                           fill_mode='constant',
+                           cval=0)
+
+train_generator=datagen.flow_from_dataframe(
+                          dataframe=X_train,
+                          directory=train_dest_path,
+                          x_col="id_code",
+                          y_col="diagnosis",
+                          class_mode="raw",
+                          batch_size=BATCH_SIZE,
+                          target_size=(HEIGHT, WIDTH),
+                          seed=seed)
+
+valid_generator=datagen.flow_from_dataframe(
+                        dataframe=X_val,
+                        directory=validation_dest_path,
+                        x_col="id_code",
+                        y_col="diagnosis",
+                        class_mode="raw",
+                        batch_size=BATCH_SIZE,
+                        target_size=(HEIGHT, WIDTH),
+                        seed=seed)
+
+test_generator=datagen.flow_from_dataframe(  
+                          dataframe=test,
+                          directory=test_dest_path,
+                          x_col="id_code",
+                          batch_size=1,
+                          class_mode=None,
+                          shuffle=False,
+                          target_size=(HEIGHT, WIDTH),
+                          seed=seed)
+
+class CyclicLR(Callback):
+    """This callback implements a cyclical learning rate policy (CLR).
+    The method cycles the learning rate between two boundaries with
+    some constant frequency.
+    # Arguments
+        base_lr: initial learning rate which is the
+            lower boundary in the cycle.
+        max_lr: upper boundary in the cycle. Functionally,
+            it defines the cycle amplitude (max_lr - base_lr).
+            The lr at any cycle is the sum of base_lr
+            and some scaling of the amplitude; therefore
+            max_lr may not actually be reached depending on
+            scaling function.
+        step_size: number of training iterations per
+            half cycle. Authors suggest setting step_size
+            2-8 x training iterations in epoch.
+        mode: one of {triangular, triangular2, exp_range}.
+            Default 'triangular'.
+            Values correspond to policies detailed above.
+            If scale_fn is not None, this argument is ignored.
+        gamma: constant in 'exp_range' scaling function:
+            gamma**(cycle iterations)
+        scale_fn: Custom scaling policy defined by a single
+            argument lambda function, where
+            0 <= scale_fn(x) <= 1 for all x >= 0.
+            mode paramater is ignored
+        scale_mode: {'cycle', 'iterations'}.
+            Defines whether scale_fn is evaluated on
+            cycle number or cycle iterations (training
+            iterations since start of cycle). Default is 'cycle'.
+    The amplitude of the cycle can be scaled on a per-iteration or
+    per-cycle basis.
+    This class has three built-in policies, as put forth in the paper.
+    "triangular":
+        A basic triangular cycle w/ no amplitude scaling.
+    "triangular2":
+        A basic triangular cycle that scales initial amplitude by half each cycle.
+    "exp_range":
+        A cycle that scales initial amplitude by gamma**(cycle iterations) at each
+        cycle iteration.
+    For more detail, please see paper.
+    # Example for CIFAR-10 w/ batch size 100:
+        ```python
+            clr = CyclicLR(base_lr=0.001, max_lr=0.006,
+                                step_size=2000., mode='triangular')
+            model.fit(X_train, Y_train, callbacks=[clr])
+        ```
+    Class also supports custom scaling functions:
+        ```python
+            clr_fn = lambda x: 0.5*(1+np.sin(x*np.pi/2.))
+            clr = CyclicLR(base_lr=0.001, max_lr=0.006,
+                                step_size=2000., scale_fn=clr_fn,
+                                scale_mode='cycle')
+            model.fit(X_train, Y_train, callbacks=[clr])
+        ```
+    # References
+      - [Cyclical Learning Rates for Training Neural Networks](
+      https://arxiv.org/abs/1506.01186)
+    """
+
+    def __init__(self,
+                base_lr=0.001,
+                max_lr=0.006,
+                step_size=2000.,
+                mode='triangular',
+                gamma=1.,
+                scale_fn=None,
+                scale_mode='cycle'):
+        super(CyclicLR, self).__init__()
+
+        if mode not in ['triangular', 'triangular2', 'exp_range']:
+            raise KeyError("mode must be one of 'triangular', ""'triangular2', or 'exp_range'")
+        self.base_lr = base_lr
+        self.max_lr = max_lr
+        self.step_size = step_size
+        self.mode = mode
+        self.gamma = gamma
+        if scale_fn is None:
+            if self.mode == 'triangular':
+                self.scale_fn = lambda x: 1.
+                self.scale_mode = 'cycle'
+            elif self.mode == 'triangular2':
+                self.scale_fn = lambda x: 1 / (2.**(x - 1))
+                self.scale_mode = 'cycle'
+            elif self.mode == 'exp_range':
+                self.scale_fn = lambda x: gamma ** x
+                self.scale_mode = 'iterations'
+        else:
+            self.scale_fn = scale_fn
+            self.scale_mode = scale_mode
+        self.clr_iterations = 0.
+        self.trn_iterations = 0.
+        self.history = {}
+
+        self._reset()
+
+    def _reset(self, new_base_lr=None, new_max_lr=None,
+               new_step_size=None):
+        if new_base_lr is not None:
+            self.base_lr = new_base_lr
+        if new_max_lr is not None:
+            self.max_lr = new_max_lr
+        if new_step_size is not None:
+            self.step_size = new_step_size
+        self.clr_iterations = 0.
+
+    def clr(self):
+        cycle = np.floor(1 + self.clr_iterations / (2 * self.step_size))
+        x = np.abs(self.clr_iterations / self.step_size - 2 * cycle + 1)
+        if self.scale_mode == 'cycle':
+            return self.base_lr + (self.max_lr - self.base_lr) * \
+                np.maximum(0, (1 - x)) * self.scale_fn(cycle)
+        else:
+            return self.base_lr + (self.max_lr - self.base_lr) * \
+                np.maximum(0, (1 - x)) * self.scale_fn(self.clr_iterations)
+
+    def on_train_begin(self, logs={}):
+        logs = logs or {}
+
+        if self.clr_iterations == 0:
+            K.set_value(self.model.optimizer.lr, self.base_lr)
+        else:
+            K.set_value(self.model.optimizer.lr, self.clr())
+
+    def on_batch_end(self, epoch, logs=None):
+
+        logs = logs or {}
+        self.trn_iterations += 1
+        self.clr_iterations += 1
+        K.set_value(self.model.optimizer.lr, self.clr())
+
+        self.history.setdefault(
+            'lr', []).append(
+            K.get_value(
+                self.model.optimizer.lr))
+        self.history.setdefault('iterations', []).append(self.trn_iterations)
+
+        for k, v in logs.items():
+            self.history.setdefault(k, []).append(v)
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        logs['lr'] = K.get_value(self.model.optimizer.lr)
+
+def create_model(input_shape):
+    input_tensor = Input(shape=input_shape)
+    base_model = EfficientNetB5(weights=None, 
+                                include_top=False,
+                                input_tensor=input_tensor)
+    base_model.load_weights('../input/efficientnet-keras-weights-b0b5/efficientnet-b5_imagenet_1000_notop.h5')
+
+    x = GlobalAveragePooling2D()(base_model.output)
+    x = Dropout(0.5)(x)
+    x = Dense(2048, activation='relu')(x)
+    x = Dropout(0.5)(x)
+    final_output = Dense(1, activation='linear', name='final_output')(x)
+    model = Model(input_tensor, final_output)
+    
+    return model
+
+model = create_model(input_shape=(HEIGHT, WIDTH, CHANNELS))
+
+for layer in model.layers:
+    layer.trainable = False
+
+for i in range(-5, 0):
+    model.layers[i].trainable = True
+
+metric_list = ["accuracy"]
+optimizer = optimizers.Adam(lr=WARMUP_LEARNING_RATE)
+model.compile(optimizer=optimizer, loss='mean_squared_error', metrics=metric_list)
+model.summary()
+
+STEP_SIZE_TRAIN = train_generator.n//train_generator.batch_size
+STEP_SIZE_VALID = valid_generator.n//valid_generator.batch_size
+
+history_warmup = model.fit_generator(generator=train_generator,
+                                     steps_per_epoch=STEP_SIZE_TRAIN,
+                                     validation_data=valid_generator,
+                                     validation_steps=STEP_SIZE_VALID,
+                                     epochs=WARMUP_EPOCHS,
+                                     verbose=2).history
+
+for layer in model.layers:
+    layer.trainable = True
+
+es = EarlyStopping(monitor='val_loss', mode='min', patience=ES_PATIENCE, restore_best_weights=True, verbose=1)
+cyclic_lr = CyclicLR(base_lr=(LEARNING_RATE / 20),
+                     max_lr=(LEARNING_RATE * 2),
+                     step_size=STEP_SIZE,
+                     mode='triangular2')
+
+callback_list = [es, cyclic_lr]
+optimizer = optimizers.Adam(lr=LEARNING_RATE)
+model.compile(optimizer=optimizer, loss='mean_squared_error', metrics=metric_list)
+model.summary()
+
+history = model.fit_generator(generator=train_generator,
+                              steps_per_epoch=STEP_SIZE_TRAIN,
+                              validation_data=valid_generator,
+                              validation_steps=STEP_SIZE_VALID,
+                              epochs=EPOCHS,
+                              callbacks=callback_list,
+                              verbose=2).history
+
+fig, ax = plt.subplots(figsize=(20, 4))
+
+ax.plot(cyclic_lr.history['lr'])
+ax.set_title('Fine-tune learning rates')
+
+plt.xlabel('Steps')
+plt.ylabel('Learning rate')
+sns.despine()
+plt.show()
+
+fig, (ax1, ax2) = plt.subplots(2, 1, sharex='col', figsize=(20, 14))
+
+ax1.plot(history['loss'], label='Train loss')
+ax1.plot(history['val_loss'], label='Validation loss')
+ax1.legend(loc='best')
+ax1.set_title('Loss')
+
+ax2.plot(history['acc'], label='Train accuracy')
+ax2.plot(history['val_acc'], label='Validation accuracy')
+ax2.legend(loc='best')
+ax2.set_title('Accuracy')
+
+plt.xlabel('Epochs')
+sns.despine()
+plt.show()
+
+# Create empty arays to keep the predictions and labels
+df_preds = pd.DataFrame(columns=['label', 'pred', 'set'])
+train_generator.reset()
+valid_generator.reset()
+
+# Add train predictions and labels
+for i in range(STEP_SIZE_TRAIN + 1):
+    im, lbl = next(train_generator)
+    preds = model.predict(im, batch_size=train_generator.batch_size)
+    for index in range(len(preds)):
+        df_preds.loc[len(df_preds)] = [lbl[index], preds[index][0], 'train']
+
+# Add validation predictions and labels
+for i in range(STEP_SIZE_VALID + 1):
+    im, lbl = next(valid_generator)
+    preds = model.predict(im, batch_size=valid_generator.batch_size)
+    for index in range(len(preds)):
+        df_preds.loc[len(df_preds)] = [lbl[index], preds[index][0], 'validation']
+
+df_preds['label'] = df_preds['label'].astype('int')
+
+def classify(x):
+    if x < 0.5:
+        return 0
+    elif x < 1.5:
+        return 1
+    elif x < 2.5:
+        return 2
+    elif x < 3.5:
+        return 3
+    return 4
+
+# Classify predictions
+df_preds['predictions'] = df_preds['pred'].apply(lambda x: classify(x))
+
+train_preds = df_preds[df_preds['set'] == 'train']
+validation_preds = df_preds[df_preds['set'] == 'validation']
+
+labels = ['0 - No DR', '1 - Mild', '2 - Moderate', '3 - Severe', '4 - Proliferative DR']
+def evaluate_model(train, validation):
+    train_labels, train_preds = train
+    validation_labels, validation_preds = validation
+    print("Train        Cohen Kappa score: %.3f" % cohen_kappa_score(train_preds, train_labels, weights='quadratic'))
+    print("Validation   Cohen Kappa score: %.3f" % cohen_kappa_score(validation_preds, validation_labels, weights='quadratic'))
+    print("Complete set Cohen Kappa score: %.3f" % cohen_kappa_score(np.append(train_preds, validation_preds), np.append(train_labels, validation_labels), weights='quadratic'))
+    print(' \t\t\t\t   TRAIN')
+    print(classification_report(train_labels, train_preds, target_names=labels))
+    print(' \t\t\t\t VALIDATION')
+    print(classification_report(validation_labels, validation_preds, target_names=labels))
+    
+evaluate_model((train_preds['label'], train_preds['predictions']), (validation_preds['label'], validation_preds['predictions']))
+
+def plot_confusion_matrix(train, validation, labels=labels):
+    train_labels, train_preds = train
+    validation_labels, validation_preds = validation
+    fig, (ax1, ax2) = plt.subplots(1, 2, sharex='col', figsize=(24, 7))
+    train_cnf_matrix = confusion_matrix(train_labels, train_preds)
+    validation_cnf_matrix = confusion_matrix(validation_labels, validation_preds)
+
+    train_cnf_matrix_norm = train_cnf_matrix.astype('float') / train_cnf_matrix.sum(axis=1)[:, np.newaxis]
+    validation_cnf_matrix_norm = validation_cnf_matrix.astype('float') / validation_cnf_matrix.sum(axis=1)[:, np.newaxis]
+
+    train_df_cm = pd.DataFrame(train_cnf_matrix_norm, index=labels, columns=labels)
+    validation_df_cm = pd.DataFrame(validation_cnf_matrix_norm, index=labels, columns=labels)
+
+    sns.heatmap(train_df_cm, annot=True, fmt='.2f', cmap="Blues",ax=ax1).set_title('Train')
+    sns.heatmap(validation_df_cm, annot=True, fmt='.2f', cmap=sns.cubehelix_palette(8),ax=ax2).set_title('Validation')
+    plt.show()
+
+plot_confusion_matrix((train_preds['label'], train_preds['predictions']), (validation_preds['label'], validation_preds['predictions']))
+
+def apply_tta(model, generator, steps=10):
+    step_size = generator.n//generator.batch_size
+    preds_tta = []
+    for i in range(steps):
+        generator.reset()
+        preds = model.predict_generator(generator, steps=step_size)
+        preds_tta.append(preds)
+
+    return np.mean(preds_tta, axis=0)
+
+preds = apply_tta(model, test_generator)
+predictions = [classify(x) for x in preds]
+
+results = pd.DataFrame({'id_code':test['id_code'], 'diagnosis':predictions})
+results['id_code'] = results['id_code'].map(lambda x: str(x)[:-4])
+
+# Cleaning created directories
+if os.path.exists(train_dest_path):
+    shutil.rmtree(train_dest_path)
+if os.path.exists(validation_dest_path):
+    shutil.rmtree(validation_dest_path)
+if os.path.exists(test_dest_path):
+    shutil.rmtree(test_dest_path)
+
+fig = plt.subplots(sharex='col', figsize=(24, 8.7))
+sns.countplot(x="diagnosis", data=results, palette="GnBu_d").set_title('Test')
+sns.despine()
+plt.show()
+
+results.to_csv('submission.csv', index=False)
+display(results.head())

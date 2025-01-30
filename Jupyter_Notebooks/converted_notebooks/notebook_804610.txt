@@ -1,0 +1,213 @@
+from IPython.core.interactiveshell import InteractiveShell
+InteractiveShell.ast_node_interactivity = 'all'
+
+import torch
+from torchvision import datasets, transforms
+
+# Define a transform to normalize the data
+transform = transforms.Compose([transforms.ToTensor(),
+                                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+# Download and load the training data
+trainset = datasets.FashionMNIST('~/.pytorch/F_MNIST_data/', download=True, train=True, transform=transform)
+trainloader = torch.utils.data.DataLoader(trainset, batch_size=64, shuffle=True)
+
+# Download and load the test data
+testset = datasets.FashionMNIST('~/.pytorch/F_MNIST_data/', download=True, train=False, transform=transform)
+testloader = torch.utils.data.DataLoader(testset, batch_size=64, shuffle=True)
+
+from torch import nn, optim
+import torch.nn.functional as F
+
+class Classifier(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc1 = nn.Linear(784, 256)
+        self.fc2 = nn.Linear(256, 128)
+        self.fc3 = nn.Linear(128, 64)
+        self.fc4 = nn.Linear(64, 10)
+        
+    def forward(self, x):
+        # make sure input tensor is flattened
+        x = x.view(x.shape[0], -1)
+        
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        x = F.log_softmax(self.fc4(x), dim=1)
+        
+        return x
+
+model = Classifier()
+
+images, labels = next(iter(testloader))
+# Get the class probabilities
+ps = torch.exp(model(images))
+ps
+# Make sure the shape is appropriate, we should get 10 class probabilities for 64 examples
+print(ps.shape)
+
+top_p, top_class = ps.topk(1, dim=1)
+# Look at the most likely classes for the first 10 examples
+print(top_class[:10,:])
+
+labels.shape
+top_class.shape
+
+equals = top_class == labels.view(*top_class.shape)
+
+accuracy = torch.mean(equals.type(torch.FloatTensor))
+print(f'Accuracy: {accuracy.item()*100}%')
+
+model = Classifier()
+criterion = nn.NLLLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.003)
+
+epochs = 2
+steps = 0
+
+train_losses, validation_losses = [], []
+for e in range(epochs):
+    training_loss = 0
+    for images, labels in trainloader:
+        
+        optimizer.zero_grad()
+        
+        log_ps = model(images)
+        loss = criterion(log_ps, labels)
+        loss.backward()
+        optimizer.step()
+        
+        training_loss += loss.item()
+    else:
+        ## TODO: Implement the validation pass and print out the validation accuracy
+        validation_loss = 0
+        validation_accuracy = 0
+        
+        with torch.no_grad():
+            
+            for validation_images, validation_labels in testloader:
+                
+                validation_log_ps = model(validation_images)
+                
+                loss = criterion(validation_log_ps, validation_labels)
+                validation_loss += loss.item()
+                
+                validation_ps = torch.exp(validation_log_ps)
+                
+                top_k_p, top_k_class = validation_ps.topk(1, dim = 1) 
+                
+                validation_labels = validation_labels.view(top_k_class.shape[0], -1)
+                
+                validation_equals = top_k_class == validation_labels
+                
+                validation_accuracy += torch.mean(validation_equals.type(torch.FloatTensor))
+            else:
+                print('validation_loss : ', validation_loss/len(testloader))
+                print('validation_accuracy : ', validation_accuracy/len(testloader))
+
+            train_losses.append(training_loss)
+            validation_losses.append(validation_loss)
+
+class NetworkDropout(nn.Module):
+    def __init__(self):
+        super().__init__()
+        
+        self.fc1 = nn.Linear(784, 256)
+        self.fc2 = nn.Linear(256, 128)
+        self.fc3 = nn.Linear(128, 64)
+        
+        self.output = nn.Linear(64, 10)
+        
+        self.droput = nn.Dropout(p=0.2)
+        
+    def forward(self, x):
+        
+        x = x.view(x.shape[0], -1)
+        
+        x = self.droput(F.relu(self.fc1(x)))
+        x = self.droput(F.relu(self.fc2(x)))
+        x = self.droput(F.relu(self.fc3(x)))
+        
+        x = F.log_softmax(self.output(x), dim = 1)
+        
+        return x
+
+## TODO: Train your model with dropout, and monitor the training progress with the validation loss and accuracy
+
+model_dp = NetworkDropout()
+
+criterion_dp = nn.NLLLoss()
+optimizer_dp = optim.SGD(model_dp.parameters(), lr=0.002)
+
+InteractiveShell.ast_node_interactivity = 'none'
+
+train_losses_dp, eval_losses_dp = [], []
+
+epochs = 5
+for epoch in range(epochs):
+    
+    train_loss_dp, train_accuracy_dp = 0, 0
+    model_dp.train()
+    for images, labels in trainloader:
+        
+        optimizer_dp.zero_grad()
+        
+        logits_dp = model_dp(images)
+        
+        loss_dp = criterion_dp(logits_dp, labels)
+        loss_dp.backward()
+        
+        optimizer_dp.step()
+        
+        train_loss_dp += loss_dp.item()
+    else:
+        
+        print('train_loss_dp', train_loss_dp/len(trainloader))
+
+        with torch.no_grad():
+            
+            eval_loss, eval_accuracy = 0, 0
+            model_dp.eval()
+            for images_eval, labels_eval in testloader:
+                
+                logits_eval_dp = model_dp.forward(images_eval)
+
+                loss_eval_dp = criterion_dp(logits_eval_dp, labels_eval)
+                
+                eval_loss += loss_eval_dp.item()
+                
+                ps_eval_dp = torch.exp(logits_eval_dp)
+                top_k_ps, top_k_class = ps_eval_dp.topk(1, dim = 1, largest = True)
+                
+                labels_eval_view = labels_eval.view(top_k_class.shape[0], -1)
+                equal_eval_dp = top_k_class == labels_eval_view
+                
+                eval_accuracy += torch.mean(equal_eval_dp.type(torch.FloatTensor))
+            else:
+                print('eval_accuracy', eval_accuracy/len(testloader))
+                print('eval_loss', eval_loss/len(testloader))
+                
+    train_losses_dp.append(train_loss_dp)
+    eval_losses_dp.append(eval_loss)
+
+# Import helper module (should be in the repo)
+import helper
+
+# Test out your network!
+
+model.eval()
+
+dataiter = iter(testloader)
+images, labels = dataiter.next()
+img = images[0]
+# Convert 2D image to 1D vector
+img = img.view(1, 784)
+
+# Calculate the class probabilities (softmax) for img
+with torch.no_grad():
+    output = model.forward(img)
+
+ps = torch.exp(output)
+
+# Plot the image and probabilities
+helper.view_classify(img.view(1, 28, 28), ps, version='Fashion')

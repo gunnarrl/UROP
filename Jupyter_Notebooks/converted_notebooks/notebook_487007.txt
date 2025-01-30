@@ -1,0 +1,210 @@
+import numpy as np
+import cv2
+from os import listdir, path
+import matplotlib as mpl
+from matplotlib import pyplot as plt
+%matplotlib inline
+
+# Funcoes uteis 
+
+# Funcao de leitura de imagens
+def pdiguide_imgRead(path,convert=True,show=False):
+    # Essa funcao cria uma lista de imagens dado o caminho (path) de um diretório.
+    # Se "convert" é Verdadeiro, a função irá realizar a conversão das imagens de RGB para Grayscale
+    # Se "show" é Verdadeiro, a função irá exibir as imagens carregadas
+    
+    img = [] # lista de imagens em tons de cinza
+
+    number_of_files = len(listdir(path))#a função listdir forma uma lista com todos os arquivos
+
+    if(show):
+        plt.figure(figsize=[15,10]) #define a existencia de uma figura e define o seu tamanho
+
+    #A cada iteração uma imagem é carregada e convertida para tons de cinza, 
+    #ao passo que é armazenada nos vetores acima
+    for i in range(0,number_of_files): 
+        img.append(cv2.imread(path + str(i+1) + '.png'))
+        if(convert):
+            img[i]=(cv2.cvtColor(img[i],cv2.COLOR_RGB2GRAY))
+
+        #Exibe as imagens
+        if(show):
+            plt.subplot(1+number_of_files/5,5,i+1)
+            plt.imshow(img[i],cmap='gray'),plt.xticks([]),plt.yticks([]) 
+            #xticks e yticks controlam as escalas exibidas, nesse caso, serão nulas.
+            
+    print("Leitura finalizada, total de imagens lidas = ",len(img))
+    return img #retorna a lista de imagens
+    
+# Funcao apenas para exibicao da lista de imagens
+def pdiguide_show(list_of_imgs, columns, titles=None):
+    # Essa funcao exibe as imagens dado uma lista de imagens.
+    number_of_files = len(list_of_imgs)
+    for i in range(0,number_of_files): 
+        plt.subplot(1+number_of_files/columns,columns,i+1) 
+        plt.imshow(list_of_imgs[i],cmap='gray'),plt.xticks([]),plt.yticks([]) 
+        if titles != None: plt.title(titles[i])
+            
+# Funcao para calcular e exibir o histograma de uma imagem 
+def pdiguide_histogram(img,nbins,show=False):
+    # Essa funcao calcula o histograma de um vetor 2D (imagem grayscale)
+    # com valores inteiros entre 0-255.
+    # Essa imagem retorna um vetor 1D com o histograma e os pontos 
+    # que representam o bin_edges para plotagem do histograma.
+    # Caso show seja verdadeiro ela mesmo irá plotar o histograma
+    h, bin_edges = np.histogram(img.ravel(), nbins,(0,255))
+    if show:
+        w=256./nbins
+        bin_centers = bin_edges[1:]-(w/2)
+        plt.bar(bin_centers, h, width=w)
+    
+    return h, bin_edges
+
+# Leitura das imagens
+path = '../Data/'
+img = pdiguide_imgRead(path)
+
+# Algoritmo do notebook de descrição e representação
+def make_plates_images(img):
+    '''Cria alguns candidatos a placas'''
+    crops = []
+    c = 0 
+    car_blur = cv2.blur(img,(5,5))
+    _,bin_car = cv2.threshold(car_blur,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+    contours,hierarquia = cv2.findContours(bin_car.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = sorted(contours, key = cv2.contourArea, reverse = True)[:40]
+    for index in range(0,len(cnts)):
+        x1,y1,w,h = cv2.boundingRect(cnts[index])
+        ar = h/w 
+        if(ar >= 0.2 and ar <= 0.5):
+            x2 = x1+w
+            y2 = y1+h
+            crops.append(img.copy()[y1:y2,x1:x2].astype(np.uint8))
+    return crops
+
+plates2 = []
+for i in range(2):
+    plates2.append(make_plates_images(img[i]))
+
+plates = []
+for plate in plates2:
+    for i in range(len(plate)):
+        plates.append(plate[i])
+    
+plt.figure(figsize=(20,3))
+for i in range(len(plates)):
+    plt.subplot(1+len(plates)/10,10,i+1)
+    plt.imshow(plates[i],cmap='gray')
+    plt.xticks([])
+    plt.yticks([])
+
+ind = 2
+template = img[ind][650:677,1373:1460]
+plt.figure(figsize=(10,6))
+pdiguide_show([img[ind],template],2)
+
+# Definicao de uma lista com os metodos usados pelo Template Matching do OpenCV
+methods = ['cv2.TM_CCOEFF', 'cv2.TM_CCOEFF_NORMED', 'cv2.TM_CCORR', 
+           'cv2.TM_CCORR_NORMED', 'cv2.TM_SQDIFF', 'cv2.TM_SQDIFF_NORMED']
+
+def template_Match_comparison(image,template):
+    
+    meth = 'cv2.TM_CCOEFF'
+    img2 = image.copy() # copia a imagem original para img2
+    method = eval(meth) # associa as strings em métodos as suas contantes do OpenCV
+    
+    # Aplicando o template Matching
+    match = cv2.matchTemplate(img2,template,method) 
+
+    # Extraindo os pontos de máxima e mínimo globais
+    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(match)
+     
+    return max_val
+
+pad_plates = []
+fator_multip = 1
+for plate in plates:
+    while(plate.shape[0] <= fator_multip*template.shape[0]): # enquanto o número de linhas for menor
+        zero_pad_y = np.zeros(plate.shape[1],np.uint8)
+        # adicione uma linha de zeros e mesmo tamanho ao final da imagem 
+        plate = np.vstack((plate.copy(),zero_pad_y))         
+    while(plate.shape[1] <= fator_multip*template.shape[1]): # enquanto o número de coluna for menor
+        zero_pad_x = np.zeros([plate.shape[0],1],np.uint8)
+        # adicione uma coluna de zeros e mesmo tamanho ao final da imagem
+        plate = np.hstack((plate.copy(),zero_pad_x))
+    pad_plates.append(plate)
+
+results = []
+for plate in pad_plates:
+    results.append(template_Match_comparison(plate,template))
+print(results)
+
+plt.figure(figsize=(10,4))
+pdiguide_show([template,pad_plates[np.argmax(results)]],2,['Template','Most Similar image'])
+
+edit_results = results.copy()
+top = 3
+to_plot = []
+to_plot.append(template)
+titles = []
+titles.append('template')
+
+for i in range(top):
+    to_plot.append(pad_plates[np.argmax(edit_results)])
+    edit_results[np.argmax(edit_results)] = 0
+    titles.append('Top '+str(i+1))
+
+plt.figure(figsize=(15,4))
+pdiguide_show(to_plot,top+1,titles)
+
+nbins = 128
+s = len(plates)
+hists = []
+plt.figure(figsize=(20,35))
+for i in range(s):
+    plt.subplot(s/6+1,6,i+1)
+    #eq = cv2.equalizeHist(plates[i])
+    h,_ = pdiguide_histogram(plates[i],nbins,show=True)
+    if(i == 2 or i == 26): 
+        plt.title('Histograma da placa')
+    elif(i == 22):
+        plt.title('Histograma do placa+ruido')
+    else:
+        plt.title('Histograma do ruido')
+    hists.append(h)
+
+ind = 0
+template = img[ind][760:800,370:500]
+plt.figure(figsize=(10,6))
+pdiguide_show([img[ind],template],2)
+
+# Calculando e adequando o histograma do template
+#eq_template = cv2.equalizeHist(template)
+plt.figure(figsize=(5,3))
+h_temp,_ = pdiguide_histogram(template,nbins,show=True)
+hist_template = h_temp.ravel().astype('float32')
+
+# Metodos de similaridade e dissimilaridade do OpenCV para comparação de histogramas
+methods = ['cv2.HISTCMP_CORREL','cv2.HISTCMP_CHISQR','cv2.HISTCMP_INTERSECT',
+           'cv2.HISTCMP_BHATTACHARYYA', 'cv2.HISTCMP_CHISQR_ALT', 'cv2.HISTCMP_KL_DIV']
+
+# Declarando dicionário de comparação
+comparison={}
+
+for compare_method in methods:
+    scores = []
+    for h in hists:
+        value = cv2.compareHist(hist_template, h.ravel().astype('float32'), eval(compare_method))
+        scores.append(value)
+    comparison[compare_method] = scores
+
+img_chosen = []
+for compare_method in methods:
+    if compare_method == 'cv2.HISTCMP_CORREL' or compare_method == 'cv2.HISTCMP_INTERSECT' :
+        index = np.argmax(comparison[compare_method])
+    else:
+        index = np.argmin(comparison[compare_method])
+    img_chosen.append(plates[index])
+
+plt.figure(figsize=(20,4))
+pdiguide_show(img_chosen,ft,methods)

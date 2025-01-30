@@ -1,0 +1,67 @@
+import pandas as pd
+from datetime import timedelta
+import matplotlib.pyplot as plt
+import matplotlib
+
+matplotlib.style.use('ggplot') # Look Pretty
+
+def clusterInfo(model):
+    print("Cluster Analysis Inertia: ", model.inertia_)
+    print('------------------------------------------')
+    
+    for i in range(len(model.cluster_centers_)):
+        print("\n  Cluster ", i)
+        print("    Centroid ", model.cluster_centers_[i])
+        print("    #Samples ", (model.labels_==i).sum()) # NumPy Power
+
+# Find the cluster with the least # attached nodes
+def clusterWithFewestSamples(model):
+    # Ensure there's at least on cluster...
+    minSamples = len(model.labels_)
+    minCluster = 0
+    
+    for i in range(len(model.cluster_centers_)):
+        if minSamples > (model.labels_==i).sum():
+            minCluster = i
+            minSamples = (model.labels_==i).sum()
+
+    print("\n  Cluster With Fewest Samples: ", minCluster)
+    return (model.labels_==minCluster)
+
+# .. your code here ..
+
+# .. your code here ..
+
+print("Examining person: ", 0)
+
+# .. your code here ..
+
+# .. your code here ..
+
+# .. your code here ..
+
+# .. your code here ..
+
+def doKMeans(data, num_clusters=0):
+    # TODO: Be sure to only feed in Lat and Lon coordinates to the KMeans algo, since none of the other
+    # data is suitable for your purposes. Since both Lat and Lon are (approximately) on the same scale,
+    # no feature scaling is required. Print out the centroid locations and add them onto your scatter
+    # plot. Use a distinguishable marker and color.
+    #
+    # Hint: Make sure you fit ONLY the coordinates, and in the CORRECT order (lat first). This is part
+    # of your domain expertise. Also, *YOU* need to create, initialize (and return) the variable named
+    # `model` here, which will be a SKLearn K-Means model for this to work:
+    
+    # .. your code here ..
+    
+    return model
+
+model = doKMeans(user1, 3)
+
+midWayClusterIndices = clusterWithFewestSamples(model)
+midWaySamples = user1[midWayClusterIndices]
+print("    Its Waypoint Time: ", midWaySamples.CallTime.mean())
+
+ax.scatter(model.cluster_centers_[:,1], model.cluster_centers_[:,0], s=169, c='r', marker='x', alpha=0.8, linewidths=2)
+ax.set_title('Weekday Calls Centroids')
+plt.show()

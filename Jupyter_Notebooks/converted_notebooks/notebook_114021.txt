@@ -1,0 +1,525 @@
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+import matplotlib.lines as mlines
+import numpy as np
+from matplotlib import cm
+from ipywidgets import interact, interactive, fixed, interact_manual
+import ipywidgets as widgets
+np.set_printoptions(linewidth=200, threshold=np.inf)
+from matplotlib.patches import Rectangle
+import scipy
+from scipy.interpolate import griddata
+import matplotlib.path as mplPath
+import matplotlib.patches as patches
+
+class Mesh():
+    def getNESW(self, pos):
+        return [self.getNorth(pos), self.getEast(pos), self.getSouth(pos), self.getEast(pos)]
+    def isBorderPoint(self, pos):
+        return not(self.hasNorth(pos) and self.hasEast(pos) and self.hasSouth() and self.hasWest())
+    def pointType(self, pos):
+        horizontalType = - int(not(self.hasWest(pos))) + int(not(self.hasEast(pos)))
+        verticalType = - int(not(self.hasSouth(pos))) + int(not(self.hasNorth(pos)))
+        return [horizontalType, verticalType]
+
+class equidistant2DMesh(Mesh):
+    def __init__(self, L, H, n_x, n_y):
+        self.mesh = []
+        self.nNodes = n_x * n_y
+        self.n_x = n_x
+        self.n_y = n_y
+        self.L = L
+        self.H = H
+        self.delta_x = L / (n_x - 1)
+        if (n_y > 1):
+            self.delta_y = H / (n_y - 1)
+        for i in np.linspace(0, L, n_x):
+            for j in np.linspace(0, H, n_y):
+                self.mesh += [[i, j]]
+    def getNorth(self, pos, n=1):
+        return self.getSouth(pos, n=-n)
+    def getSouth(self, pos, n=1):
+        return pos - n
+    def getWest(self, pos, n=1):
+        return pos - self.n_y * n
+    def getEast(self, pos, n=1):
+        return self.getWest(pos, n=-n)
+    def hasNorth(self, pos, n=1):
+        return (pos + n) < (int(pos / self.n_y) + 1) * self.n_y
+    def hasSouth(self, pos, n=1):
+        return (pos - n) >= (int(pos / self.n_y)) * self.n_y
+    def hasEast(self, pos, n=1):
+        return pos < self.nNodes - n * self.n_y
+    def hasWest(self, pos, n=1):
+        return pos >= self.n_y * n
+    def index_to_i_j(self, index):
+        n_x = int(index/self.n_y)
+        n_y = index % self.n_y
+        return [n_x, n_y]
+    def i_j_to_index(self, i, j):
+        return i * self.n_y + j
+class periodic2DMesh(Mesh):
+    def __init__(self, L, H, n_x, n_y):
+        self.mesh = []
+        self.nNodes = n_x * n_y
+        self.n_x = n_x
+        self.n_y = n_y
+        self.L = L
+        self.H = H
+        self.delta_x = L / (n_x - 1)
+        if (n_y > 1):
+            self.delta_y = H / (n_y - 1)
+        for i in np.linspace(0, L, n_x+1)[0:-1]:
+            for j in np.linspace(0, H, n_y+1)[0:-1]:
+                self.mesh += [[i, j]]
+    def getNorth(self, pos, n=1):
+        return self.getSouth(pos, n=-n)
+    def getSouth(self, pos, n=1):
+        return (pos - n) % self.n_y + int(pos / self.n_y) * self.n_y
+    def getWest(self, pos, n=1):
+        return (pos - self.n_y * n) % (self.n_y * self.n_x)
+    def getEast(self, pos, n=1):
+        return self.getWest(pos, n=-n)
+    def hasNorth(self, pos, n=1):
+        return True
+    def hasSouth(self, pos, n=1):
+        return True
+    def hasEast(self, pos, n=1):
+        return True
+    def hasWest(self, pos, n=1):
+        return True
+    def index_to_i_j(self, index):
+        n_x = int(index/self.n_y)
+        n_y = index % self.n_y
+        return [n_x, n_y]
+    def i_j_to_index(self, i, j):
+        return i * self.n_y + j
+
+class solver():
+    def __init__(self, mesh, equation, time_discretisation, space_discretisations, boundaries):
+        self.mesh = mesh
+        self.equation = equation
+        self.time_discretisation = time_discretisation
+        if (self.time_discretisation == None):
+            self.time_discretisation = Euler_explizit(1)
+        self.space_discretisation = space_discretisations
+        self.boundaries = boundaries
+    def assemble(self):
+        self.R = np.zeros((mesh.nNodes, mesh.nNodes), dtype=np.longdouble)
+        #print("dtype", self.R.dtype)
+        border_points = []
+        for d in range(len(self.space_discretisation)):
+            currentR = self.space_discretisation[d].coefficientsR(mesh)
+            self.R += currentR[0] * self.equation[2 + d * 2] + currentR[1] * self.equation[2 + d * 2 + 1]
+            border_points += currentR[2]
+        for p in border_points:
+            self.R[p] = 0
+        self.A, self.B, self.C = self.time_discretisation.coefficientsABC(self.R, self.equation[0], self.equation[1])
+    def applyBC(self, matrix, rhs):
+        for bc in self.boundaries:
+            bc.apply(self.mesh, matrix, rhs)
+    def solve(self, timesteps, initial_conditions):
+        solution = np.zeros((timesteps + len(initial_conditions), self.mesh.nNodes))
+        inits = len(initial_conditions)
+        if (inits == 0 and (timesteps == 0 or (self.equation[0] == 0 and self.equation[1] == 0))): # stationär lösen
+            self.rhs = np.zeros((mesh.nNodes), dtype=np.longdouble)
+            self.applyBC(self.R, self.rhs)
+            solution = scipy.linalg.solve(self.R, self.rhs)
+        elif (inits == 1 and self.equation[1] != 0):
+            raise ValueError("Anfangsbedingung fehlt")
+        else:
+            solution[0:inits,:] = initial_conditions
+            for i in range(inits, timesteps + inits):
+                rhs = np.matmul(self.B, solution[i-1])
+                if (inits == 2):
+                    rhs += np.matmul(self.C, solution[i-2]) 
+                self.applyBC(self.A, rhs)
+                solution[i] = scipy.linalg.solve(self.A, rhs)
+        return solution
+
+class crank_nicholson():
+    def __init__(self, delta_t, alpha=0.5):
+        self.alpha = alpha
+        self.delta_t = delta_t
+    def coefficientsABC(self, R, e_1, e_2):
+        return [np.eye(len(R)) * (e_2 + self.delta_t * e_1) - self.delta_t**2 * self.alpha * R, 
+                + R * (1 - self.alpha) * self.delta_t**2 + np.eye(len(R)) * (2 * e_2 + self.delta_t * e_1), - np.eye(len(R)) * e_2]
+class Euler_explizit(crank_nicholson):
+    def __init__(self, delta_t):
+        super(Euler_explizit,self).__init__(delta_t, alpha=0)
+class Euler_implizit(crank_nicholson):
+    def __init__(self, delta_t):
+        super(Euler_implizit,self).__init__(delta_t, alpha=1)
+
+class RaeumlicheDiskretisierung():
+    def __init__(self, horizontal, delta_x):
+        self.horizontal = horizontal
+        self.delta_x = delta_x
+        self.coefficients_second = np.array((1, -2, 1)) / delta_x **2
+    def coefficientsR(self, mesh):
+        coef_first = np.zeros((mesh.nNodes, mesh.nNodes))
+        coef_second = np.zeros((mesh.nNodes, mesh.nNodes))
+        border_points = []
+        for i in range(mesh.nNodes):
+            if (self.fill(mesh, i, coef_first, coef_second)):
+                border_points += [i]
+        return [coef_first, coef_second, border_points]     
+    def fill(self, mesh, i, coef_first, coef_second = None):
+        deleteRow = False
+        for j in range(len(self.coefficients)):
+            idx = -1
+            if (self.start_index + j < 0): # West / Süd
+                if (self.horizontal and mesh.hasWest(i, n=-self.start_index -j)):
+                    idx = mesh.getWest(i, n=-self.start_index-j)
+
+                elif (not(self.horizontal) and mesh.hasSouth(i, n=-self.start_index-j)):
+                    idx = mesh.getSouth(i, n=-self.start_index-j)
+            elif (self.start_index + j == 0): # pos
+                idx = i
+            else:
+                if (self.horizontal and mesh.hasEast(i, n=self.start_index +j)):
+                    idx = mesh.getEast(i, n=self.start_index+j)
+                elif (not(self.horizontal) and mesh.hasNorth(i, n=self.start_index+j)):
+                    idx = mesh.getNorth(i, n=self.start_index+j)
+            if (idx != -1):
+                coef_first[i, idx] += self.coefficients[j] 
+                if not(coef_second is None):
+                    coef_second[i, idx] += self.coefficients_second[j] 
+            else:
+                deleteRow = True
+        return deleteRow
+class Zentraldifferenz(RaeumlicheDiskretisierung):
+    def __init__(self, horizontal, delta_x):
+        super(Zentraldifferenz,self).__init__(horizontal, delta_x)
+        self.coefficients = np.array((-1, 0, 1)) / delta_x / 2
+        self.start_index = -1
+class Upwind(RaeumlicheDiskretisierung):
+    def __init__(self, horizontal, delta_x, U):
+        super(Upwind,self).__init__(horizontal, delta_x)
+        self.coefficients = np.array((-max(0, U), max(0, U) - min(0, U), min(0, U))) / delta_x / U
+        self.start_index = -1
+
+class rb():
+    def __init__(self, position):
+        self.position = position
+class neumann(rb):
+    def __init__(self, position, fluss, vertikal, treatas=0):
+        super(neumann,self).__init__(position)
+        self.fluss = fluss # als Vektor
+        self.treatas = treatas
+        self.vertikal = vertikal
+    def apply(self, mesh, systemmatrix, rhs):
+        if (self.position < 0 or self.position > mesh.nNodes -1 ):
+            raise ValueError("Out of bounds")
+        delta = mesh.delta_y if self.vertikal else mesh.delta_x
+        verfahren = [Upwind(not(self.vertikal), delta, -1), Zentraldifferenz(not(self.vertikal), delta), Upwind(not(self.vertikal), delta, 1)]
+        verfahren[2].coefficients *= 1
+        typ = mesh.pointType(self.position)
+        gew_verfahren = verfahren[typ[1] + 1] if self.vertikal else verfahren[typ[0] + 1]
+        #print(self.position, gew_verfahren.coefficients)
+        if self.treatas != 0:
+            gew_verfahren = verfahren[self.treatas + 1]
+        systemmatrix[self.position] = 0
+        gew_verfahren.fill(mesh, self.position, systemmatrix)
+        rhs[self.position] = self.fluss
+class dirichlet(rb):
+    def __init__(self, position, stromfunktion):
+        super(dirichlet,self).__init__(position)
+        self.stromfunktion = stromfunktion
+    def apply(self, mesh, systemmatrix, rhs):
+        if (self.position < 0 or self.position > mesh.nNodes -1 ):
+            raise ValueError("Out of bounds")
+        systemmatrix[self.position] = 0
+        systemmatrix[self.position, self.position] = 1
+        rhs[self.position] = self.stromfunktion
+def dist_finite(x1, y1, x2, y2, x3, y3): # x3,y3 is the point
+    px = x2-x1
+    py = y2-y1
+    norm = px*px + py*py
+    u =  ((x3 - x1) * px + (y3 - y1) * py) / float(norm)
+    if u > 1:
+        u = 1
+    elif u < 0:
+        u = 0
+    x = x1 + u * px
+    y = y1 + u * py
+    dx = x - x3
+    dy = y - y3
+    dist = (dx*dx + dy*dy)
+    return dist
+class line():
+    def __init__(self, position_x, position_y, prototyp, verbose = False):
+        self.start_x = position_x[0]
+        self.end_x = position_x[1]
+        self.start_y = position_y[0]
+        self.end_y = position_y[1]
+        self.prototyp = prototyp
+        self.verbose = verbose
+    def apply(self, mesh, systemmatrix, rhs):
+        rben = []
+        NoPoints = True
+        for i in range(mesh.nNodes):
+            point=mesh.mesh[i]
+            dist = dist_finite(self.start_x, self.start_y, self.end_x, self.end_y, point[0], point[1])
+            if dist < 0.001:
+                NoPoints = False
+                self.prototyp.position = i
+                if (self.verbose):
+                    print("Located Point on BC: index: {}, i: {}, j: {}, x: {}, y: {}".format(i, *mesh.index_to_i_j(i), *point))
+                self.prototyp.apply(mesh, systemmatrix, rhs)
+        if NoPoints:
+            print("WARNING: Boundary Condition of type {}, from ({}, {}) to ({}, {}), yielded zero points".format(self.__class__.__name__, self.start_x, self.start_y, self.end_x, self.end_y))
+def getBoundariesFromPath(path, close = False):
+    segments = []
+    for i in range(len(path.vertices) + (0 if close else -1)):
+        start = path.vertices[i]
+        end = path.vertices[(i+1) % len(path.vertices)]
+        delta = end - start
+        midpoint = start + delta / 2
+        normal = np.array([-delta[1], delta[0]])
+        for multiplier in [-0.001, 0.001]:
+            if path.contains_point(normal * multiplier + midpoint):
+                outward_normal = -normal * multiplier
+                outward_normal = 1/np.linalg.norm(outward_normal) * outward_normal
+        segments += [[start, end, outward_normal]]
+    # erst horizontale, dann vertikale Segmente
+    segments = [[*i, -int(round(i[2][1])), True] for i in segments if i[2][1] != 0] + [[*i, -int(round(i[2][0])), False] for i in segments if i[2][0] != 0]
+    return [line((i[0][0], i[1][0]), (i[0][1], i[1][1]), neumann(0, 0, vertikal=i[4], treatas=i[3])) for i in segments]
+
+L = 10
+H = 10
+n_x = 41
+n_y = 41
+c = 1
+delta_t = 0.1
+mesh = equidistant2DMesh(L, H, n_x, n_y) 
+boundaries = [line((0, 0), (0, H), dirichlet(0, 0)), 
+                    line((L, L), (0, H), dirichlet(0, 0)), 
+                    line((0, L), (0, 0), dirichlet(0, 0)), 
+                    line((0, L), (H, H), dirichlet(0, 0))]
+s = solver(mesh, [0, 1, 0, c**2, 0, c**2], Euler_implizit(delta_t), [Zentraldifferenz(True, mesh.delta_x), Zentraldifferenz(False, mesh.delta_y)], boundaries)
+#s = solver(periodic2DMesh(L, H, n_x, n_y), [0, 1, 0, c**2, 0, c**2], crank_nicholson(delta_t), [Zentraldifferenz(True, mesh.delta_x), Zentraldifferenz(False, mesh.delta_y)], [])
+ab1 = np.zeros([mesh.nNodes])
+ab2 = np.zeros([mesh.nNodes])
+ab2[mesh.i_j_to_index(int((n_x -1) / 2), int((n_y - 1) / 2))] = 1
+
+s.assemble()
+result = s.solve(100, [ab1, ab2])
+
+def plot(step=0): 
+    plt.figure(figsize=(7.5,6))
+    plot_internal(step)
+    plt.show()
+def plot_internal(step=0):
+    plt.title("Wellengleichung, t={}".format(step*delta_t))
+    plt.xlabel("x-Koordinate")
+    plt.ylabel("y-Koordinate")
+    plt.contourf(np.linspace(0, L, n_x), np.linspace(0, H, n_y), result[step].reshape((n_y, n_x), order='F'), 50)
+    plt.colorbar()
+interact(plot, step=widgets.IntSlider(min=0, max=100, step=1, value=0))
+
+plt.figure(figsize=(20,5))
+plt.subplot(1, 3, 1)
+plot_internal(5)
+plt.subplot(1, 3, 2)
+plot_internal(45)
+plt.subplot(1, 3, 3)
+plot_internal(75)
+plt.show()
+
+L, H, n_x, n_y = 10, 1, 51, 1
+kappa, U = 1, -1
+endtime, delta_t = 10, 0.1
+timesteps = endtime / delta_t
+t_vorne, t_hinten = 10, 20
+mesh = equidistant2DMesh(L, H, n_x, n_y) 
+ab1 = np.ones([mesh.nNodes]) * t_vorne
+ab1[n_x - 1] = t_hinten
+boundaries = [dirichlet(0, t_vorne), dirichlet(n_x - 1, t_hinten)]
+s = solver(mesh, [1, 0, -U, kappa, 0, 0], Euler_implizit(delta_t), [Zentraldifferenz(True, mesh.delta_x)], boundaries)
+s.assemble()
+result = s.solve(int(timesteps), [ab1])
+
+for time in np.linspace(0, endtime, 21):
+    plt.plot(np.linspace(0, L, n_x), result[int(time / endtime * timesteps)], label=("t=0" if time==0 else ""))
+plt.show()
+
+L, H, n_x, n_y = 10, 1, 51, 1
+Pe, kappa = 5, 0
+U = Pe * kappa / L
+U = 1
+endtime, clf = 10, 5
+mesh = periodic2DMesh(L, H, n_x, n_y) 
+delta_t = clf * mesh.delta_x / (U+kappa/mesh.delta_x)
+timesteps = int(endtime / delta_t)
+boundaries = []
+ab1 = [x**2 * (L-x)**2 / L**4 * 16 for x in np.linspace(0, L, n_x)]
+s = solver(mesh, [1, 0, -U, kappa, 0, 0], Euler_implizit(delta_t), [Zentraldifferenz(True, mesh.delta_x)], boundaries)
+s.assemble()
+result = s.solve(int(timesteps), [ab1])
+
+for time in np.linspace(0, endtime, 21):
+    plt.plot(np.linspace(0, L, n_x), result[int(time / endtime * timesteps)], label=("t=0" if time==0 else ""))
+plt.show()
+
+def closeBoundaries(L, H):
+    return [line((0, 0), (0, H), neumann(0,0, False)), 
+       line((0, L), (H, H), neumann(0, 0, True)), 
+       line((0, L), (0, 0), neumann(0,0, True)),
+       line((L, L), (0, H), neumann(0,0, False))]
+L = 10
+H = 9
+n_x = 51
+n_y = 51
+delta_x = L / (n_x - 1)
+delta_y = H / (n_y - 1)
+rbs = closeBoundaries(L, H) + [line((0, 0), (H/4, H/2), neumann(0,10, False)), line((L, L), (H/2, 3*H/4), neumann(0,10, False)), dirichlet(n_y + 1, 150)]
+mesh = equidistant2DMesh(L, H, n_x, n_y) 
+s = solver(mesh, [0, 0, 0, 1, 0, 1], None, [Zentraldifferenz(True, mesh.delta_x), Zentraldifferenz(False, mesh.delta_y)], rbs)
+s.assemble()
+result = s.solve(0, [])
+
+plt.figure(figsize=(10, 6))
+u, v = np.gradient(result.reshape((n_y, n_x), order='F'))
+plt.streamplot(np.linspace(0, L, n_x), np.linspace(0, H, n_y), v, u)
+plt.gca().set_xlim([-0.5, L+0.5])
+plt.gca().set_ylim([-0.5, H+0.5])
+plt.plot([0, 0], [0, H/4], 'k', alpha=1, linewidth=2)
+plt.plot([0, 0], [H/2, H], 'k', alpha=1, linewidth=2)
+plt.plot([L, L], [0, H/2], 'k', alpha=1, linewidth=2)
+plt.plot([L, L], [3*H/4, H], 'k', alpha=1, linewidth=2)
+plt.plot([0, L], [0, 0], 'k', alpha=1, linewidth=2)
+plt.plot([0, L], [H, H], 'k', alpha=1, linewidth=2)
+plt.title("Stromlinien")
+plt.xlabel("x-Koordinate")
+plt.ylabel("y-Koordinate")
+plt.show()
+
+L = 5
+H = 10
+n_x = 12*4+1
+n_y = 12*4+1
+delta_x = L / (n_x - 1)
+delta_y = H / (n_y - 1)
+rbs = []
+empty = []
+dist = 0.01
+path = mplPath.Path(np.array([(0, 2*H/6), (L/4, 2*H/6), (L/4, H/6), (3*L/4, H/6), (3*L/4, 5*H/6), (0, 5*H/6)]))
+mesh = equidistant2DMesh(L, H, n_x, n_y) 
+for i in range(mesh.nNodes):
+    if path.contains_point(mesh.mesh[i]):
+        empty += [i]
+rbs += closeBoundaries(L, H) + [line((0, 0), (5*H/6, H), neumann(0,-20, False)), line((0, 0), (0, 2*H/6), neumann(0,10, False))] \
+        + getBoundariesFromPath(path, close=False) + [dirichlet(mesh.i_j_to_index(1, 2), 100)]
+
+s = solver(mesh, [0, 0, 0, 1, 0, 1], None, [Zentraldifferenz(True, mesh.delta_x), Zentraldifferenz(False, mesh.delta_y)], rbs)
+s.assemble()
+result = s.solve(0, [],)
+
+for i in empty:
+    result[empty] = np.nan
+def setup(title):
+    plt.xlabel("x-Koordinate")
+    plt.ylabel("y-Koordinate")
+    plt.title(title)
+    plt.gca().set_xlim([-L*0.05, L*1.05])
+    plt.gca().set_ylim([-H*0.05, H*1.05])
+def drawBorder():
+    plt.plot([0, 0], [2*H/6, 5*H/6], 'k', alpha=1, linewidth=2)
+    plt.plot([L, L], [0, H], 'k', alpha=1, linewidth=2)
+    plt.plot([0, L], [0, 0], 'k', alpha=1, linewidth=2)
+    plt.plot([0, L], [H, H], 'k', alpha=1, linewidth=2)
+    
+plt.figure(figsize=(22, 8))
+plt.subplot(1, 3, 1)
+u, v = np.gradient(result.reshape((n_y, n_x), order='F'))
+speed = (u**2 + v**2)**(1/2)
+plt.streamplot(np.linspace(0, L, n_x), np.linspace(0, H, n_y), v, u, density=2, color=speed)
+plt.colorbar(label="velocity")
+setup("Stromlinien")
+ax = plt.gca()
+ax.add_patch(patches.PathPatch(path, facecolor='orange', lw=2))
+drawBorder()
+plt.subplot(1, 3, 3)
+setup("Vektorplot")
+plt.quiver(np.linspace(0, L, n_x), np.linspace(0, H, n_y), v, u, scale=100)
+plt.subplot(1, 3, 2)
+setup("Höhenlinien der Potentialfunktion")
+plt.contourf(np.linspace(0, L, n_x), np.linspace(0, H, n_y), result.reshape((n_y, n_x), order='F'), 20)
+plt.colorbar()
+
+plt.show()
+
+L = 2
+H = 1
+n_x = 61
+n_y = 61
+delta_x = L / (n_x - 1)
+delta_y = H / (n_y - 1)
+emptypts = []
+empty = []
+dist = 0.01
+mesh = equidistant2DMesh(L, H, n_x, n_y) 
+# define J in the center
+path = mplPath.Path(np.array([(L/3, H/8), 
+                              (L/3, 3*H/8), 
+                              (5*L/12, 3*H/8), 
+                              (5*L/12, H/4),
+                              (7*L/12, H/4),
+                              (7*L/12, 3*H/4),
+                              (L/3, 3*H/4),
+                              (L/3, 7*H/8),
+                              (2*L/3, 7*H/8),
+                              (2*L/3, H/8)]))
+# find all nodes insinde J
+for i in range(mesh.nNodes):
+    if path.contains_point(mesh.mesh[i]):
+        empty += [i]
+# define boundaries: all borders, inlet and outlet, J in the center, Dirichlet boundary
+rbs = closeBoundaries(L, H) + [line((0, 0), (H/5, 4*H/5), neumann(0,1, vertikal=False)), line((L, L), (H/5, 4*H/5), neumann(0,1, vertikal=False))] \
+        + getBoundariesFromPath(path, close=True) + [dirichlet(mesh.i_j_to_index(1, 2), 100)]
+# solve equation system
+s = solver(mesh, [0, 0, 0, 1, 0, 1], None, [Zentraldifferenz(True, mesh.delta_x), Zentraldifferenz(False, mesh.delta_y)], rbs)
+s.assemble()
+result = s.solve(0, [],)
+
+def setup(title):
+    plt.xlabel("x-Koordinate")
+    plt.ylabel("y-Koordinate")
+    plt.title(title)
+    plt.gca().set_xlim([-L*0.05, L*1.05])
+    plt.gca().set_ylim([-H*0.05, H*1.05])
+def drawBorder():
+    plt.plot([0, 0], [0, H/5], 'k', alpha=1, linewidth=2)
+    plt.plot([0, 0], [4*H/5, H], 'k', alpha=1, linewidth=2)
+    plt.plot([L, L], [0, H/5], 'k', alpha=1, linewidth=2)
+    plt.plot([L, L], [4*H/5, H], 'k', alpha=1, linewidth=2)
+    plt.plot([0, L], [0, 0], 'k', alpha=1, linewidth=2)
+    plt.plot([0, L], [H, H], 'k', alpha=1, linewidth=2)
+patchedPath =mplPath.Path(np.reshape(np.append(path.vertices, path.vertices[0]), (path.vertices.shape[0] +1, path.vertices.shape[1])), closed=True)
+
+for i in empty:
+    result[empty] = np.nan
+plt.figure(figsize=(14, 26))
+
+plt.subplot(3, 1, 1)
+u, v = np.gradient(result.reshape((n_y, n_x), order='F'))
+speed = (u**2 + v**2)**(1/4)
+plt.streamplot(np.linspace(0, L, n_x), np.linspace(0, H, n_y), v, u, density=3, color=speed, cmap='nipy_spectral')
+drawBorder()
+plt.gca().add_patch(patches.PathPatch(patchedPath, facecolor='orange', lw=2))
+setup("Stromlinien")
+plt.colorbar(label=r'$\sqrt{v}$ in $\sqrt{m/s}$')
+
+plt.subplot(3, 1, 2)
+plt.quiver(np.linspace(0, L, n_x), np.linspace(0, H, n_y), v, u, scale=5)
+drawBorder()
+plt.gca().add_patch(patches.PathPatch(patchedPath, facecolor='orange', lw=2))
+setup("Vectorplot")
+
+plt.subplot(3, 1, 3)
+plt.contourf(np.linspace(0, L, n_x), np.linspace(0, H, n_y), result.reshape((n_y, n_x), order='F'), 20)
+plt.colorbar()
+plt.gca().add_patch(patches.PathPatch(patchedPath, facecolor='orange', lw=2))
+setup("Höhenlinien der Potentialfunktion")
+plt.show()

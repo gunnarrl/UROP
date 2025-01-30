@@ -1,0 +1,279 @@
+# Specify the Log Analytics (LA) WorkSpaceId (of your Sentinel instance).  The workspacekey should be kept in the KeyVault as the best security practice
+
+# Log Analytics WorkSpace Info found in the 'Advanced Settings' page of your LA workspace
+workspace_id = 'YOUR LOG ANALYTICS WORKSPACE ID HERE'
+
+# For the shared key, use either the primary or the secondary key of the workspace. It is recommended that you store and get your key as a secret
+workspace_shared_key = dbutils.secrets.get(scope = 'NAME HERE', key = 'KEY NAME HERE')
+
+import numpy as np
+import pandas as pd
+
+from pyspark.sql import functions as f, types as t
+from pyspark.sql.window import *
+
+# ML
+from sentinel_ai.peer_anomaly import spark_collaborative_filtering as scf 
+
+# spark
+from sentinel_ai.utils import sparkutils
+
+#utils
+from azure_sentinel_ml_utilities.log_analytics import log_analytics_client
+
+# The following module generates random training and testing data sets. Two test data sets are generated, one with low anomaly and the other with high anomaly compared to the training
+# data. Note that the data generated has a 'score' field that is a seed value for training. When working with real data, you will have a timestamp that you will need to use to
+# calculate a score based on the aggregation of access over a time interval (hourly or daily).
+train, test_high_anomaly, test_low_anomaly = scf.ProfileAccessDataset.gen_large_cluster_data(
+                                                                                    25,
+                                                                                    100,
+                                                                                    10
+                                                                                )
+
+dataSchema = t.StructType([
+            t.StructField('orgUser', t.StringType()),
+            t.StructField('orgRes', t.StringType()),
+            t.StructField('score', t.FloatType())
+        ])
+
+tmp_train_df = spark.createDataFrame(train, schema=dataSchema)
+tmp_test_high_anomaly_df = spark.createDataFrame(test_high_anomaly, schema=dataSchema)
+tmp_test_low_anomaly_df = spark.createDataFrame(test_low_anomaly, schema=dataSchema)
+
+# This module does 3 things:
+#  a) Makes the values of users and resources look more readable (that just numbers)
+#  b) Gives a default tenant ID of 0
+#  c) Adds a count for number of access (for displaying the graph)
+def updateValues(df, use_random_count):
+  tmp_df = df.withColumn('user', f.concat(f.lit('user_'), f.col("orgUser")))
+  tmp_df = tmp_df.withColumn('res', f.concat(f.lit('res_'), f.col("orgRes"))).select(f.lit('0').alias('tid'), 'user', 'res', 'score')
+  if use_random_count:
+     return tmp_df.withColumn('count_', f.round(1+f.rand()*10))
+  else:
+     return tmp_df.withColumn('count_', f.lit(1))
+
+
+train_df = updateValues(tmp_train_df, True)
+test_high_anomaly_df = updateValues(tmp_test_high_anomaly_df, False)
+test_low_anomaly_df = updateValues(tmp_test_low_anomaly_df, False)
+
+display(train_df)
+
+# Stats of each dataframes
+counts = train_df.agg(*(f.countDistinct(f.col(c)).alias(c) for c in train_df.columns))
+counts.show()
+
+counts = test_high_anomaly_df.agg(*(f.countDistinct(f.col(c)).alias(c) for c in test_high_anomaly_df.columns))
+counts.show()
+
+counts = test_low_anomaly_df.agg(*(f.countDistinct(f.col(c)).alias(c) for c in test_low_anomaly_df.columns))
+counts.show()
+
+train_df.describe().show()
+
+access_anomaly = scf.AccessAnomaly(tenant_colname='tid', score_colname='score')
+access_anomaly_model = access_anomaly.fit(train_df)
+
+# Score the high anomaly test dataset
+pred_df = access_anomaly_model.transform(test_high_anomaly_df)
+
+pred_df.first()
+
+pred_df.select('score', 'predicted_score').describe().show()
+
+full_res_df = pred_df.orderBy(f.desc('predicted_score')).cache()
+
+display(full_res_df)
+
+#
+# Select a subset of results to send to Log Analytics
+#
+from pyspark.sql.window import Window
+
+w = Window.partitionBy(
+                  'tid',
+                  'res',
+                  'user'
+                ).orderBy(
+                  f.desc('predicted_score')
+                )
+
+# select values above threshold
+results_above_threshold = full_res_df.filter(full_res_df.predicted_score > 1.0)
+
+# get distinct resource/user and corresponding timestamp and highest score
+results_to_la = results_above_threshold.withColumn(
+                  'index', f.row_number().over(w)
+                  ).orderBy(
+                    f.desc('predicted_score')
+                  ).select(
+                    'tid',
+                    f.col('res').alias('Resource'),
+                    f.col('user').alias('Actor'),
+                    'predicted_score'
+                  ).where(
+                    'index == 1'
+                  ).limit(100)
+  
+display(results_to_la)
+
+def print_ratio(df, thr):
+    print('ratio of above {0} items {1}/{2} = {3}%'.format(
+        thr,
+        df.filter(f.col('predicted_score') > thr).count(),
+        df.count(),
+        100.0*df.filter(f.col('predicted_score') > thr).count()/df.count()
+    ))
+    
+print_ratio(full_res_df, 0)
+print_ratio(full_res_df, 1.0)
+print_ratio(full_res_df, 2.0)
+print_ratio(full_res_df, 3.0)
+
+from plotly import __version__
+from plotly.offline import download_plotlyjs, init_notebook_mode, plot, iplot, offline
+print (__version__) # requires version >= 1.9.0
+
+# run plotly in offline mode
+offline.init_notebook_mode()
+
+#Find all server accesses of users with high predicted scores
+# For display, limit to top 25 results
+results_to_display = results_to_la.orderBy(
+                  f.desc('predicted_score')
+                ).limit(25)
+interesting_users = train_df.join(results_to_display, f.col('user') == f.col('Actor'), "inner")
+resource_accesses_in_train = interesting_users.groupBy(
+                          'user', 
+                          'res'
+                        ).agg(
+                          f.sum('count_').alias('count'),
+                        ).select(
+                          f.col('user'),
+                          f.col('res'),
+                          'count'
+                        )
+
+# pick top 5 resource accessed per user
+w = Window.partitionBy(
+                  'user'
+                ).orderBy(
+                  f.desc('count')
+                )
+
+# get distinct resource/user and corresponding timestamp and highest score
+top_resource_accesses_in_train = resource_accesses_in_train.withColumn(
+                  'index', f.row_number().over(w)
+                  ).orderBy(
+                    f.desc('count')
+                  ).select(
+                    f.col('user').alias('Actor'),
+                    f.col('res').alias('Resource'),
+                    'count'
+                  ).where(
+                    f.col('index').isin([1,2,3,4,5])
+                  ).limit(100)
+
+# add the resource access with high score
+all_resource_access_df = top_resource_accesses_in_train.union(test_high_anomaly_df.select(f.col('user').alias('Actor'), f.col('res').alias('Resource'), f.col('count_').alias('count')))
+
+# get unique users and file shares
+high_scores_df = all_resource_access_df.toPandas()
+unique_arr = np.append(high_scores_df.Actor.unique(), high_scores_df.Resource.unique())
+
+unique_df = pd.DataFrame(data = unique_arr, columns = ['name'])
+unique_df['index'] = range(0, len(unique_df.index))
+
+# create index for source & target and color for the normal accesses
+normal_line_color = 'rgba(211, 211, 211, 0.8)'
+anomolous_color = 'red'
+x = pd.merge(high_scores_df, unique_df, how='left', left_on='Actor', right_on='name').drop(['name'], axis=1).rename(columns={'index' : 'ActorIndex'})
+all_access_index_df = pd.merge(x, unique_df, how='left', left_on='Resource', right_on='name').drop(['name'], axis=1).rename(columns={'index' : 'ResourceIndex'})
+all_access_index_df['color'] = normal_line_color
+
+# results_to_display index, color and 
+y = results_to_display.toPandas().drop(['tid', 'predicted_score'], axis=1)
+y = pd.merge(y, unique_df, how='left', left_on='Actor', right_on='name').drop(['name'], axis=1).rename(columns={'index' : 'ActorIndex'})
+high_scores_index_df = pd.merge(y, unique_df, how='left', left_on='Resource', right_on='name').drop(['name'], axis=1).rename(columns={'index' : 'ResourceIndex'})
+high_scores_index_df['count'] = 1
+high_scores_index_df['color'] = anomolous_color
+
+# combine the two tables
+frames = [all_access_index_df, high_scores_index_df]
+display_df = pd.concat(frames)
+# display_df.head()
+
+results_to_la.count()
+
+data_trace = dict(
+    type='sankey',
+    domain = dict(
+      x =  [0,1],
+      y =  [0,1]
+    ),
+    orientation = "h",
+    valueformat = ".0f",
+    node = dict(
+      pad = 10,
+      thickness = 30,
+      line = dict(
+        color = "black",
+        width = 0
+      ),
+      label = unique_df['name'].dropna(axis=0, how='any')
+    ),
+    link = dict(
+      source = display_df['ActorIndex'].dropna(axis=0, how='any'),
+      target = display_df['ResourceIndex'].dropna(axis=0, how='any'),
+      value = display_df['count'].dropna(axis=0, how='any'),
+      color = display_df['color'].dropna(axis=0, how='any'),
+  )
+)
+
+layout =  dict(
+    title = "All resources accessed by users with highest anomalous scores",
+    height = 772,
+    font = dict(
+      size = 10
+    ),    
+)
+
+fig = dict(data=[data_trace], layout=layout)
+
+p = plot(fig, output_type='div')
+
+displayHTML(p)
+
+def send_results_to_log_analytics(df_to_la):
+  # The log type is the name of the event that is being submitted.  This will show up under "Custom Logs" as log_type + '_CL'
+  log_type = 'AnomalousResourceAccessResult'
+
+  # concatenate columns to form one json record
+  json_records = df_to_la.withColumn('json_field', f.concat(f.lit('{'), 
+                                            f.lit(' \"TimeStamp\": \"2019-11-01 12:00:00'), f.lit('\",'),
+                                            f.lit(' \"Actor\": \"'), f.col('Actor'), f.lit('\",'),
+                                            f.lit(' \"Resource\": \"'), f.col('Resource'), f.lit('\",'),
+                                            f.lit(' \"PredictedScore\":'), f.col('predicted_score'),
+                                            f.lit('}')
+                                           )                       
+                                         )
+  # combine json record column to create the array
+  json_body = json_records.agg(f.concat_ws(", ", f.collect_list('json_field')).alias('body'))
+
+  if len(json_body.first()) > 0:
+    json_payload = json_body.first()['body']
+    json_payload = '[' + json_payload + ']'
+
+    payload = json_payload.encode('utf-8') #json.dumps(json_payload)
+    #print(payload)
+    return log_analytics_client(workspace_id, workspace_shared_key).post_data(payload, log_type)
+  else:
+    return "No json data to send to LA"
+
+count = results_to_la.count()
+if count > 0:
+  print ('Results count = ', count)
+  result = send_results_to_log_analytics(results_to_la)
+  print("Writing to Log Analytics result: ", result)
+else:
+  print ('No results to send to LA')

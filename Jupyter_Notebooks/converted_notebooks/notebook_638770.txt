@@ -1,0 +1,279 @@
+# Numeric operations
+import numpy as np
+
+# Visualization / Plotting
+import matplotlib
+from matplotlib import pyplot as plt
+from matplotlib.patches import Rectangle
+from numpy.matlib import repmat
+
+#to load .mat files
+from scipy.io import loadmat
+from scipy.special import jv
+from scipy.io import loadmat
+
+# for math functions
+import scipy.special as sp
+from scipy.interpolate import interp1d
+from scipy.special import expit
+import math
+
+from mpmath import *
+from scipy.special import kn
+
+import os
+
+# Ensure that images are rendered in this notebook:
+%matplotlib inline
+
+numUC = np.array([2,2])*8 #currently working only for squared projected structure
+thickness = 100
+
+## Define cubic SrTiO3
+
+#Lattice parameter
+a = 3.905
+
+potBound = 1.25
+
+# Cell dimensions
+cellDim = np.array([1,1,1])*a
+
+#Debye waller factors converted into RMS atomic displacements
+uSr = np.sqrt(0.270/8)/np.pi
+uTi = np.sqrt(0.415/8)/np.pi
+uO = 0.10
+
+#Define STO lattice
+b = np.array([[0.0, 0.0, 0.0, 38], 
+             [0.5, 0.5, 0.5, 22],
+             [0.0, 0.0, 0.5, 8],
+             [0.0, 0.5, 0.0, 8],
+             [0.5, 0.0, 0.0, 8]])
+
+#Convert thicknesses into number of cells
+
+thickCells = np.round(thickness/cellDim[2])
+thickTotal = np.max(thickCells)
+
+# Make structure block
+[xa,ya,za] = np.meshgrid(np.arange(0,(numUC[0]-1)), np.arange(0,(numUC[1]-1)), 1)
+
+xxa = np.reshape(xa, (1,np.product(xa.shape))).transpose()
+yya = np.reshape(ya, (1,np.product(ya.shape))).transpose()
+zza = np.reshape(za, (1,np.product(za.shape))).transpose()
+
+p = np.squeeze(np.array([xxa, yya, zza, np.zeros(((xa.size),1))]))
+p= p.transpose()
+
+[pa,ba] = np.meshgrid(np.arange(0, np.size(p, axis=0)), np.arange(0, np.size(b, axis=0)))
+
+atoms = p[pa[:],] + b[ba[:],]
+atoms = atoms.reshape((atoms.shape[0]*atoms.shape[1]), atoms.shape[2])
+
+# scale to UC dimensions
+atoms[:,0] = atoms[:,0]*cellDim[0]
+atoms[:,1] = atoms[:,1]*cellDim[1]
+atoms[:,2] = atoms[:,2]*cellDim[2]
+
+import plotly.graph_objects as go
+import numpy as np
+
+# Data for three-dimensional scattered points
+zdata = atoms[:,2]
+xdata = atoms[:,0]
+ydata = atoms[:,1]
+
+fig = go.Figure(data=[go.Scatter3d(x=xdata, y=ydata, z=zdata,
+                                   mode='markers',
+                                   marker=dict(size=12,
+                                               colorscale='Viridis', # choose a colorscale
+                                               opacity=0.8))])
+fig.show()
+
+numFP = 1
+
+#Flag to plot projected potentials
+f_plotPot = 1
+
+#Probe positions
+Nprobes = np.array([1,1])*8
+
+# xp = np.linspace(0,cellDim[0]*1, num = Nprobes[0])
+# xp[-1] = 0
+# yp = np.linspace(0,cellDim[1]*1, num = Nprobes[1])
+# yp[-1] = 0
+
+# for testing use single probe
+xp = [0,1]
+yp = [0,1]
+
+
+#Approximate pixel size - if cell is rectangular, pixel size in x and y will not be identical
+pSize = 0.05*2
+
+df = np.array([0,100,200]);   # -C1 focus on incident surface
+# df = np.arange(0,300,5)
+
+# Probe Aberrations
+C3 = -.000 * 10**7
+C5 = 0.0 * 10**7
+
+#illumination angle in mrads
+alphaMax = 10/1000
+
+#Microscope voltage
+E0 = 120*(10**3) 
+
+#Calculate wavelength and electron interaction parameter
+m = 9.109383*10**-31
+e = 1.602177*10**-19
+c =  299792458
+h = 6.62607*10**-34
+
+#wavelength in A
+lamb = h/np.sqrt(2*m*e*E0)/np.sqrt(1 + e*E0/2/m/c**2)*10**10
+s = (2*np.pi/lamb/E0)*(m*c**2+e*E0)/(2*m*(c**2)+e*E0)
+
+# number of slices per cell defined using the z direction
+
+dz = cellDim[2]/2
+
+#Make sure even number of pixels per cell
+Nx = np.ceil(numUC[0]*cellDim[0]/pSize/2)*2
+Ny = np.ceil(numUC[1]*cellDim[1]/pSize/2)*2
+
+xSize = numUC[0]*cellDim[0]/Nx
+ySize = numUC[1]*cellDim[1]/Nx
+xySize = np.array([xSize,ySize]) # this is the pixelsize in realspace
+
+
+Lx = Nx*xSize
+Ly = Ny*ySize
+
+qx = np.roll(np.arange((-Nx/2),(Nx/2 -1))/Lx, (np.hstack((0,-Nx/2)).astype(int)))
+qy = np.roll(np.arange((-Ny/2),(Ny/2 -1))/Ly, (np.hstack((0,-Ny/2)).astype(int)))
+
+[qya, qxa] = np.meshgrid(qy,qx);
+q2 = np.dot(qxa,qxa) + np.dot(qya,qya)
+q4 = np.dot(q2,q2)
+q6 = np.dot(q2,q4)
+q1 = np.sqrt(abs(q2))
+
+dq = qx[1]-qx[0]
+Adist = 2*(np.max(qx)/2 - q1)/dq+0
+AA = Adist
+AA = Adist
+AA[Adist>1] = 1
+AA[Adist<0] = 0
+
+zint = 1j
+prop = np.exp(-zint*np.pi*lamb*dz*q2)*AA
+
+prop.shape
+
+qMax = alphaMax/lamb
+
+# chiProbe = (2*np.pi/lamb)*((1/2)*(lamb**2)*q2*df)
+
+chiProbe = (2*np.pi/lamb)*((1/2)*(lamb**2)*q2*df + (1/4)*(lamb**4)*q4*C3 + (1/6)*(lamb**6)*q6*C5)
+
+
+probefft = np.exp(-1j*chiProbe-2*np.pi*1j*(qx*(xp[0])+ qy*(yp[0])))*AA
+
+chiProbe.shape
+
+fparams = loadmat('fparams.mat')
+
+fparams['fparams'][7]
+
+ap = fparams['fparams'][37,:]
+
+#Super sampling for potential integration (should be even!!)
+ss = 2
+#Constants
+a0 = 0.5292
+e = 14.4
+term1 = 2*np.pi**2*a0*e
+term2 = 2*pi**(5/2)*a0*e
+
+#Make supersampled 2D grid for integration
+dx = (xr[1] - xr[0])
+dy = (yr[1] - yr[0])
+
+sub = np.arange((-(ss-1)/ss/2),((ss-1)/ss/2),(1/ss))
+#sub = (-(ss-1)/ss/2):(1/ss):((ss-1)/ss/2)
+[x1,x2] = np.meshgrid(xr,sub*dx)
+xv = x1[:] + x2[:]
+[y1,y2] = np.meshgrid(yr,sub*dy)
+yv = y1[:] + y2[:]
+[ya,xa] = np.meshgrid(yv,xv)
+r2 = xa**2 + ya**2
+r = np.sqrt(r2)
+
+
+potSS = term1*(ap[0]* kn(0,2*np.pi*np.sqrt(ap[1])*r)+ ap[2]*kn(0,2*np.pi*np.sqrt(ap[3]*r))+ ap[4]*kn(0,2*np.pi*np.sqrt(ap[5]*r)))
++ term2*(ap[6]/ap[7]*np.exp((-np.pi**2)/ap[7]*r2)
+         + ap[8]/ap[9]*np.exp((-np.pi**2)/ap[9]*r2)
+         + ap[10]/ap[11]*np.exp((-np.pi**2)/ap[11]*r2))
+
+potMid = np.zeros((len(xr),len(yr)))
+
+for a0 in np.arange(0,ss):
+        potMid = potMid + potSS[(np.arange(a0,(-1+a0-ss),ss)),:]
+            
+#     pot = zeros(length(xr),length(yr))
+    
+#     for a0 = 1:ss:
+#             pot = pot + potMid(:,a0:ss:(end+a0-ss))
+            
+#     pot = pot / ss^2;
+
+def projPot(fparams,atomID,xr,yr):
+    #Super sampling for potential integration (should be even!!)
+    ss = 4
+    
+    #Constants
+    a0 = 0.5292
+    e = 14.4
+    term1 = 2*np.pi**2*a0*e
+    term2 = 2*np.pi**(5/2)*a0*e
+    
+    #Make supersampled 2D grid for integration
+    dx = (xr[1] - xr[0])
+    dy = (yr[1] - yr[0])
+    
+    sub = np.arange((-(ss-1)/ss/2),((ss-1)/ss/2),(1/ss))
+    #sub = (-(ss-1)/ss/2):(1/ss):((ss-1)/ss/2)
+    [x1,x2] = np.meshgrid(xr,sub*dx)
+    xv = x1[:] + x2[:]
+    [y1,y2] = np.meshgrid(yr,sub*dy)
+    yv = y1[:] + y2[:]
+    [ya,xa] = np.meshgrid(yv,xv)
+    r2 = xa**2 + ya**2
+    r = np.sqrt(r2)
+    
+    #Compute potential
+    ap = fparams['fparams'][atomID,:]
+    
+    potSS = term1*(ap[0]*kn(0,2*np.pi*np.sqrt(ap[1])*r)
+                   + ap[2]*kn(0,2*np.pi*np.sqrt(ap[3]*r))+ ap[4]*kn(0,2*np.pi*np.sqrt(ap[5]*r)))
+    + term2*(ap[6]/ap[7]*np.exp((-np.pi**2)/ap[7]*r2)
+             + ap[8]/ap[9]*np.exp((-np.pi**2)/ap[9]*r2)
+             + ap[10]/ap[11]*np.exp((-np.pi**2)/ap[11]*r2))
+    
+    #Integrate!
+    
+    return pot
+
+# potSr = projPot(fparams,37,xr,yr)
+
+xyLeng = np.ceil(potBound/xySize)
+xvec = np.arange(-xyLeng[0]+1,xyLeng[0])
+yvec = np.arange(-xyLeng[1]+1,xyLeng[1])
+xr = xvec*xySize[0]
+yr = yvec*xySize[1]
+
+# potSr = projPot(38,xr,yr);
+# potTi = projPot(22,xr,yr);
+# potO = projPot(8,xr,yr);

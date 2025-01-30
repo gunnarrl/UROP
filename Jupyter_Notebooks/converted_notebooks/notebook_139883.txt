@@ -1,0 +1,82 @@
+# load the dataset into an RDD to get started
+input_rdd = sc.textFile("/FileStore/tables/movielens/movies.csv")
+
+# just to show you the first line of the RDD
+input_rdd.first()
+
+# notice how the whole line is one single string
+# using the map function, you can transfer the previous RDD to have a list of values instead
+input_list = input_rdd.map(lambda line: line.split(','))
+
+# They are a list object now, instead of pure string
+# First is an action. ONLY AT THIS POINT SPARK WILL START PROCESSING
+# map is a transformation, which are lazily evaluated. When we executed the map function spark didn't do anything until an action was called upon.
+input_list.first()
+
+# the original input RDD has header
+input_rdd.take(4)
+
+# for processing the data I can get rid of the header with a filter operation
+movie_info_rdd = input_rdd.filter(lambda line: 'movieId' not in line)
+
+# we got rid of the header
+# again, only at this point spark processes the data
+movie_info_rdd.first()
+
+# lets keep a list rdd for further examples
+movie_info_list_rdd = movie_info_rdd.map(lambda x: x.split(','))
+
+# notice the last field of the movie info, you have multiple categories associated with a single movie
+movie_info_list_rdd.first()[-1]
+
+# if we want to do a count each categories appear, we can use flatmap to easily get our answer
+# using a flatmap on top of the movie category element causes each entry within the list (categories) to be a single entry/line/tuple in our RDD
+movie_cat_rdd = movie_info_list_rdd.flatMap(lambda x: x[-1].split('|'))
+movie_cat_rdd.take(10)
+
+# now we can easily get our category count by using the count by value action (which does exactly what the name suggests).
+cat_count = movie_cat_rdd.countByValue()
+# we can print out the result in a sorted way using python
+sorted(cat_count.items(), key=lambda k_v: k_v[1], reverse=True)
+
+# we will extract the year with this function. if there is problem with our data we will just return a None value
+import re
+def get_year(name):
+    year = None
+    try:
+      pattern = re.compile(r"\((\d{4})\)")
+      year = int(pattern.findall(name)[0])
+    except ValueError:
+      pass
+    except IndexError:
+      pass
+    
+    return year
+
+# we can use the map operation to apply our custom function to every name in our rdd
+movie_year_rdd = movie_info_list_rdd.map(lambda x: get_year(x[1]))
+
+# we can use the min action to get the oldest movie year. however as you see there was some issue with the data or parsing and we are getting 6 back as our result
+movie_year_rdd.filter(lambda x: x is not None).min()
+
+# so instead of trying to investigate what happened we will simply apply a filter and only consider value above 1000 to get our oldest movie year
+movie_year_rdd.filter(lambda x: x is not None).filter(lambda x: x  > 1000).min()
+
+movie_year_rdd.filter(lambda x: x is not None).max()
+
+mammals = sc.parallelize(["Lion", "Dolphin", "Whale"])
+aquatics = sc.parallelize(["Shark", "Dolphin", "Whale"])
+zoo = mammals.union(aquatics)
+zoo.collect()
+
+mammals = sc.parallelize(["Lion", "Dolphin", "Whale"])
+aquatics = sc.parallelize(["Shark", "Dolphin", "Whale"])
+aquaticMammals = mammals.intersection(aquatics)
+aquaticMammals.collect()
+
+mammals = sc.parallelize(["Lion", "Dolphin", "Whale"])
+aquatics =sc.parallelize([])
+fishes = aquatics.subtract(mammals)
+fishes.collect()
+
+sc.parallelize(["Lion", "Dolphin", "Whale","Shark", "Dolphin", "Whale"]).distinct().collect()

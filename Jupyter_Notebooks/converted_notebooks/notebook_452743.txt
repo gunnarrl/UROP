@@ -1,0 +1,139 @@
+from reanalysis import get_reanalysis_paths_gs, data_access_gs, plotReanalysis
+import gcsfs
+import json
+import os
+import urllib3
+import xarray as xr
+import pandas as pd
+from glob import glob
+from time import time
+from IPython.display import IFrame
+from scipy.interpolate import interp1d
+import matplotlib.pyplot as plt
+
+from pandas.plotting import register_matplotlib_converters
+register_matplotlib_converters()
+
+
+%matplotlib inline
+
+def open_station_website(USGS_ID:str, start_date:str, end_date:str) -> IFrame:
+    '''Open the selected USGS station website. Users can use this website to prepare the required parameters for retrieving the desired records.'''
+    return IFrame(src=f"https://nwis.waterdata.usgs.gov/usa/nwis/uv/?cb_00060=on&cb_00065=on&format=gif_default&site_no={USGS_ID}&period=&begin_date={start_date}&end_date={end_date}", width='100%', height='500px')
+
+def usgs_data(station_id:str, start_date:str, end_date:str, parameter:str) -> dict:
+    '''Retrieve time series data for a USGS gauge.'''
+        
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    http = urllib3.PoolManager()
+
+    # Define URL parameters    
+    data_format = "json"
+    station_id = station_id
+    start_date = start_date
+    end_date = end_date
+    parameter = parameter
+    site_type = "ST"
+    site_status = "all"
+    
+    # Build the URL to retrieve the data
+    st_service_url = "https://nwis.waterservices.usgs.gov/nwis/iv/?format="+ data_format +\
+    "&sites="+ station_id +"&startDT="+ start_date +"&endDT="+ end_date +"&parameterCd="+ parameter +\
+    "&siteType="+ site_type +"&siteStatus="+ site_status
+    url = http.request('GET', st_service_url).data
+    response = json.loads(url)
+    usgs_values = response['value']['timeSeries'][0]['values'][0]['value']
+    
+    # usgs_values = {'value': value in str, 'qualifiers': qualifiers in str, 'dateTime': dateTime in str}
+    return usgs_values
+
+def get_NWM_rc(comid, rc_filepath=r"data/hydroprop-fulltable2D.nc") -> (interp1d, pd.DataFrame):
+    """Opens the hydroprop-fulltable2D.nc file and retireves rating curves.
+    This is available for download at: 
+    https://web.corral.tacc.utexas.edu/nfiedata/hydraulic-property-table/.
+    More information can be found at: https://web.corral.tacc.utexas.edu/nfiedata/.
+    """
+    ds = xr.open_dataset(rc_filepath)
+    dis_ds = ds.Discharge.sel(CatchId=comid)
+    dis_df = dis_ds.to_dataframe().reset_index().drop(columns=["CatchId"]).dropna()
+    f = interp1d(dis_df.Discharge, dis_df.Stage, kind="cubic")
+    return f, dis_df
+
+def new_plot(x_label='Time (hr)', y_label='Discharge (cfs)', figsize=(20,6), fontsize=18) -> plt.subplots:
+    '''Return a created new plotframe.'''
+    
+    fig,  ax = plt.subplots(figsize=figsize)
+    ax.set_xlabel(x_label, fontsize=fontsize)
+    ax.set_ylabel(y_label, fontsize=fontsize)
+    ax.tick_params(axis='both', which='major', labelsize=18)
+    ax.grid(which='major', color='lightgrey', linestyle='--', linewidth=2)
+    return fig, ax
+
+USGS_ID = '02087570' # USGS 02087570 NEUSE RIVER AT SMITHFIELD, NC
+
+comid = 8785685 # NWM stream comid where the USGS station located. It is the same stream comid in the NHDPlus dataset.
+
+start_date = '2016-10-05'
+end_date = '2016-10-15'
+
+freq = "1H"
+
+# NWM rating curve NetCDF file path 
+nwm_rc_path = r"C:\Users\mmorsy\Documents\GitHub\fcast\notebooks\data\hydroprop-fulltable2D.nc"
+
+open_station_website(USGS_ID, start_date, end_date)
+
+parameter = "00065"  # USGS Gage Height Code
+
+usgs_values = usgs_data(USGS_ID, start_date, end_date, parameter)
+usgs_df = pd.DataFrame.from_records(usgs_values)
+usgs_df.head()
+
+# clean-up and post-process the observation
+usgs_df = usgs_df[usgs_df.value != '-999999']
+usgs_df['dateTime'] =  pd.to_datetime(usgs_df['dateTime'], utc=False)
+usgs_df['value']= pd.to_numeric(usgs_df['value'])
+
+if parameter == "00065":
+    usgs_df['value']= usgs_df['value'] * 0.3048 #if stage, multiply by 0.3048 to change the units from feet to meter
+    
+if  parameter == "00060":
+    usgs_df['value']= pd.to_numeric(usgs_df['value']) * 0.028316847 #if discharge, multiply by 0.028316847 to change the units from cfs to cms
+
+usgs_df = usgs_df.assign(increment_hr = usgs_df.dateTime.diff())
+usgs_df.head()
+
+fig, ax = new_plot(x_label='Date/Time', y_label='Stage(m)')
+ax.plot(usgs_df.dateTime, usgs_df.value, label="Stage Height")
+ax.legend(fontsize=18)
+
+target_analysis = 'full_physics' # Choose between: 1) full_physics; 2) long_range
+gs_paths = get_reanalysis_paths_gs(start_date, end_date, freq, target_analysis=target_analysis)
+
+all_data = data_access_gs(gs_paths, gs_access_method='download')
+
+NWM_df = all_data.sel(feature_id=comid)['streamflow'].to_dataframe().drop(columns=['feature_id', 'latitude', 'longitude'])
+NWM_df.head()
+
+plotReanalysis(NWM_df, comid, freq)
+
+# get the NWM rating curve for the given comid
+ds = xr.open_dataset(nwm_rc_path)
+f, nwm_rc = get_NWM_rc(comid, nwm_rc_path)
+nwm_rc.head()
+
+f(0.293121)
+
+fig, ax = new_plot(x_label='Stage Height (m)', y_label='Discharge (cms)')
+ax.plot(nwm_rc.Stage, nwm_rc.Discharge, label=f"Rating curve for comid: {comid}")
+ax.legend(fontsize=18)
+
+NWM_stage_df = NWM_df.apply(f).rename(columns={'streamflow': 'stage'})
+NWM_stage_df.head()
+
+plotReanalysis(NWM_stage_df, comid, freq, flow=False)
+
+fig, ax = new_plot(x_label='Date/Time', y_label='Stage(m)')
+ax.plot(usgs_df.dateTime, usgs_df.value, label="USGS")
+ax.plot(NWM_stage_df, label="NWM")
+ax.legend(fontsize=18)

@@ -1,0 +1,300 @@
+import numpy as np
+
+from matplotlib import pyplot as plt
+from matplotlib import animation
+from matplotlib import cm
+from matplotlib.ticker import LinearLocator, FormatStrFormatter
+from mpl_toolkits.mplot3d import Axes3D
+
+from ipywidgets import interact
+from ipywidgets import IntSlider
+
+%matplotlib inline
+
+from IPython.display import HTML
+
+def show(x, t, u):
+    Nt = len(t) 
+    fig, ax = plt.subplots()
+    l, = plt.plot(x, u[:,0],'ko:')
+    dx = 0.05*(x[-1]-x[0])
+    ymin = u.min().min()
+    ymax = u.max().max()
+    dy = 0.05*(ymax-ymin)
+    ax.set_xlim([x[0]-dx, x[-1]+dx])
+    ax.set_ylim([ymin-dy, ymax+dy])
+    plt.xlabel("$x$", fontsize=20)
+    plt.ylabel("$u(x,t)$", fontsize=20)
+    
+    def animate(i):
+        l.set_ydata(u[:,i])
+        return l,
+
+    #Init only required for blitting to give a clean slate.
+    def init():
+        l.set_ydata(np.ma.array(u[:,0], mask=True))
+        return l,
+
+    dt = t[1]-t[0]
+    #interval = 4 * 100. * 200/Nt   # So simulations run in the same time regardless of Nt
+    interval = 100
+    anim = animation.FuncAnimation(
+        fig, animate, np.arange(1, Nt),
+        init_func=init, interval=interval, blit=True
+    )
+    return anim
+
+def animate(all_sims, interval=100):
+    NumSims = all_sims.shape[0] 
+    fig, ax = plt.subplots()
+    img = plt.imshow(all_sims[0,:,:], cmap=cm.coolwarm, interpolation='nearest', origin='lower')
+    plt.xticks(np.arange(0,101,10), np.linspace(0.,1.0,11))
+    plt.yticks(np.arange(10,101,10), np.linspace(0.1,1.0,10))
+    plt.colorbar(img)
+    
+    def animate(i):
+        img.set_data(all_sims[i,:,:])
+        return img,
+
+    #Init only required for blitting to give a clean slate.
+    def init():
+        img.set_data(all_sims[0,:,:])
+        return img,
+
+    anim = animation.FuncAnimation(
+        fig, animate, np.arange(1, NumSims),
+        init_func=init, interval=interval, blit=True
+    )
+    return anim
+
+def show2(x, t, u, k):
+    #Nt = len(t)
+    fig, ax = plt.subplots()
+    plt.plot(x, u[:,k],'ko:')
+    dx = 0.05*(x[-1]-x[0])
+    ymin = u.min().min()
+    ymax = u.max().max()
+    dy = 0.05*(ymax-ymin)
+    ax.set_xlim([x[0]-dx, x[-1]+dx])
+    ax.set_ylim([ymin-dy, ymax+dy])
+    plt.xlabel("$x$", fontsize=20)
+    plt.ylabel("$u(x,t)$", fontsize=20)
+    plt.grid()
+    plt.show()
+    return
+
+def show2_2D(all_sims,k=0):
+    plt.figure(figsize=(8,8))
+    fig=plt.imshow(all_sims[k,:,:], cmap=cm.coolwarm, interpolation='nearest', origin='lower')
+    plt.xticks(np.arange(0,101,10), np.linspace(0.,1.0,11))
+    plt.yticks(np.arange(10,101,10), np.linspace(0.1,1.0,10))
+    plt.colorbar(fig)
+    plt.show()
+    
+
+def heat_equation_forward_differences(P, Nx, Nt, bc='boundary'):
+    """
+    Solves the heat equation using forward differences
+    """
+    if bc=='dirichlet':
+        x = np.linspace(P["xmin"], P["xmax"], Nx)
+        t = np.linspace(P["tmin"], P["tmax"], Nt)
+        dx = x[1]-x[0]
+        dt = t[1]-t[0]
+        S = P["D"]*dt/dx**2
+        print("CFL condition: D*dt/dx^2 = ",S, " <= 0.5 ?")
+        # Storage
+        u = np.zeros((Nx, Nt))
+        # Time Loop
+        for i, ti in enumerate(t):
+            if i==0:
+                u[:,0] = P["f"](x)
+            else:
+                u[ 0,i] = P["l"](ti)
+                u[-1,i] = P["r"](ti)
+                u[1:-1, i] = S*u[:-2, i-1] + (1-2*S)*u[1:-1,i-1]+S*u[2:,i-1]
+        return x, t, u
+
+    elif bc=='periodic':
+        x = np.linspace(P["xmin"], P["xmax"], Nx)
+        t = np.linspace(P["tmin"], P["tmax"], Nt)
+        dx = x[1]-x[0]
+        dt = t[1]-t[0]
+        S = P["D"]*dt/dx**2
+        print("CFL condition: D*dt/dx^2 = ",S, " <= 0.5 ?")
+        # Storage
+        u = np.zeros((Nx, Nt))
+        # Time Loop
+        for i, ti in enumerate(t):
+            if i==0:
+                u[:,0] = P["f"](x)
+            else:
+                u[0, i] = S*u[-2, i-1] + (1-2*S)*u[0,i-1]+S*u[1,i-1]
+                u[1:-1, i] = S*u[:-2, i-1] + (1-2*S)*u[1:-1,i-1]+S*u[2:,i-1]
+                u[-1, i] = S*u[-2, i-1] + (1-2*S)*u[-1,i-1]+S*u[1,i-1]
+        return x, t, u
+
+def heat_equation_backward_differences(P, Nx, Nt, bc='dirichlet'):
+    """
+    Solves the heat equation using backward differences
+    """
+    if bc=='dirichlet':
+        x = np.linspace(P["xmin"], P["xmax"], Nx)
+        t = np.linspace(P["tmin"], P["tmax"], Nt)
+        dx = x[1]-x[0]
+        dt = t[1]-t[0]
+        S = P["D"]*dt/dx**2
+        print("CFL condition not required: D*dt/dx^2 = ",S)
+        # Constructing the matrix
+        A = np.diag(-S*np.ones(Nx-3),-1) + np.diag((1+2*S)*np.ones(Nx-2),0) + np.diag(-S*np.ones(Nx-3),+1)
+        # Storage
+        u = np.zeros((Nx, Nt))
+        # Time Loop
+        for i, ti in enumerate(t):
+            if i==0:
+                u[:,0] = P["f"](x)
+            else:
+                u[ 0,i] = P["l"](ti)
+                u[-1,i] = P["r"](ti)
+                b = u[1:-1,i-1].copy()
+                b[ 0] += S*u[ 0,i]
+                b[-1] += S*u[-1,i]
+                u[1:-1, i] = np.linalg.solve(A, b)
+        return x, t, u
+
+f1 = lambda x: np.sin(2*np.pi*x)**2 
+l1 = lambda t: t
+r1 = lambda t: t
+P1 = {"xmin":0, "xmax":1, "tmin":0, "tmax":1.0, "D":1, "f":f1, "l":l1, "r":r1}
+
+f2 = lambda x: 10*np.exp(-(x-.5)**2/0.01) 
+l2 = lambda t: 0
+r2 = lambda t: 0
+P2 = {"xmin":0, "xmax":1, "tmin":0, "tmax":1.0, "D":1, "f":f2, "l":l2, "r":r2}
+
+f3 = lambda x: x 
+l3 = lambda t: 0
+r3 = lambda t: 0 
+P3 = {"xmin":0, "xmax":1, "tmin":0, "tmax":1.0, "D":1, "f":f3, "l":l3, "r":r3}
+
+P_Heat=[('P1', P1), ('P2', P2),('P3', P3)]
+
+def plot_solution_heat_equation2(P, Nx=10, Nt=50, k=0, solver='forward_difference', bc='dirichlet'):
+    if solver=='forward_difference':
+        x, t, u = heat_equation_forward_differences(P, Nx, Nt, bc=bc)
+        show2(x, t, u, k)
+    else:
+        x, t, u = heat_equation_backward_differences(P, Nx, Nt, bc=bc)
+        show2(x, t, u, k)
+    return
+
+k_widget = IntSlider(min=0, max=30, step=1,value=0)
+Nt_widget = IntSlider(min=50, max=5000, step=50, value=200)
+
+def update_Nt_range(*args):
+    k_widget.max = Nt_widget.value
+Nt_widget.observe(update_Nt_range, 'value')
+
+interact(plot_solution_heat_equation2,P=P_Heat,Nx=(5,50,5),Nt=Nt_widget,k=k_widget,solver=['forward_difference','backward_difference'],bc=['dirichlet'])
+
+f1 = lambda x: np.sin(2*np.pi*x)**2 
+P1 = {"xmin":0, "xmax":1, "tmin":0, "tmax":1.0, "D":1, "f":f1}
+
+f2 = lambda x: 10*np.exp(-(x-.5)**2/0.01) 
+P2 = {"xmin":0, "xmax":1, "tmin":0, "tmax":1.0, "D":1, "f":f2}
+
+f3 = lambda x: x 
+P3 = {"xmin":0, "xmax":1, "tmin":0, "tmax":1.0, "D":1, "f":f3}
+
+P_Heat=[('P1', P1), ('P2', P2),('P3', P3)]
+
+k_widget = IntSlider(min=0, max=30, step=1,value=0)
+Nt_widget = IntSlider(min=50, max=5000, step=50, value=200)
+
+def update_Nt_range(*args):
+    k_widget.max = Nt_widget.value
+Nt_widget.observe(update_Nt_range, 'value')
+
+interact(plot_solution_heat_equation2,P=P_Heat,Nx=(5,50,5),Nt=Nt_widget,k=k_widget,solver=['forward_difference'],bc=['periodic'])
+
+# This is the 2D version of Explicit Finite Differences
+def evolve(u_new, u_old, dt, D, dx2, dy2):
+    u_new[1:-1, 1:-1]  = u_old[1:-1, 1:-1] 
+    u_new[1:-1, 1:-1] += D * dt * (u_old[2:, 1:-1] - 2*u_old[1:-1, 1:-1] + u_old[:-2, 1:-1]) / dx2 
+    u_new[1:-1, 1:-1] += D * dt * (u_old[1:-1, 2:] - 2*u_old[1:-1, 1:-1] + u_old[1:-1, :-2]) / dy2
+    return u_new
+
+####################################################
+# MAIN 2D-PARABOLIC FUNCTION SOLVER
+####################################################
+def solver(u0, D=1., Nx=100, Ny=100, num_steps=10000):
+    dx = 1./Nx
+    dy = 1./Ny
+    dx2 = dx**2
+    dy2 = dy**2
+    
+    # For stability, this is the largest interval possible
+    # for the size of the time-step:
+    dt = 1.0*dx2*dy2 / ( 2*D*(dx2+dy2) )
+    
+    u_aux = u0
+    u = np.zeros([Nx,Ny])
+    all_sims = np.zeros([num_steps, Nx, Ny])
+    
+    # Iterative step
+    for n in range(num_steps):
+        evolve(u, u_aux, D, dt, dx2, dy2)
+        u_aux = u
+        all_sims[n,:,:] = u
+    
+    return all_sims
+
+####################################################
+# Initial conditions generation: Ring distribution
+####################################################
+Ri = 0.05 # Internal Radii
+Re = 0.10 # External Radii
+Nx = 100
+Ny = 100
+dx = 1./Nx # Interval size in x-direction.
+dy = 1./Ny # Interval size in y-direction.
+D = 1.   # Diffusion constant.
+
+u0 = np.zeros([Nx,Ny])
+
+# Now, set the initial conditions (ui).
+for i in range(Nx):
+    for j in range(Ny):
+        v=np.array([i*dx-0.5,j*dy-0.5])
+        C1 = np.linalg.norm(v,1) <= np.sqrt(Re)
+        C2 = np.linalg.norm(v,1) >= np.sqrt(Ri)
+        if C1 and C2 : u0[i,j] = 1
+
+####################################################
+# Solution at all times
+####################################################
+all_sims = solver(u0)
+
+k_widget = IntSlider(min=0, max=9999, step=1,value=0)
+
+to_interact_show_2D= lambda k: show2_2D(all_sims,k)
+interact(to_interact_show_2D,k=k_widget)
+
+########################################################
+# Initial conditions generation: Write your own IC here
+########################################################
+x,y = np.meshgrid(np.linspace(0.,1.,Nx), np.linspace(0.,1.,Ny), sparse=True)
+
+# initial condition
+f0 = lambda x,y : 10*np.sin(8*np.pi*x)*np.sin(8*np.pi*y)
+u0 = f0(x,y)
+
+####################################################
+# Solution at all times
+####################################################
+all_sims = solver(u0)
+
+k_widget = IntSlider(min=0, max=9999, step=1,value=0)
+
+to_interact_show_2D= lambda k: show2_2D(all_sims,k)
+interact(to_interact_show_2D,k=k_widget)

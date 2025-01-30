@@ -1,0 +1,192 @@
+import tensorflow as tf
+import numpy as np
+from tensorflow import data
+import shutil
+from datetime import datetime
+from mpl_toolkits.mplot3d import Axes3D
+import matplotlib.pyplot as plt
+
+from tensorflow.contrib.learn import learn_runner
+from tensorflow.contrib.learn import make_export_strategy
+
+print(tf.__version__)
+
+train_data_files = ['data/train-data.csv']
+test_data_files = ['data/test-data.csv']
+
+model_name = 'clust-model-01'
+
+resume = False
+train = True
+preprocess_features = False
+extend_feature_colums = False
+
+HEADER = ['key', 'x1', 'x2', 'x3', 'cluster']  
+HEADER_DEFAULTS = [[0], [0.0], [0.0], [0.0], ['NA']]
+
+FEATURE_NAMES = ['x1', 'x2', 'x3']  
+
+UNUSED_FEATURE_NAMES = list(set(HEADER) - set(FEATURE_NAMES))
+
+print("Header: {}".format(HEADER))
+print("Input Features: {}".format(FEATURE_NAMES))
+print("Unused Features: {}".format(UNUSED_FEATURE_NAMES))
+
+def parse_csv_row(csv_row):
+    
+    columns = tf.decode_csv(csv_row, record_defaults=HEADER_DEFAULTS)
+    columns = [tf.expand_dims(tensor, -1) for tensor in columns]
+    features = dict(zip(HEADER, columns))
+    
+    for column in UNUSED_FEATURE_NAMES:
+        features.pop(column)
+    
+    return features
+
+def process_features(features):
+    
+    if preprocess_features:
+        features = features
+    
+    return features
+
+def csv_input_fn(file_names, mode=tf.estimator.ModeKeys.TRAIN, 
+                 skip_header_lines=0, 
+                 num_epochs=None, 
+                 batch_size=200):
+    
+    shuffle = False
+    
+    print("")
+    print("* data input_fn:")
+    print("================")
+    print("Input file(s): {}".format(file_names))
+    print("Batch size: {}".format(batch_size))
+    print("Epoch Count: {}".format(num_epochs))
+    print("Mode: {}".format(mode))
+    print("Shuffle: {}".format(shuffle))
+    print("================")
+    print("")
+
+    dataset = data.TextLineDataset(filenames=file_names)
+    dataset = dataset.skip(skip_header_lines)
+    
+    if shuffle:
+        dataset = dataset.shuffle(buffer_size=2 * batch_size + 1)
+    
+    dataset = dataset.batch(batch_size)
+    dataset = dataset.map(lambda csv_row: parse_csv_row(csv_row))
+    dataset = dataset.map(lambda features: process_features(features))
+    
+    dataset = dataset.repeat(num_epochs)
+    iterator = dataset.make_one_shot_iterator() 
+    
+    features = iterator.get_next()
+    return features, None
+
+features, _ = csv_input_fn(file_names=train_data_files)
+print("Feature read from CSV: {}".format(list(features.keys())))
+
+def create_estimator(run_config, hparams):
+    
+    estimator = tf.contrib.learn.KMeansClustering(
+        num_clusters = hparams.num_clusters,
+        initial_clusters= tf.contrib.factorization.RANDOM_INIT,
+        distance_metric= tf.contrib.factorization.SQUARED_EUCLIDEAN_DISTANCE,
+        use_mini_batch=True,
+        mini_batch_steps_per_iteration=1,
+        kmeans_plus_plus_num_retries=10,
+        relative_tolerance=None,
+        config= run_config
+    )
+
+    print("")
+    print("Estimator Type: {}".format(type(estimator)))
+    print("")
+    
+    return estimator
+
+hparams  = tf.contrib.training.HParams(
+    num_epochs = 1000,
+    batch_size = 500,
+    num_clusters=3
+)
+
+model_dir = 'trained_models/{}'.format(model_name)
+
+run_config = tf.contrib.learn.RunConfig(
+    save_checkpoints_steps=100,
+    tf_random_seed=19850610,
+    model_dir=model_dir
+)
+
+print(run_config.model_dir)
+
+train_input_fn = lambda: csv_input_fn(
+            train_data_files,
+            mode = tf.contrib.learn.ModeKeys.TRAIN,
+            num_epochs=hparams.num_epochs,
+            batch_size=hparams.batch_size
+        )
+
+if not resume:
+    print("Removing previous artifacts...")
+    shutil.rmtree(model_dir, ignore_errors=True)
+else:
+    print("Resuming training...") 
+
+if train:
+    tf.logging.set_verbosity(tf.logging.INFO)
+    
+    time_start = datetime.utcnow() 
+    print("Training started at {}".format(time_start.strftime("%H:%M:%S")))
+    print(".......................................") 
+    
+    estimator = create_estimator(hparams=hparams, run_config=run_config)
+    estimator.fit(input_fn=train_input_fn,
+                  max_steps=None)
+
+    time_end = datetime.utcnow() 
+    print(".......................................")
+    print("Training finished at {}".format(time_end.strftime("%H:%M:%S")))
+    print("")
+    time_elapsed = time_end - time_start
+    print("Training elapsed time: {} seconds".format(time_elapsed.total_seconds()))
+    
+
+train_input_fn = lambda: csv_input_fn(
+            train_data_files,
+            num_epochs=1,
+            batch_size=1500
+        )
+
+test_input_fn = lambda: csv_input_fn(
+            test_data_files,
+            num_epochs=1,
+            batch_size=500
+        )
+
+train_assignments = list(estimator.predict_cluster_idx(input_fn=train_input_fn))
+test_assignments = list(estimator.predict_cluster_idx(input_fn=test_input_fn))
+
+import pandas as pd
+import numpy as np
+
+train_df = pd.read_csv(train_data_files[0], header=None, index_col=0)
+test_df = pd.read_csv(test_data_files[0], header=None, index_col=0)
+
+
+fig = plt.figure(figsize=(20,10))
+ax = fig.add_subplot(121, projection='3d')
+
+ax.scatter(train_df.iloc[:,0], train_df.iloc[:,1], train_df.iloc[:,2], c=train_assignments, marker='o')
+
+ax = fig.add_subplot(122, projection='3d')
+
+ax.scatter(test_df.iloc[:,0], test_df.iloc[:,1], test_df.iloc[:,2], c=test_assignments, marker='o')
+plt.show()
+
+clusters = estimator.clusters()
+print("Cluster Centriods:")
+print("==================")
+print(clusters)

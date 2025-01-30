@@ -1,0 +1,250 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pandas.plotting import scatter_matrix
+from pandas.plotting import autocorrelation_plot
+import seaborn as sns
+from sklearn.preprocessing import MinMaxScaler
+import os
+
+def normalize(data):
+    y = pd.to_numeric(data)
+    y = np.array(y.reshape(-1, 1))
+    
+    scaler = MinMaxScaler()
+    y = scaler.fit_transform(y)
+    y = y.reshape(1, -1)[0]
+    return y
+
+def getAllHighCorr(dataset, limit):
+    features = dataset.columns
+    hc_features = []
+    for w in range(0, len(features)):
+        #print('Highly correlated with ' + w)
+        col_name = features[w]
+        col = dataset[col_name]
+        temp = col[((col <= -limit) | (col >= limit))]
+        hc_features.append(temp)
+        #print(col[col>=0.5])
+        #print('\n')
+        
+        
+    for w in range(1, len(features)-1):
+        hc_features[w] = hc_features[w].to_frame()
+        print(hc_features[w])
+        print('\n')
+        
+    return hc_features
+
+
+def importDFOfRoad(roadIndex):
+    ROAD = ROADS_1[roadIndex]
+    TRAFFIC_WINDOWSIZE = 1
+    TRAFFIC_FILENAME = "mmda_" + ROAD + "_" + YEAR +  "_transformed"
+    traffic_raw_data = pd.read_csv(DATASET_DIR + "mmda/2015/transformed/" + TRAFFIC_FILENAME + EXT, skipinitialspace=True)
+    traffic_raw_data = traffic_raw_data.fillna(0)
+    traffic_dataset = traffic_raw_data
+
+    cols_to_remove =  [0, 1, 2]
+
+    traffic_dataset.drop(traffic_raw_data.columns[[cols_to_remove]], axis=1, inplace=True)
+    return traffic_dataset
+
+def trafficWeatherCorr(traffic, weather, rWindow=1):
+    d1 = traffic.rolling(rWindow).mean()
+    d2 = weather.rolling(rWindow).mean()
+    df = pd.merge(d1, d2, left_index=True, right_index=True)
+    corr = df.corr(method='spearman')
+    
+    return corr
+
+def oneDatasetCorr(df):
+    corr = df.corr(method='spearman')
+    return corr
+
+def visualizeCorrelationPlot(dc):
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    cax = ax.matshow(dc, vmin=-1, vmax=1)
+    fig.colorbar(cax)
+    ticks = np.arange(0,len(dc.columns),1)
+    ax.set_yticks(ticks)
+    ticks = np.arange(0,len(dc.columns),1)
+    ax.set_xticks(ticks)
+    ax.set_yticklabels(dc.columns)    
+    ax.set_xticklabels(dc.columns, rotation="vertical")
+
+    plt.show()
+
+ROADS_1 = ['A. Maceda', 'Anda Circle', 'Antipolo',
+         'Bluementritt', 'Buendia', 'Edsa Extension', 'Finance Road', 
+         'Gov. Forbes - Lacson', 'Lerma', 'Magsaysay Ave', 'P.Noval', 'Pablo Ocampo', 'Pedro Gil', 
+         'Quezon Ave.', 'Quirino', 'Rajah Sulayman', 'Taft Ave.', 'U.N. Avenue',
+         'Vicente Cruz']
+
+ROAD = "Taft Ave."
+YEAR = "2015"
+EXT = ".csv"
+
+DATASET_DIR = "../../../../datasets/"
+DATASET_DIVISION = "seasonWet"
+
+TRAFFIC_LIST = []
+for t in ROADS_1:
+    ROAD = t
+    TRAFFIC_FILENAME = "raw_mmda_" + ROAD + "_" + YEAR +  "_" + DATASET_DIVISION
+    try:
+        traffic_raw_data = pd.read_csv(DATASET_DIR + "mmda-wwo/raw/2015/" +  DATASET_DIVISION + "/mmda/" + TRAFFIC_FILENAME + EXT, skipinitialspace=True)
+    except FileNotFoundError: 
+        print("File not found... file: " + TRAFFIC_FILENAME)
+        continue
+    
+    traffic_raw_data = traffic_raw_data.shift(-5)
+    traffic_raw_data = traffic_raw_data.fillna(0)
+    traffic_dataset = traffic_raw_data
+    
+    if DATASET_DIVISION == "transformed":
+        cols_to_remove = [0, 1, 2]
+    else:
+        cols_to_remove =  [0, 1]
+        
+
+    traffic_dataset.drop(traffic_raw_data.columns[[cols_to_remove]], axis=1, inplace=True)
+    TRAFFIC_LIST.append(traffic_dataset)
+    
+    print("File adding to array... file: " + TRAFFIC_FILENAME)
+
+WEATHER_WINDOWSIZE = 2
+if DATASET_DIVISION == "transformed":
+    WEATHER_FILENAME = "raw_wwo_" + YEAR
+else:
+    WEATHER_FILENAME = "raw_wwo_" + YEAR + "_" + DATASET_DIVISION
+weather_dataset = pd.read_csv(DATASET_DIR + "mmda-wwo/raw/2015/" +  DATASET_DIVISION + "/wwo/" + WEATHER_FILENAME + EXT, skipinitialspace=True)
+weather_dataset = weather_dataset.fillna(0)
+
+if DATASET_DIVISION == "transformed":
+    cols_to_remove = [0]
+else:
+    cols_to_remove = [0, 1] #removes date and time
+weather_dataset = weather_dataset.drop(weather_dataset.columns[[cols_to_remove]], axis=1)
+
+weather_dataset.head()
+
+r = 18
+
+td = TRAFFIC_LIST[r]
+wd = weather_dataset
+
+print("Traffic for " + ROADS_1[r])
+
+plt.figure(figsize=(20, 4))
+xaxis = range(9, 12)
+
+lag = 96
+plt.plot(td.statusN[1500:1884], alpha=0.2, c='b')
+plt.plot(td.statusN[1500-lag:1884+lag].shift(lag), c='black')
+plt.grid()
+
+plt.show()
+
+traffic = td
+weather = wd
+corr = trafficWeatherCorr(traffic, weather)
+
+# print("Corr for " + ROADS_1[r])
+# print(corr['statusS'])
+# print("================")
+
+def df_shifted(df, target=None, lag=0):
+    if not lag and not target:
+        return df       
+    new = {}
+    for c in df.columns:
+        if c == target:
+            new[c] = df[target]
+        else:
+            new[c] = df[c].shift(periods=lag)
+    return  pd.DataFrame(data=new)
+
+r = 18
+td = TRAFFIC_LIST[r]
+
+
+start = 2348
+end = 2924
+lag = 96
+plt.plot(td.statusN[start:end], alpha=0.2, c='b')
+plt.plot(td.statusN[start:end+lag].shift(-lag).rolling(lag+1).mean(), alpha=0.4, c='black')
+plt.show()
+
+if not os.path.exists(DATASET_DIR + "analysis/" + DATASET_DIVISION):
+        os.makedirs(DATASET_DIR + "analysis/" + DATASET_DIVISION)
+
+TO_EXPORT = False
+for r in range(len(TRAFFIC_LIST)):
+    traffic = TRAFFIC_LIST[r]
+    weather = weather_dataset
+    rainy_corr = trafficWeatherCorr(traffic, weather)
+    
+    if TO_EXPORT:
+        rainy_corr.to_csv(DATASET_DIR + "analysis/" + DATASET_DIVISION + "/" + ROADS_1[r] + "_" + YEAR + "_" + DATASET_DIVISION + EXT, encoding='utf-8')
+        
+    print(ROADS_1[r])
+    visualizeCorrelationPlot(rainy_corr)
+
+def renameRollingColumns(original, dataset, w):
+    temp_mean = original.rolling(w).mean().fillna(0)
+    for c in original.columns:
+        temp_mean = temp_mean.rename(columns={c:c + "_Rmean=" + str(w)})
+    
+    temp_min = original.rolling(w).min().fillna(0)
+    for c in original.columns:
+        temp_min = temp_min.rename(columns={c:c + "_Rmin=" + str(w)})
+    
+    temp_max = original.rolling(w).max().fillna(0)
+    for c in original.columns:
+        temp_max = temp_max.rename(columns={c:c + "_Rmax=" + str(w)})
+
+    return pd.concat([dataset, temp_mean, temp_min, temp_max], axis=1)
+
+TO_EXPORT = True
+WINDOWS = [2,3,4,8,12,24,32,48,96]
+if not os.path.exists(DATASET_DIR + "analysis/rolling_" + DATASET_DIVISION + "/"):
+        os.makedirs(DATASET_DIR + "analysis/rolling_" + DATASET_DIVISION + "/")
+
+# for r in range(len(TRAFFIC_LIST)):
+# for r in range(len(ROADS_1)):
+r = 18
+
+try:
+    temp_traffic = pd.read_csv(DATASET_DIR + "engineered/rolling/" + YEAR + "/" + DATASET_DIVISION + 
+                               "/eng_mmda_" + ROADS_1[r] + "_" + YEAR +  "_" + DATASET_DIVISION + EXT, skipinitialspace=True)
+    temp_weather = pd.read_csv(DATASET_DIR + "engineered/rolling/" + YEAR + "/" + DATASET_DIVISION + 
+                               "/eng_wwo_" + ROADS_1[r] + "_" + YEAR + "_" + DATASET_DIVISION + EXT, skipinitialspace=True)
+    temp_traffic.drop(temp_traffic.columns[0], axis=1, inplace=True)
+    temp_weather.drop(temp_weather.columns[0], axis=1, inplace=True)
+    
+except FileNotFoundError:
+    print("Not found: " + DATASET_DIR + "engineered/rolling/" + YEAR + "/" + DATASET_DIVISION +  
+          "/eng_mmda_" + ROADS_1[r] + "_" + YEAR +  "_" + DATASET_DIVISION + EXT)
+
+print(">> Correlating " + ROADS_1[r])
+rainy_corr = trafficWeatherCorr(temp_traffic, temp_weather)
+if TO_EXPORT:
+    rainy_corr.to_csv(DATASET_DIR + "analysis/rolling_" + DATASET_DIVISION + "/rolling-" 
+                      + DATASET_DIVISION + "_" + ROADS_1[r] + "_" + YEAR + "_" + DATASET_DIVISION + EXT,
+                      encoding='utf-8')
+    print(">> Exported file: " + ROADS_1[r])
+print(">> Done.")
+
+traffic_dataset.iloc[0].autocorr(lag=100)
+
+#Auto Correlation of statusS
+plt.figure(figsize=(10, 6))
+#plt.acorr(traffic_dataset.iloc[23330:24002,:].statusS, maxlags=97)
+plt.acorr(traffic_dataset.statusN, maxlags=100)
+plt.show()
+
+plt.figure(figsize=(10, 6))
+autocorrelation_plot(traffic_dataset.iloc[23330:24002,:].statusS);
+plt.show()

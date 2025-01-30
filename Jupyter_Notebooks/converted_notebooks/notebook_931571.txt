@@ -1,0 +1,84 @@
+import os
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+import torch
+from torchvision import datasets, transforms
+
+data_dir = '../data'
+
+# ignore it for now
+transform = transforms.Compose([transforms.Resize((224, 224)),
+                                transforms.ToTensor()])
+
+dataset = datasets.ImageFolder(data_dir,
+                               transform=transform)
+# ignore it for now
+dataloader = torch.utils.data.DataLoader(dataset,
+                                         batch_size=1,
+                                         shuffle=True)
+
+def get_image(dataloader):
+    image = np.rollaxis(next(iter(dataloader))[0][0].detach().numpy(), 0, 3)
+    return image
+
+plt.imshow(get_image(dataloader), interpolation='nearest')
+
+expample_transforms = transforms.Compose([transforms.RandomRotation(90),
+                                          transforms.RandomResizedCrop(224),
+                                          transforms.ToTensor()]) 
+
+transformed_data = datasets.ImageFolder(data_dir, transform=expample_transforms)
+
+# ignore it for now
+transformed_dataloader = torch.utils.data.DataLoader(transformed_data,
+                                                     batch_size=1,
+                                                     shuffle=True)
+
+fig, ax = plt.subplots(1, 3, figsize=(10, 30))
+for i in range(3):
+    ax[i].imshow(get_image(transformed_dataloader), interpolation='nearest')
+
+expample_transforms = transforms.Compose([transforms.RandomRotation(15),
+                                          transforms.RandomResizedCrop(224),
+                                          transforms.ToTensor()]) 
+
+transformed_data = datasets.ImageFolder(data_dir, transform=expample_transforms)
+
+final_dataloader = torch.utils.data.DataLoader(transformed_data,
+                                               batch_size=32,
+                                               shuffle=True)
+
+batch_example, labels_example = next(iter(final_dataloader))
+
+batch_example.shape
+
+labels_example
+
+def example_tranformation_function(torch_tensor):
+    """
+        Simply inverse the colormap of the image (actually, it's a tensor)
+    """
+    return 1. - torch_tensor
+
+example_transform = transforms.Lambda(example_tranformation_function)
+transforms = transforms.Compose([transforms.RandomRotation(15),
+                                          transforms.CenterCrop(224),
+                                          transforms.ToTensor(),
+                                          example_transform
+                                         ]) 
+
+transformed_data = datasets.ImageFolder(data_dir, transform=transforms)
+
+final_dataloader = torch.utils.data.DataLoader(transformed_data,
+                                               batch_size=1,
+                                               shuffle=True)
+
+plt.imshow(get_image(final_dataloader))
+
+def my_transformation_function(data):
+    raise NotImplementedError()
+
+    
+# Add your transformation to the pipeline and check the final image.

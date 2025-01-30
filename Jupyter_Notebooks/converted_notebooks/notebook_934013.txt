@@ -1,0 +1,83 @@
+from flytekit.configuration import set_flyte_config_file
+set_flyte_config_file("notebook.config")
+
+def print_console_url(exc):
+    print("http://localhost:30081/console/projects/{}/domains/{}/executions/{}".format(exc.id.project, exc.id.domain, exc.id.name))
+
+import boto3
+from botocore.client import Config
+
+s3 = boto3.resource('s3',
+                    endpoint_url='http://localhost:30084',
+                    aws_access_key_id='minio',
+                    aws_secret_access_key='miniostorage',
+                    config=Config(signature_version='s3v4'),
+                    region_name='us-east-1')
+
+def upload_file(f, ref):
+    mod = ref.lstrip("s3://")
+    bucket, path = mod.split("/", 1)
+    s3.Bucket(bucket).upload_file('image.py',path)
+
+from IPython.display import Image, display
+def display_images(paths):
+    for p in paths:
+        display(Image(p))
+
+
+from image import filter_edges
+
+inp = "image.jpg" # This should be a path to an image that is available locally 
+out = "edges.png" # This is the path to where we want to create the image
+filter_edges(inp, out)
+# Invoke the helper method that displays the image in Jupyter
+display_images([inp, out])
+
+from flytekit.common.tasks.raw_container import SdkRawContainerTask
+from flytekit.sdk.types import Types
+
+edges = SdkRawContainerTask(
+    input_data_dir="/inputs",
+    output_data_dir="/outputs",
+    inputs={"image": Types.Blob, "script": Types.Blob},
+    outputs={"edges": Types.Blob},
+    image="docker.io/jjanzic/docker-python3-opencv",
+    command=["python", "/inputs/script", "/inputs/image", "/outputs/edges"],
+)
+
+   
+
+script_path="s3://my-s3-bucket/code/image.py"
+upload_file("image.py", script_path)
+example_image="https://www.naturephotographysimplified.com/wp-content/uploads/2019/06/How-to-get-sharp-images-Birds-in-flight-Bharatpur-Bird-Sanctuary-bird-Photography-by-Prathap-DK-bronze-winged-jacana-Greater-Spotted-Eagle-750x500.jpg"
+
+exc = edges.register_and_launch("flyteexamples", "development", inputs={"image":example_image, "script":script_path})
+
+print_console_url(exc)
+
+
+exc.wait_for_completion()
+#exc.outputs
+# Outputs are not working with Minio
+
+from flytekit.sdk.workflow import workflow_class, Input, Output
+@workflow_class
+class EdgeDetector(object):
+    script = Input(Types.Blob)
+    image = Input(Types.Blob)
+    edge_task = edges(script=script, image=image)
+    out =  Output(edge_task.outputs.edges, sdk_type=Types.Blob)
+
+EdgeDetector_lp = EdgeDetector.create_launch_plan() 
+
+edges.register(name="EdgeDetectorFunc", project="flyteexamples", domain="development", version="5")
+EdgeDetector.register(name="EdgeDetector", project="flyteexamples", domain="development", version="5")
+EdgeDetector_lp.register(name="EdgeDetector", project="flyteexamples", domain="development", version="5")
+
+exc = EdgeDetector_lp.execute("flyteexamples", "development", inputs={"image":example_image, "script":script_path})
+print_console_url(exc)
+
+key="/gn/ff554920363ff4da1903-edge-task-0/edges"
+s3.Bucket('my-s3-bucket').download_file(key,'edges.png')
+
+display_images(["edges.png"])

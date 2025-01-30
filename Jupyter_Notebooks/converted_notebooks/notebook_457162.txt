@@ -1,0 +1,102 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LinearRegression
+
+dtype_dict = {'bathrooms':float, 'waterfront':int, 'sqft_above':int, 'sqft_living15':float, 'grade':int, 
+              'yr_renovated':int, 'price':float, 'bedrooms':float, 'zipcode':str, 'long':float, 'sqft_lot15':float, 
+              'sqft_living':float, 'floors':str, 'condition':int, 
+              'lat':float, 'date':str, 'sqft_basement':int, 'yr_built':int, 'id':str, 'sqft_lot':int, 'view':int}
+
+def polynomial_dataframe(feature, degree):
+    poly_data = pd.DataFrame()
+    poly_data['power_1'] = feature
+    if degree <= 1: return poly_data
+    for i in range(2,degree+1):
+        column = 'power_' + str(i)
+        prev = 'power_' + str(i-1)
+        poly_data[column] = poly_data[prev] * feature
+    return poly_data
+
+sales = pd.read_csv('kc_house_data.csv/kc_house_data.csv', dtype=dtype_dict)
+sales = sales.sort_values(['sqft_living','price'])
+
+poly1_data = polynomial_dataframe(sales['sqft_living'], degree=1)
+
+model1 = LinearRegression()
+model1.fit(poly1_data, sales['price'])
+
+plt.plot(poly1_data['power_1'], sales['price'], '.')
+plt.plot(poly1_data['power_1'], model1.predict(poly1_data), '-')
+plt.show()
+print(model1.coef_)
+
+poly2_data = polynomial_dataframe(sales['sqft_living'], degree=2)
+model2 = LinearRegression()
+model2.fit(poly2_data, sales['price'])
+print(model2.coef_)
+poly3_data = polynomial_dataframe(sales['sqft_living'], degree=3)
+model3 = LinearRegression()
+model3.fit(poly3_data, sales['price'])
+print(model3.coef_)
+
+plt.plot(poly1_data['power_1'], sales['price'], '.')
+# plt.plot(poly1_data['power_1'], model1.predict(poly1_data), '-')
+plt.plot(poly2_data['power_1'], model2.predict(poly2_data), '-')
+plt.plot(poly3_data['power_1'], model3.predict(poly3_data), '-')
+plt.show()
+
+poly15_data = polynomial_dataframe(sales['sqft_living'], degree=15)
+model15 = LinearRegression()
+model15.fit(poly15_data, sales['price'])
+
+print(model15.coef_)
+plt.plot(poly1_data['power_1'], sales['price'], '.')
+plt.plot(poly15_data['power_1'], model15.predict(poly15_data), '-')
+plt.show()
+
+for i in range(1,5):
+    salesi = pd.read_csv('wk3_kc_house_set_'+str(i)+'_data.csv/wk3_kc_house_set_'+str(i)+'_data.csv', dtype=dtype_dict)
+    salesi = salesi.sort_values(['sqft_living','price'])
+    polys_data = polynomial_dataframe(salesi['sqft_living'], degree=15)
+    model = LinearRegression()
+    model.fit(polys_data, salesi['price'])
+    print('set '+str(i),model.coef_)
+    plt.figure(i)
+    plt.plot(polys_data['power_1'],salesi['price'], '.')
+    plt.plot(polys_data['power_1'], model.predict(polys_data), '-')
+    plt.show()
+
+train_data = pd.read_csv('wk3_kc_house_train_data.csv/wk3_kc_house_train_data.csv', dtype=dtype_dict)
+train_data = train_data.sort_values(['sqft_living','price'])
+test_data = pd.read_csv('wk3_kc_house_test_data.csv/wk3_kc_house_test_data.csv', dtype=dtype_dict)
+test_data = test_data.sort_values(['sqft_living','price'])
+valid_data = pd.read_csv('wk3_kc_house_valid_data.csv/wk3_kc_house_valid_data.csv', dtype=dtype_dict)
+valid_data = valid_data.sort_values(['sqft_living','price'])
+
+
+def compute_RSS(model, input_features, output):
+    totalSS = ((output - output.mean())**2).sum()
+    RSS = (1 - model.score(input_features, output)) * totalSS
+    return RSS
+
+rss = []
+for i in range(1,16):
+    data = polynomial_dataframe(train_data['sqft_living'], degree=i)
+    data_v = polynomial_dataframe(valid_data['sqft_living'], degree=i)
+    model = LinearRegression()
+    model.fit(data, train_data['price'])
+    RSS = compute_RSS(model, data_v, valid_data['price'])
+    rss.append(RSS)
+    print(str(i)+" %.6e"%RSS)
+num_degree = min(range(1,16), key= lambda i: rss[i-1])
+print(num_degree)
+
+
+data = polynomial_dataframe(train_data['sqft_living'], degree=num_degree)
+data_t = polynomial_dataframe(test_data['sqft_living'], degree=num_degree)
+model = LinearRegression()
+model.fit(data, train_data['price'])
+RSS = compute_RSS(model, data_t, test_data['price'])
+rss.append(RSS)
+print(str(num_degree)+" %.6e"%RSS)

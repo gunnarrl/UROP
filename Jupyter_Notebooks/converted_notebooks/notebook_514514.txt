@@ -1,0 +1,678 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import sklearn.linear_model as sklm
+import pywt
+
+from scipy.fftpack import fft, fftfreq, ifft
+
+class Simulator:
+    
+    kb = 1.308064e-23 # Boltzmann constant
+    
+    def __init__(self):
+        pass
+
+
+    def configure_experiment(self, 
+                             lambda_lazer = 650e-9,
+                             temperature = 273.15,
+                             theta = np.pi / 3,
+                             n = 1.33,
+                             eta = 0.958e-3):
+        
+        self.lambda_lazer = lambda_lazer
+        self.temperature = temperature
+        self.theta = theta
+        self.n = n
+        self.eta = eta
+        
+        #Evaluate coefficient
+        self.coeff = 2*(Simulator.kb * self.temperature/(3 * np.pi * self.eta)) * (4 * np.pi * self.n / self.lambda_lazer)**2 * np.sin(self.theta / 2)**2
+    
+    
+    def get_lorentz(self, diameter, freq):
+        if diameter == 0:
+            raise ValueError('zero passed as a diameter')
+        
+        G = self.coeff / diameter
+        
+        return 1 / np.pi * G / ((2 * np.pi * freq)**2 + G**2)
+
+%matplotlib inline
+
+simulator = Simulator()
+simulator.configure_experiment()
+
+N_f = 2**12
+f_max = 2**10
+
+freqs = np.linspace(0, f_max, N_f)
+ideal_lorentz = simulator.get_lorentz(100e-9, freqs)
+
+fig, ax = plt.subplots()
+ax.plot(freqs, ideal_lorentz, label='Ideal lorentz')
+plt.legend()
+
+noise_level = 0.09
+deviation_noise_level = 0.09
+
+deviation_interval_size = 30
+num_deviation_intervals = int(len(ideal_lorentz) / deviation_interval_size) + 1
+deviation_noise_levels = np.random.uniform(-deviation_noise_level, deviation_noise_level, num_deviation_intervals)
+
+exp_lorentz_values = []
+
+for i in range(len(ideal_lorentz)):
+    value = ideal_lorentz[i]
+    
+    deviation_interval_index = int(i / deviation_interval_size)
+    value *= (1 + deviation_noise_levels[deviation_interval_index])
+    
+    value *= (1 + np.random.uniform(-noise_level, noise_level))
+    
+    exp_lorentz_values.append(value)
+
+exp_lorentz = np.array(exp_lorentz_values)
+
+fig, ax = plt.subplots()
+ax.plot(freqs, exp_lorentz, label='Experimental')
+ax.plot(freqs, ideal_lorentz, label='Ideal')
+plt.legend()
+
+%matplotlib inline
+import pywt
+import numpy as np
+import seaborn
+import pandas as pd
+from statsmodels.robust import mad
+
+def get_decomposition(initial_signal, level=1, wavelet='db25'):
+    # calculate the wavelet approximation coefficients
+    
+    approximation_coeffs = pywt.downcoef('a', initial_signal, wavelet, level=level)
+    signal = pywt.upcoef('a', approximation_coeffs, wavelet, level=level, take=len(initial_signal))
+   
+    return signal
+
+
+result_lorentz = get_decomposition(exp_lorentz, level=2)
+
+fig, ax = plt.subplots()
+ax.plot(freqs, result_lorentz, label='Result')
+#ax.plot(freqs, ideal_lorentz, label='Ideal lorentz')
+plt.legend()
+
+coeff = simulator.coeff
+
+# initial diameters
+d_min = 1e-9 # 1 нм
+d_max = 2000e-9
+
+# create net
+G_min = coeff/d_max
+G_max = coeff/d_min
+N = 256*8
+M = len(freqs)
+p = (G_max/G_min)**(1/(N-1))
+G = np.zeros(N)
+
+# uniform net
+for j in range(N):
+    G[j] = G_min * (p**j)
+
+A = np.zeros((M,N))
+
+# Maxtrix of coefficients
+for i in range(M):
+    for j in range(N):
+        A[i,j] = G[j] / ((2 * np.pi * freqs[i])**2 + G[j]**2)
+        
+clf = sklm.Ridge(alpha = 5e-7)
+clf.fit(A, result_lorentz)
+a1 = clf.coef_
+
+clf = sklm.Ridge(alpha = 5e-7)
+clf.fit(A, ideal_lorentz)
+a2 = clf.coef_
+
+fig = plt.figure()
+ax = plt.subplot(3,1,1)
+line, = plt.plot(1e+9 * coeff/G, a1,'.-', color='green', markersize=1,label='Experiment')
+line, = plt.plot(1e+9 * coeff/G, a2,'.-', color='orange', markersize=1, label='Ideal')
+ax.set_xscale('log')
+plt.xlim(1, 2000)
+
+for i in range(1, 9):
+    approximation_lorentz = get_decomposition(exp_lorentz, level=i)
+    
+    fig, ax = plt.subplots()
+    ax.plot(freqs, approximation_lorentz, label=f'Approximation Lorentz IDS {i}')
+    plt.legend()
+
+def wrim(initial_lorentz, freqs, coeff, initial_decomposition_scale = 1, d_min = 1e-9, d_max = 2000e-9):
+    
+    diam_poss = pd.DataFrame(columns=['d', 'p'])
+    lorentz = initial_lorentz
+    count = initial_decomposition_scale # IDS
+    
+    while count >= 1:
+        
+        G_min = coeff/d_max
+        G_max = coeff/d_min
+    
+        N = 2**16
+        M = len(freqs)
+    
+        p = (G_max / G_min)**(1 / (N-1))
+        G = np.zeros(N)
+    
+        for j in range(N):
+            G[j] = G_min * (p**j)
+        
+        A = np.zeros((M,N))
+
+        for i in range(M):
+            for j in range(N):
+                A[i,j] = G[j] / ((2 * np.pi * freqs[i])**2 + G[j]**2)
+        
+        approximation_lorentz = get_decomposition(lorentz, level = count)
+        
+        clf = sklm.Ridge(alpha = 5e-5)
+        clf.fit(A, approximation_lorentz)
+        a1 = clf.coef_
+    
+        diam_poss['d'] = 1e+9 * coeff/G
+        diam_poss['p'] = a1
+        
+        count -= 1 
+        
+        threshold = diam_poss['d'][diam_poss['p'] == diam_poss['p'].max()].values[0] / 2
+        d_min = search_first_zero(diam_poss, 0.001)[0]
+        d_max = search_first_zero(diam_poss, 0.001)[1]
+        print(d_min, d_max)
+    
+    
+    clf.fit(A, ideal_lorentz)
+    a2 = clf.coef_
+        
+    fig = plt.figure()
+    ax = plt.subplot(3, 1, 1)
+    line,  = plt.plot(1e+9 * coeff/G, a1,'.-')
+    line_, = plt.plot(1e+9 * coeff/G, a2, color='black')
+    ax.set_xscale('log')
+    plt.xlim(1, 2000)
+    
+    return a1, d_min, dmax
+        
+        
+        
+
+m = 8 # depth of decomposition 
+count = m # iterator
+coeff = simulator.coeff
+
+# Initial interval
+d_min = 1e-9 # 1 нм
+d_max = 2000e-9
+
+# задаем сетку по Gamma
+G_min = coeff/d_max
+G_max = coeff/d_min
+N = 256*8 # Число узлов в сетке по \Gamma
+M = len(freqs) # Число точек по частоте
+p = (G_max/G_min)**(1/(N-1))
+G = np.zeros(N)
+
+# неравнмерная сетка со сгущением к нулю (так как больщий вклад в интенсивность дают крупные частицы)
+# хотя такая сетка - это не единственно возможный вариант
+for j in range(N):
+    G[j] = G_min * (p**j)
+
+A = np.zeros((M,N))
+
+# Матрица коэффициентов (составляется по базисным ф-ям)
+for i in range(M):
+    for j in range(N):
+        A[i,j] = G[j] / ((2 * np.pi * freqs[i])**2 + G[j]**2)
+diam_poss = pd.DataFrame(columns=['d', 'p'])
+lorentz = exp_lorentz
+
+while count >= 1:
+    
+    new_lorentz = get_decoposition(lorentz, level=count)
+    
+    clf = sklm.Ridge(alpha = 5e-5)
+    clf.fit(A, new_lorentz)
+    a1 = clf.coef_
+    
+    clf.fit(A, ideal_lorentz)
+    a2 = clf.coef_
+
+    fig = plt.figure()
+    ax = plt.subplot(3, 1, 1)
+    line,  = plt.plot(1e+9 * coeff/G, a1,'.-')
+    line_, = plt.plot(1e+9 * coeff/G, a2, color='black')
+    ax.set_xscale('log')
+    plt.xlim(1, 2000)
+    
+    lorentz = new_lorentz
+    diam_poss['d'] = 1e+9 * coeff/G
+    diam_poss['p'] = a1
+    count += 1 
+    threshold = diam_poss['d'][diam_poss['p'] == diam_poss['p'].max()].values[0] / 2
+    #d_min = search_first_zero(diam_poss)[0]
+    #d_max = search_first_zero(diam_poss)[1]
+    print(d_min, d_max)
+    # задаем сетку по Gamma
+    G_min = coeff/d_max
+    print(G_min)
+    G_max = coeff/d_min
+    N = 256*8 # Число узлов в сетке по \Gamma
+    M = len(freqs) # Число точек по частоте
+    p = (G_max/G_min)**(1/(N-1))
+    G = np.zeros(N)
+
+    for j in range(N):
+        G[j] = G_min * (p**j)
+
+    # вот равномерная сетка
+    #G = np.linspace(G_min, G_max, N)    
+
+    A = np.zeros((M,N))
+
+    # Матрица коэффициентов (составляется по базисным ф-ям)
+    for i in range(M):
+        for j in range(N):
+            A[i,j] = G[j] / ((2 * np.pi * freqs[i])**2 + G[j]**2)
+
+def search_first_zero(data, p_threshold):
+    d_max_p       = data[data['p'] == data['p'].max()]['d'].max()
+    d_max_p_index = data[data['p'] == data['p'].max()].index[0]
+    df_1 = data[:d_max_p_index]
+    df_2 = data[d_max_p_index:]
+    
+    d_max = df_1[df_1['p'] < p_threshold].tail(1)['d'].values[0] * 1e-9
+    d_min = df_2[df_2['p'] < p_threshold].head(1)['d'].values[0] * 1e-9
+    return [d_min, d_max]
+
+from functools import reduce
+
+y = exp_lorentz
+
+fig, ax = plt.subplots()
+ax.plot(freqs, y, label='True')
+plt.legend()
+
+lorentz = exp_lorentz
+
+for i in range(1, 9):
+    CA = pywt.downcoef('a', exp_lorentz, wavelet='db25', level=i)
+    approx = pywt.upcoef('a', CA, wavelet='db25', level=i, take=len(exp_lorentz))
+    
+    fig, ax = plt.subplots()
+    ax.plot(freqs, approx, label=f'Level {i}')
+    plt.legend()
+    
+    coeff = simulator.coeff
+
+    # Initial interval
+    d_min = 1e-9 # 1 нм
+    d_max = 2000e-9
+
+    # задаем сетку по Gamma
+    G_min = coeff/d_max
+    G_max = coeff/d_min
+    N = 256*8 # Число узлов в сетке по \Gamma
+    M = len(freqs) # Число точек по частоте
+    p = (G_max/G_min)**(1/(N-1))
+    G = np.zeros(N)
+
+    # неравнмерная сетка со сгущением к нулю (так как больщий вклад в интенсивность дают крупные частицы)
+    # хотя такая сетка - это не единственно возможный вариант
+    for j in range(N):
+        G[j] = G_min * (p**j)
+
+    A = np.zeros((M,N))
+
+    # Матрица коэффициентов (составляется по базисным ф-ям)
+    for i in range(M):
+        for j in range(N):
+            A[i,j] = G[j] / ((2 * np.pi * freqs[i])**2 + G[j]**2)
+            
+    clf = sklm.Ridge(alpha = 5e-5)
+    clf.fit(A, approx)
+    a1 = clf.coef_
+    
+    clf.fit(A, ideal_lorentz)
+    a2 = clf.coef_
+    
+    
+    fig1 = plt.figure()
+    ax1 = plt.subplot(3, 1, 1)
+    line,  = plt.plot(1e+9 * coeff/G, a1,'.-', markersize=1, color='blue')
+    line_, = plt.plot(1e+9 * coeff/G, a2, markersize=1, color='orange')
+    ax1.set_xscale('log')
+    plt.xlim(1, 2000)
+    
+
+%matplotlib inline
+
+simulator = Simulator()
+simulator.configure_experiment()
+
+N_f = 2**12
+f_max = 2**10
+
+freqs = np.linspace(0, f_max, N_f)
+ideal_lorentz = simulator.get_lorentz(100e-9, freqs) + simulator.get_lorentz(500e-9, freqs)
+
+fig, ax = plt.subplots()
+ax.plot(freqs, ideal_lorentz, label='Ideal lorentz')
+plt.legend()
+
+noise_level = 0.09
+deviation_noise_level = 0.09
+
+deviation_interval_size = 30
+num_deviation_intervals = int(len(ideal_lorentz) / deviation_interval_size) + 1
+deviation_noise_levels = np.random.uniform(-deviation_noise_level, deviation_noise_level, num_deviation_intervals)
+
+exp_lorentz_values = []
+
+for i in range(len(ideal_lorentz)):
+    value = ideal_lorentz[i]
+    
+    deviation_interval_index = int(i / deviation_interval_size)
+    value *= (1 + deviation_noise_levels[deviation_interval_index])
+    
+    value *= (1 + np.random.uniform(-noise_level, noise_level))
+    
+    exp_lorentz_values.append(value)
+
+exp_lorentz = np.array(exp_lorentz_values)
+
+#exp_lorentz = np.array(list(map(lambda x: x * (1 + np.random.uniform(-noise_level, noise_level)), ideal_lorentz)))
+
+fig, ax = plt.subplots()
+ax.plot(freqs, exp_lorentz, label='Experimental')
+ax.plot(freqs, ideal_lorentz, label='Ideal')
+plt.legend()
+
+from functools import reduce
+
+y = exp_lorentz
+
+fig, ax = plt.subplots()
+ax.plot(freqs, y, label='True')
+plt.legend()
+
+lorentz = exp_lorentz
+
+for i in range(1, 8):
+    CA = pywt.downcoef('a', exp_lorentz, wavelet='db25', level=i)
+    approx = pywt.upcoef('a', CA, wavelet='db25', level=i, take=len(exp_lorentz))
+    
+    fig, ax = plt.subplots()
+    ax.plot(freqs, approx, label=f'Level {i}')
+    plt.legend()
+    
+    coeff = simulator.coeff
+
+    # Initial interval
+    d_min = 1e-9 # 1 нм
+    d_max = 2000e-9
+
+    # задаем сетку по Gamma
+    G_min = coeff/d_max
+    G_max = coeff/d_min
+    N = 256*8 # Число узлов в сетке по \Gamma
+    M = len(freqs) # Число точек по частоте
+    p = (G_max/G_min)**(1/(N-1))
+    G = np.zeros(N)
+
+    # неравнмерная сетка со сгущением к нулю (так как больщий вклад в интенсивность дают крупные частицы)
+    # хотя такая сетка - это не единственно возможный вариант
+    for j in range(N):
+        G[j] = G_min * (p**j)
+
+    A = np.zeros((M,N))
+
+    # Матрица коэффициентов (составляется по базисным ф-ям)
+    for i in range(M):
+        for j in range(N):
+            A[i,j] = G[j] / ((2 * np.pi * freqs[i])**2 + G[j]**2)
+            
+    clf = sklm.Ridge(alpha = 5e-5)
+    clf.fit(A, approx)
+    a1 = clf.coef_
+    
+    clf.fit(A, ideal_lorentz)
+    a2 = clf.coef_
+    
+    
+    fig1 = plt.figure()
+    ax1 = plt.subplot(3, 1, 1)
+    line,  = plt.plot(1e+9 * coeff/G, a1,'.-', markersize=1, color='blue')
+    line_, = plt.plot(1e+9 * coeff/G, a2, markersize=1, color='orange')
+    ax1.set_xscale('log')
+    plt.xlim(1, 2000)
+
+#Noise level 0.09
+noise_level = 0.09
+deviation_noise_level = 0.09
+
+deviation_interval_size = 30
+num_deviation_intervals = int(len(ideal_lorentz) / deviation_interval_size) + 1
+deviation_noise_levels = np.random.uniform(-deviation_noise_level, deviation_noise_level, num_deviation_intervals)
+
+exp_lorentz_values = []
+
+for i in range(len(ideal_lorentz)):
+    value = ideal_lorentz[i]
+    
+    deviation_interval_index = int(i / deviation_interval_size)
+    value *= (1 + deviation_noise_levels[deviation_interval_index])
+    
+    value *= (1 + np.random.uniform(-noise_level, noise_level))
+    
+    exp_lorentz_values.append(value)
+
+exp_lorentz_009 = np.array(exp_lorentz_values)
+
+
+#Noise level 0.05
+noise_level = 0.05
+deviation_noise_level = 0.05
+
+deviation_interval_size = 30
+num_deviation_intervals = int(len(ideal_lorentz) / deviation_interval_size) + 1
+deviation_noise_levels = np.random.uniform(-deviation_noise_level, deviation_noise_level, num_deviation_intervals)
+
+exp_lorentz_values = []
+
+for i in range(len(ideal_lorentz)):
+    value = ideal_lorentz[i]
+    
+    deviation_interval_index = int(i / deviation_interval_size)
+    value *= (1 + deviation_noise_levels[deviation_interval_index])
+    
+    value *= (1 + np.random.uniform(-noise_level, noise_level))
+    
+    exp_lorentz_values.append(value)
+
+exp_lorentz_005 = np.array(exp_lorentz_values)
+
+
+#Noise level 0.02
+noise_level = 0.02
+deviation_noise_level = 0.02
+
+deviation_interval_size = 30
+num_deviation_intervals = int(len(ideal_lorentz) / deviation_interval_size) + 1
+deviation_noise_levels = np.random.uniform(-deviation_noise_level, deviation_noise_level, num_deviation_intervals)
+
+exp_lorentz_values = []
+
+for i in range(len(ideal_lorentz)):
+    value = ideal_lorentz[i]
+    
+    deviation_interval_index = int(i / deviation_interval_size)
+    value *= (1 + deviation_noise_levels[deviation_interval_index])
+    
+    value *= (1 + np.random.uniform(-noise_level, noise_level))
+    
+    exp_lorentz_values.append(value)
+
+exp_lorentz_002 = np.array(exp_lorentz_values)
+
+from functools import reduce
+
+fig, ax = plt.subplots()
+
+for i in range(1, 2):
+    CA = pywt.downcoef('a', exp_lorentz_009, wavelet='db25', level=i)
+    approx = pywt.upcoef('a', CA, wavelet='db25', level=i, take=len(exp_lorentz_009))
+       
+    coeff = simulator.coeff
+
+    # Initial interval
+    d_min = 1e-9 # 1 нм
+    d_max = 2000e-9
+
+    # задаем сетку по Gamma
+    G_min = coeff/d_max
+    G_max = coeff/d_min
+    N = 256*8 # Число узлов в сетке по \Gamma
+    M = len(freqs) # Число точек по частоте
+    p = (G_max/G_min)**(1/(N-1))
+    G = np.zeros(N)
+
+    # неравнмерная сетка со сгущением к нулю (так как больщий вклад в интенсивность дают крупные частицы)
+    # хотя такая сетка - это не единственно возможный вариант
+    for j in range(N):
+        G[j] = G_min * (p**j)
+
+    A = np.zeros((M,N))
+
+    # Матрица коэффициентов (составляется по базисным ф-ям)
+    for i in range(M):
+        for j in range(N):
+            A[i,j] = G[j] / ((2 * np.pi * freqs[i])**2 + G[j]**2)
+            
+    clf = sklm.Ridge(alpha = 5e-5)
+    clf.fit(A, approx)
+    a1 = clf.coef_
+
+    ax.plot(1e+9 * coeff/G, a1,'.-', markersize=1, color='blue')
+    ax.set_xscale('log')
+    plt.xlim(1, 2000)
+
+clf = sklm.Ridge(alpha = 5e-5)
+clf.fit(A, ideal_lorentz)
+a2 = clf.coef_
+
+ax.plot(1e+9 * coeff/G, a2,'.-', markersize=1, color='orange')
+plt.xlim(1, 2000)
+
+from functools import reduce
+
+fig, ax = plt.subplots()
+
+for i in range(1, 8):
+    CA = pywt.downcoef('a', exp_lorentz_005, wavelet='db25', level=i)
+    approx = pywt.upcoef('a', CA, wavelet='db25', level=i, take=len(exp_lorentz_009))
+    
+    fig, ax = plt.subplots()
+    ax.plot(freqs, approx, label=f'Level {i}')
+    plt.legend()
+    
+    coeff = simulator.coeff
+
+    # Initial interval
+    d_min = 1e-9 # 1 нм
+    d_max = 2000e-9
+
+    # задаем сетку по Gamma
+    G_min = coeff/d_max
+    G_max = coeff/d_min
+    N = 256*8 # Число узлов в сетке по \Gamma
+    M = len(freqs) # Число точек по частоте
+    p = (G_max/G_min)**(1/(N-1))
+    G = np.zeros(N)
+
+    # неравнмерная сетка со сгущением к нулю (так как больщий вклад в интенсивность дают крупные частицы)
+    # хотя такая сетка - это не единственно возможный вариант
+    for j in range(N):
+        G[j] = G_min * (p**j)
+
+    A = np.zeros((M,N))
+
+    # Матрица коэффициентов (составляется по базисным ф-ям)
+    for i in range(M):
+        for j in range(N):
+            A[i,j] = G[j] / ((2 * np.pi * freqs[i])**2 + G[j]**2)
+            
+    clf = sklm.Ridge(alpha = 5e-5)
+    clf.fit(A, approx)
+    a1 = clf.coef_
+
+    ax.plot(1e+9 * coeff/G, a1,'.-', markersize=1, color='blue')
+    ax.set_xscale('log')
+    plt.xlim(1, 2000)
+
+clf = sklm.Ridge(alpha = 5e-5)
+clf.fit(A, ideal_lorentz)
+a2 = clf.coef_
+
+ax.plot(1e+9 * coeff/G, a2,'.-', markersize=1, color='orange')
+plt.xlim(1, 2000)
+
+from functools import reduce
+
+fig, ax = plt.subplots()
+
+for i in range(1, 8):
+    CA = pywt.downcoef('a', exp_lorentz_002, wavelet='db25', level=i)
+    approx = pywt.upcoef('a', CA, wavelet='db25', level=i, take=len(exp_lorentz_009))
+    
+    fig, ax = plt.subplots()
+    ax.plot(freqs, approx, label=f'Level {i}')
+    plt.legend()
+    
+    coeff = simulator.coeff
+
+    # Initial interval
+    d_min = 1e-9
+    d_max = 2000e-9
+
+    G_min = coeff/d_max
+    G_max = coeff/d_min
+    N = 256*8
+    M = len(freqs)
+    p = (G_max/G_min)**(1/(N-1))
+    G = np.zeros(N)
+
+    for j in range(N):
+        G[j] = G_min * (p**j)
+
+    A = np.zeros((M,N))
+
+    for i in range(M):
+        for j in range(N):
+            A[i,j] = G[j] / ((2 * np.pi * freqs[i])**2 + G[j]**2)
+            
+    clf = sklm.Ridge(alpha = 5e-5)
+    clf.fit(A, approx)
+    a1 = clf.coef_
+
+    ax.plot(1e+9 * coeff/G, a1,'.-', markersize=1, color='blue')
+    ax.set_xscale('log')
+    plt.xlim(1, 2000)
+
+clf = sklm.Ridge(alpha = 5e-5)
+clf.fit(A, ideal_lorentz)
+a2 = clf.coef_
+
+ax.plot(1e+9 * coeff/G, a2,'.-', markersize=1, color='orange')
+plt.xlim(1, 2000)

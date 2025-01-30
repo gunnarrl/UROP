@@ -1,0 +1,158 @@
+class Student:
+    def __init__(self, firstname, lastname):
+        self.firstname = firstname
+        self.lastname = lastname
+
+rahul = Student("Sai Rahul", "Poruri")
+
+print(rahul)
+print(rahul.__repr__())
+print(rahul.__str__())
+
+class Student:
+    def __init__(self, firstname, lastname, middlename=None):
+        self.firstname = firstname
+        self.middlename = middlename
+        self.lastname = lastname
+    def __str__(self):
+        return "Student({}, {}, {})".format(
+            self.firstname, self.middlename, self.lastname)
+
+rahul = Student("Rahul", "Poruri", "Sai")
+rahul_alias = Student("Rahul", "Poruri")
+
+print(rahul)
+print(rahul_alias)
+
+rahul = Student("Rahul", "Poruri", "Sai")
+rahul_alias = Student("Rahul", "Poruri")
+
+print(rahul == rahul_alias)
+
+class Student:
+    def __init__(self, firstname, lastname, middlename=None):
+        self.firstname = firstname
+        self.middlename = middlename
+        self.lastname = lastname
+    def __eq__(self, other):
+        if (self.firstname == other.firstname and
+            self.lastname == other.lastname):
+            return True
+        return False
+
+rahul = Student("Rahul", "Poruri", "Sai")
+also_rahul = Student("Rahul", "Poruri")
+
+print(rahul == also_rahul)
+
+preeti = Student("Preeti", "Saryan")
+
+students = [rahul, preeti]
+
+students.sort()
+
+# See https://docs.python.org/3.7/library/functools.html#functools.total_ordering
+# for more info.
+from functools import total_ordering
+
+
+@total_ordering
+class Student:
+    def __init__(self, firstname, lastname, middlename=None):
+        self.firstname = firstname
+        self.middlename = middlename
+        self.lastname = lastname
+    def __eq__(self, other):
+        if (self.firstname == other.firstname and
+            self.lastname == other.lastname):
+            return True
+        return False
+    def __le__(self, other):
+        if self.lastname < other.lastname:
+            return True
+        return False
+    def __repr__(self):
+        return "Student({}, {}, {})".format(
+            self.firstname, self.middlename, self.lastname)
+
+rahul = Student("Rahul", "Poruri", "Sai")
+preeti = Student("Preeti", "Saryan")
+vinay = Student("Vinay", "Kumar")
+students = [rahul, preeti, vinay]
+
+students.sort()
+print(students)
+
+grades = {rahul: 'a'}
+
+class Student:
+    def __init__(self, firstname, lastname, middlename=None):
+        self.firstname = firstname
+        self.middlename = middlename
+        self.lastname = lastname
+    def __hash__(self):
+        return hash((self.firstname, self.lastname))
+    def __repr__(self):
+        return "Student({}, {}, {})".format(
+            self.firstname, self.middlename, self.lastname)
+
+rahul = Student("Rahul", "Poruri", "Sai")
+grades = {rahul: 'a'}
+
+print(grades)
+
+class Fib:
+    def __init__(self, max):
+        self.max = max
+
+    def __iter__(self):
+        self.a = 0
+        self.b = 1
+        return self
+
+    def __next__(self):
+        fib = self.a
+        if fib > self.max:
+            raise StopIteration
+        self.a, self.b = self.b, self.a + self.b
+        return fib
+
+for num in Fib(100):
+    print(num, end=' ')
+
+fib = Fib(100)
+iterator = iter(fib)
+while True:
+    print(next(iterator), end=', ')
+
+import time
+
+
+class Timer:
+    def __init__(self):
+        self.start_time = 0
+        self.exit_time = 0
+    def __enter__(self):
+        self.start_time = time.time()
+    def __exit__(self, *args):
+        self.exit_time = time.time()
+        print(f"Took {self.exit_time-self.start_time} seconds")
+
+timer = Timer()
+with timer:
+    time.sleep(1)
+
+# See https://docs.python.org/3.7/library/contextlib.html#contextlib.contextmanager
+# for more info.
+from contextlib import contextmanager
+
+
+@contextmanager
+def timer():
+    start_time = time.time()
+    yield
+    exit_time = time.time()
+    print(f"Took {exit_time-start_time} seconds")
+
+with timer():
+    time.sleep(1)

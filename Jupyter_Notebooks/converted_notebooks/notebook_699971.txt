@@ -1,0 +1,166 @@
+def makeZero():
+    return '🍩' 
+
+def isZero(n):
+    return n == '🍩' 
+
+def makeSuccessor(n):
+    return '+' + n # String concatenation
+
+def getPredecessor(n):
+    assert n[0] == '+' # must be a S(p)
+    return n[1:] # returns the rest of the string
+
+makeZero()
+
+makeSuccessor(makeSuccessor(makeZero()))
+
+assert(isZero(makeZero()))
+assert(not isZero(makeSuccessor(makeZero())))
+assert(isZero(getPredecessor(makeSuccessor(makeZero()))))
+
+zero = makeZero()
+one = makeSuccessor(zero)
+one
+
+print(getPredecessor(one))
+
+def equalNumbers(n, m):
+    """Returns true iff n and m represent the same number."""
+    if isZero(n):
+        return isZero(m)
+    else:
+        if isZero(m):
+            return False
+        else:
+            return equalNumbers(getPredecessor(n), getPredecessor(m))
+    
+
+two = makeSuccessor(one)
+three = makeSuccessor(two)
+four = makeSuccessor(three)
+
+assert(equalNumbers(zero, zero))
+assert(not equalNumbers(one, zero))
+assert(equalNumbers(four, four))
+assert(not equalNumbers(four, three))
+assert(not equalNumbers(three, four))
+
+def addNumbers(a, b):
+    """Takes two Natural Numbers as input, and outputs a 
+    Natural Number that represents their sum."""
+    pass # fill in with your code for Problem J1
+
+# Here are some examples to test your addNumbers function. None of the assertions should fail.
+assert(equalNumbers(addNumbers(two, zero), two))
+assert(equalNumbers(addNumbers(zero, two), two))
+assert(equalNumbers(addNumbers(one, one), two))
+assert(equalNumbers(addNumbers(two, two), four))
+print ("All tests passed!")
+
+def greaterNumber(a, b):
+    """Takes two Natural Numbers as input, and outputs a Boolean indicating 
+    if the number represented by the first input is greater than (>) the 
+    number represented by the second."""
+    pass # fill in your code for Problem J2
+
+# Here are some examples to test your lessThanEq function. None of the assertions should fail.
+assert(not greaterNumber(addNumbers(two, zero), two))
+assert(not greaterNumber(addNumbers(zero, zero), two))
+assert(not greaterNumber(four, four))
+assert(greaterNumber(addNumbers(two, three), four))
+print ("All tests passed!")
+
+
+def makeEmptyTree():
+    """Returns the empty tree."""
+    return '🌰'
+
+def makeBranchedTree(l, r):
+    """Takes two Trees as inputs, and outputs a Tree whose left branch is the
+    first input, and whose right branch is the second input."""
+    # Python note: this makes a tuple, which is essentially an immutable list. 
+    return (l, r)
+
+def getLeftBranch(t):
+    """Takes a non-empty Tree as input, and outputs the left branch of that Tree.
+    (Note that this is a partial function. It is not defined for the empty tree, 
+    and fails with an error on that input.)"""
+    assert(not isEmpty(t))
+    return t[0]
+
+def getRightBranch(t):
+    """Takes a non-empty Tree as input, and outputs the right branch of that Tree."""
+    assert(not isEmpty(t))
+    return t[1]
+
+emptyTree = makeEmptyTree()
+print(emptyTree)
+
+fullHeight1 = makeBranchedTree(emptyTree, emptyTree)
+fullHeight2 = makeBranchedTree(fullHeight1, fullHeight1)
+print(fullHeight2)
+
+fullHeight3 = makeBranchedTree(fullHeight2, fullHeight2)
+unbalancedHeight4 = makeBranchedTree(fullHeight1, fullHeight3)
+print(unbalancedHeight4)
+
+def treeSize(t):
+    """Takes a Tree as input, and outputs an int representing the total number of nodes in the tree."""
+    pass # replace with your code
+
+# Some tests for treeeSize
+assert(treeSize(emptyTree) == 0)
+assert(treeSize(fullHeight1) == 1)
+assert(treeSize(fullHeight2) == 3)
+assert(treeSize(fullHeight3) == 7)
+assert(treeSize(unbalancedHeight4) == 9)
+print("Zuka Zama!")
+
+def treeHeight(t):
+    """Takes a Tree as input, and outputs the height of that tree."""
+    pass # replace with your code
+
+assert(treeHeight(emptyTree) == 0)
+assert(treeHeight(fullHeight1) == 1)
+assert(treeHeight(fullHeight2) == 2)
+assert(treeHeight(fullHeight3) == 3)
+assert(treeHeight(unbalancedHeight4) == 4)
+print("Wahoowa!")
+
+def leafCount(t):
+    """Takes a Tree as input, and outputs the total number of leaves of that tree."""
+    pass # replace with your code
+
+assert(leafCount(emptyTree) == 0)
+assert(leafCount(fullHeight1) == 1)
+assert(leafCount(fullHeight2) == 2)
+assert(leafCount(fullHeight3) == 4)
+assert(leafCount(unbalancedHeight4) == 5)
+print("Yippee!")
+
+# Optional: put your code golf definitions of treeSize, treeHeight, and leafCount here
+
+def bitstringToNaturalNumber(binaryString):
+    pass
+
+def isOneToOne(n):
+    allBitStrings = ['']
+    for i in range (n):
+        tempBitStrings = []
+        for bitstring in allBitStrings:
+            tempBitStrings.append(bitstring + '0')
+            tempBitStrings.append(bitstring + '1')
+        allBitStrings = tempBitStrings
+    allNaturals = []
+    for bitstring in allBitStrings:
+        natural = bitstringToNaturalNumber(bitstring)
+        if natural in allNaturals:
+            return False
+        allNaturals.append(natural)
+    return True
+
+assert(isOneToOne(0))
+assert(isOneToOne(1))
+assert(isOneToOne(4))
+print("YESSSSS!!!")

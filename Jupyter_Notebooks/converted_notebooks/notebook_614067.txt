@@ -1,0 +1,226 @@
+import matplotlib.pyplot as plt
+import numpy as np
+
+%load_ext autoreload
+%autoreload 2
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from models import Net
+
+net = Net()
+print(net)
+
+from torchvision import transforms
+from data_load import Rescale, RandomCrop, Normalize, ToTensor
+
+data_transform = transforms.Compose([
+    Rescale((224, 224)),
+    Normalize(),
+    ToTensor()
+])
+
+from data_load import FacialKeypointsDataset
+
+transformed_dataset = FacialKeypointsDataset(csv_file='data/training_frames_keypoints.csv',
+                                             root_dir='data/training/',
+                                             transform=data_transform)
+
+print('Number of images: ', len(transformed_dataset))
+for i in range(4):
+    sample = transformed_dataset[i]
+    print(i, sample['image'].size(), sample['keypoints'].size())
+
+from data_load import FacialKeypointsDataset
+
+test_dataset = FacialKeypointsDataset(csv_file='data/test_frames_keypoints.csv',
+                                             root_dir='data/test/',
+                                             transform=data_transform)
+
+print('Number of images: ', len(test_dataset))
+for i in range(4):
+    sample = test_dataset[i]
+    print(i, sample['image'].size(), sample['keypoints'].size())
+
+from torch.utils.data import Dataset, DataLoader
+
+batch_size = 30
+train_loader = DataLoader(transformed_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+
+from models import Net
+import torch
+
+net = Net()
+
+"""
+Passes loader images to the trained model and outputs each 
+image, its target keypoints and predicted keypoints
+
+:param name: A DataLoader object
+"""
+def net_sample_output(loader):    
+    for i, sample in enumerate(loader):
+        images = sample['image']
+        key_pts = sample['keypoints']
+        images = images.type(torch.FloatTensor)
+        output_pts = net(images)
+        output_pts = output_pts.view(output_pts.size()[0], 68, -1)
+        if i == 0:
+            return images, output_pts, key_pts
+
+"""
+Shows image with predicted keypoints
+
+:param image: A numpy image that needs prediction
+:param predicted_key_pts: The keypoints predicted by the model
+:param gt_pts: The target keypoints (ground truth)
+"""
+def show_all_keypoints(image, predicted_key_pts, gt_pts=None):
+    plt.imshow(image, cmap='gray')
+    plt.scatter(predicted_key_pts[:, 0], predicted_key_pts[:, 1], s=20, marker='.', c='m')
+    if gt_pts is not None:
+        plt.scatter(gt_pts[:, 0], gt_pts[:, 1], s=20, marker='.', c='g')
+        
+
+"""
+Visualizes the model output for a set of images
+
+:param test_images: The images that need prediction
+:param test_outputs: The predicted keypoints
+:param gt_pts: The target keypoints (ground truth)
+:param batch_size: The batch size to use in the model
+"""
+def visualize_output(test_images, test_outputs, gt_pts=None, batch_size=30):
+    f = plt.figure(figsize=(18, 5))
+
+    for i in range(1, columns*rows +1):
+        f.add_subplot(2, 6, i)
+        
+        image = test_images[i].data
+        image = image.numpy()
+        image = np.transpose(image, (1, 2, 0))
+
+        predicted_key_pts = test_outputs[i].data
+        predicted_key_pts = predicted_key_pts.numpy()
+        
+        predicted_key_pts = predicted_key_pts*50.0+100
+        
+        ground_truth_pts = None
+        if gt_pts is not None:
+            ground_truth_pts = gt_pts[i]         
+            ground_truth_pts = ground_truth_pts*50.0+100
+        
+        show_all_keypoints(np.squeeze(image), predicted_key_pts, ground_truth_pts)
+        plt.axis('off')
+        
+    plt.show()
+
+test_images, test_outputs, gt_pts = net_sample_output(test_loader)
+print("Test images size: ", test_images.data.size())
+print("Test output size: ",test_outputs.data.size())
+print("Ground truth size: ", gt_pts.size())
+
+visualize_output(test_images, test_outputs, gt_pts)
+
+import torch.optim as optim
+import torch.nn.functional as F
+
+criterion = torch.nn.MSELoss()
+optimizer = optim.Adam(net.parameters())
+
+"""
+Trains the model with a set of training images
+
+:param n_epochs: The number of epochs to train the model
+:param train_loader: A DataLoader object with a set of training images
+"""
+def train_net(n_epochs, train_loader):
+
+    net.train()
+
+    for epoch in range(n_epochs):
+        
+        running_loss = 0.0
+        
+        for batch_i, data in enumerate(train_loader):
+            
+            # get the input images and their corresponding labels
+            images = data['image']
+            key_pts = data['keypoints']
+
+            # flatten pts
+            key_pts = key_pts.view(key_pts.size(0), -1)
+
+            # convert variables to floats for regression loss
+            key_pts = key_pts.type(torch.FloatTensor)
+            images = images.type(torch.FloatTensor)
+
+            # forward pass to get outputs
+            output_pts = net(images)
+
+            # calculate the loss between predicted and target keypoints
+            loss = criterion(output_pts, key_pts)
+
+            # zero the parameter (weight) gradients
+            optimizer.zero_grad()
+            
+            # backward pass to calculate the weight gradients
+            loss.backward()
+
+            # update the weights
+            optimizer.step()
+
+            # print loss statistics
+            running_loss += loss.item()
+            if batch_i % 10 == 9:    # print every 10 batches
+                print('Epoch: {}, Batch: {}, Avg. Loss: {}'.format(epoch + 1, batch_i+1, running_loss/10))
+                running_loss = 0.0
+
+    print('Finished Training')
+
+n_epochs = 150
+train_net(n_epochs, train_loader)
+
+test_images, test_outputs, gt_pts = net_sample_output(test_loader)
+print(test_images.data.size())
+print(test_outputs.data.size())
+print(gt_pts.size())
+
+visualize_output(test_images, test_outputs, gt_pts=None)
+
+visualize_output(test_images, test_outputs, gt_pts)
+
+from models import Net
+
+model_dir = 'saved_models/'
+model_name = 'model_net.pt'
+torch.save(net.state_dict(), model_dir+model_name)
+
+import cv2 
+
+test_images, test_outputs, gt_pts = net_sample_output(train_loader)
+image = test_images[10].data
+image = image.numpy()   # convert to numpy array from a Tensor
+image = np.transpose(image, (1, 2, 0))   # transpose to go from torch to numpy image
+
+cnn_weights = net.state_dict()['features.9.weight'].cpu()
+w = cnn_weights.numpy()
+
+f = plt.figure(figsize=(35, 20))
+columns = 6
+rows = 2
+
+kernel = w[0][0]
+
+filtered_image = cv2.filter2D(image, -1, kernel)
+
+f.add_subplot(rows, columns, 1)
+plt.imshow(kernel, cmap='gray')
+
+f.add_subplot(rows, columns, 2)
+plt.imshow(np.squeeze(image), cmap='gray')
+
+f.add_subplot(rows, columns, 3)
+plt.imshow(np.squeeze(filtered_image), cmap='gray')

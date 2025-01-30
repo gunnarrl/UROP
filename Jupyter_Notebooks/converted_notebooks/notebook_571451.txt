@@ -1,0 +1,498 @@
+#hide
+%matplotlib inline
+import math
+import requests
+import pandas as pd
+import numpy as np
+import altair as alt
+from IPython.display import HTML
+import matplotlib.pyplot as plt
+import plotly.express as px
+import plotly.graph_objects as go
+
+populations = {
+    # Taken from US Census Bureau NST-EST2019-01: Table 1. Annual Estimates of the Resident Population 
+    # for the United States, Regions, States, and Puerto Rico: April 1, 2010 to July 1, 2019
+    # https://www.census.gov/newsroom/press-kits/2019/national-state-estimates.html
+    "AL": 4903185,
+    "AK": 731545,
+    "AZ": 7278717,
+    "AR": 3017804,
+    "CA": 39512223,
+    "CO": 5758736,
+    "CT": 3565287,
+    "DE": 973764,
+    "DC": 705749,
+    "FL": 21477737,
+    "GA": 10617423,
+    "HI": 1415872,
+    "ID": 1787065,
+    "IL": 12671821,
+    "IN": 6732219,
+    "IA": 3155070,
+    "KS": 2913314,
+    "KY": 4467673,
+    "LA": 4648794,
+    "ME": 1344212,
+    "MD": 6045680,
+    "MA": 6892503,
+    "MI": 9986857,
+    "MN": 5639632,
+    "MS": 2976149,
+    "MO": 6137428,
+    "MT": 1068778,
+    "NE": 1934408,
+    "NV": 3080156,
+    "NH": 1359711,
+    "NJ": 8882190,
+    "NM": 2096829,
+    "NY": 19453561,
+    "NC": 10488084,
+    "ND": 762062,
+    "OH": 11689100,
+    "OK": 3956971,
+    "OR": 4217737,
+    "PA": 12801989,
+    "RI": 1059361,
+    "SC": 5148714,
+    "SD": 884659,
+    "TN": 6829174,
+    "TX": 28995881,
+    "UT": 3205958,
+    "VT": 623989,
+    "VA": 8535519,
+    "WA": 7614893,
+    "WV": 1792147,
+    "WI": 5822434,
+    "WY": 578759,
+    "PR": 3193694,
+    "GU": 165_718,
+    "VI": 104_914,
+    "AS": 55_641,
+    "MP": 55_194,
+    "US": 329650692 # As of May 15, 2020
+}
+
+#hide
+CHART_WIDTH = 600
+CHART_HEIGHT = 450
+NUM_COLUMNS = 2
+
+states_url = "https://covidtracking.com/api/v1/states/daily.json"
+us_url = "https://covidtracking.com/api/v1/us/daily.json"
+case_threshold = 100
+
+r = requests.get(states_url)
+states_df = pd.DataFrame(r.json())
+states_df['date'] = pd.to_datetime(states_df.date, format="%Y%m%d")
+states_df = states_df[['date', 'state', 'positive', 'death']].sort_values(['state', 'date']).reset_index(drop=True)
+cols = {}
+
+# Fix Hawaii
+# https://www.hawaiinewsnow.com/2020/03/24/state-officials-report-first-coronavirus-related-death-hawaii/
+states_df.loc[(states_df.date == '2020-03-24') & (states_df.state == 'HI'), 'death'] = 0
+states_df.loc[(states_df.date == '2020-03-25') & (states_df.state == 'HI'), 'death'] = 0
+
+# Add daily case and death values
+states_df.loc[:, 'daily_positive'] = states_df.positive.diff()
+states_df.loc[:, 'daily_death'] = states_df.death.diff()
+
+# Remove false values between state boundaries in df (ne is notequal)
+states_df.loc[(states_df.state.ne(states_df.state.shift())).astype(int), 'daily_positive'] = np.nan
+states_df.loc[(states_df.state.ne(states_df.state.shift())).astype(int), 'daily_death'] = np.nan
+
+for state in states_df.state.unique():
+    # Shift to days since 100 cases
+    cases = states_df[(states_df.state == state) & (states_df.positive > case_threshold)]
+    cases = cases.reset_index().positive.reset_index(drop=True)
+    if len(cases) > 1:
+        cols[state] = cases
+        
+r = requests.get(us_url)
+us_df = pd.DataFrame(r.json())
+us_df['date'] = pd.to_datetime(us_df.date, format="%Y%m%d")
+us_df = us_df[['date', 'positive', 'death']].sort_values('date')
+
+# Add daily case and death values
+us_df['daily_positive'] = us_df.positive.diff()
+us_df['daily_death'] = us_df.death.diff()
+
+us_df['state'] = 'US'
+cols['US'] = us_df.positive.reset_index(drop=True)
+
+us_df['state'] = 'US'
+states_df = states_df.append(us_df, ignore_index=True)
+
+states_df['population'] = states_df['state'].map(populations)
+states_df['deaths_per_m'] = states_df.death / (states_df.population / 1_000_000)
+states_df['cases_per_m'] = states_df.positive / (states_df.population / 1_000_000)
+states_df['daily_deaths_per_m'] = states_df.daily_death / (states_df.population / 1_000_000)
+states_df['daily_cases_per_m'] = states_df.daily_positive / (states_df.population / 1_000_000)
+
+# Round values to be more readable
+cols = ['deaths_per_m', 'cases_per_m', 'daily_deaths_per_m', 'daily_cases_per_m']
+states_df[cols] = states_df[cols].round(2)
+
+#hide
+SINCE_CASES_NUM = 100
+MIN_CASES = 200
+
+st = states_df[states_df['positive'].ge(MIN_CASES)
+                     ].sort_values(by='positive', ascending=False)
+states = st['state'].values
+df = states_df[states_df['state'].isin(states)].copy()
+
+days_since = (df.assign(F=df['positive'].ge(SINCE_CASES_NUM))
+              .set_index('date')
+              .groupby('state')['F'].transform('idxmax'))
+
+df['Days since 100 cases'] = (df['date'] - days_since.values).dt.days.values
+
+days_since = (df.assign(F=df['death'].ge(1))
+              .set_index('date')
+              .groupby('state')['F'].transform('idxmax'))
+
+df['Days since first death'] = (df['date'] - days_since.values).dt.days.values
+
+df = df.rename(columns={"positive": "Confirmed Cases", "state": "State", "death": "Confirmed Deaths", "population": "Population",
+                        "deaths_per_m": "Deaths per Million", "cases_per_m": "Cases per Million",
+                        "daily_positive": "Daily Confirmed Cases", "daily_death": "Daily Confirmed Deaths",
+                        "daily_cases_per_m": "Daily Cases per M", "daily_deaths_per_m": "Daily Deaths per M", "date": "Date"})
+dfc = df[df['Days since 100 cases'].ge(0)]
+dfd = df[df['Days since first death'].ge(0)]
+
+#hide
+
+# calculate days since 10 cases per Million
+ten_cases_per_mil = dfc.loc[lambda x: x['Cases per Million'] >= 10].groupby('State').agg({'Date': min}).copy()
+joined_date = dfc.merge(ten_cases_per_mil, how='left', on='State').copy()
+joined_date.loc[:, 'Days since 10 cases per million'] = joined_date.apply(lambda x: (x.Date_x - x.Date_y).days, axis=1).copy()
+dfc = joined_date.copy()
+dfc.rename(columns={'Date_x': 'Date', 'Date_y': 'Date (10 cases per million)'}, inplace=True)
+
+# calculate days since 1 death per million
+one_death_per_mil = dfd.loc[lambda x: x['Deaths per Million'] >= 1].groupby('State').agg({'Date': min}).copy()
+joined_date = dfd.merge(one_death_per_mil, how='left', on='State').copy()
+joined_date.loc[:, 'Days since 1 death per million'] = joined_date.apply(lambda x: (x.Date_x - x.Date_y).days, axis=1).copy()
+dfd = joined_date.copy()
+dfd.rename(columns={'Date_x': 'Date', 'Date_y': 'Date (1 death per million)'}, inplace=True)
+
+#hide
+def make_chart(df, xcol, ycol, xlimit, ylabel, title, highlight_states=[], baseline_states=['CA', 'MA', 'NY', 'OH'], baseline=SINCE_CASES_NUM):
+    max_date = df['Date'].max()
+    color_domain = list(states_df.state.unique())
+    y_domain_max = pow(10, math.ceil(math.log10(df[ycol].max())))
+    ref_max_day = math.ceil(math.log(y_domain_max / baseline, 1.33))
+
+    selection = alt.selection_multi(fields=['State'], bind='legend', 
+                                    init=[{'State': x} for x in highlight_states + baseline_states])
+
+    base = alt.Chart(df.loc[lambda x: x[xcol] >= xlimit], width=CHART_WIDTH, height=CHART_HEIGHT).encode(
+        x=xcol+':Q',
+        y=alt.Y(ycol+':Q', scale=alt.Scale(type='log'), title=ylabel),
+        color=alt.Color(
+            'State:N',
+            scale=alt.Scale(scheme="tableau20"),
+            legend=alt.Legend(columns=NUM_COLUMNS, symbolLimit=len(color_domain))),
+        tooltip=list(df),
+        opacity=alt.condition(selection, alt.value(1), alt.value(0.06))
+    )
+
+    ref = pd.DataFrame([[x, baseline*1.33**x] for x in range(ref_max_day)], columns=[xcol, ycol])
+    base_ref = alt.Chart(ref).encode(x=xcol+':Q', y=ycol+':Q')
+    return (
+        base_ref.mark_line(color='black', opacity=.5, strokeDash=[3,3]) +
+        base_ref.transform_filter(
+            alt.datum[xcol] >= ref_max_day - 1
+        ).mark_text(dx=-40, dy=30, align='right', fontSize=12, fontWeight='bold', text='33% Daily Growth') +
+        base.mark_line(point=True).add_selection(selection) + 
+        base.transform_filter(
+            alt.datum['Date'] >= int(max_date.timestamp() * 1000)
+        ).mark_text(dx=20, dy=-8, align='right', fontWeight='bold').encode(text='State:N')
+    ).properties(
+        title=title
+    ).configure_title(fontSize=18).configure_legend(labelFontSize=13, titleFontSize=15).configure_axis(
+    labelFontSize=13,
+    titleFontSize=15
+)
+
+#hide_input
+make_chart(dfc, 'Days since 100 cases', 'Confirmed Cases', 0, 'Confirmed Cases (log scale)',
+           'Cases over time for US states', ['US'])
+
+#hide_input
+make_chart(dfc, 'Days since 10 cases per million', 'Cases per Million', 0, 'Confirmed Cases Per Million (log scale)',
+           'Cases over time for US states (per capita)', ['US'], baseline=15)
+
+#hide_input
+max_date = dfc['Date'].max()
+cols = ['State', 'Confirmed Cases', 'Confirmed Deaths', 'Daily Confirmed Cases', 'Daily Confirmed Deaths']
+temp = dfc.loc[dfc.Date == max_date, cols]
+temp[cols[1:]] = temp[cols[1:]].astype(int)
+temp = temp.sort_values('Confirmed Cases', ascending=False).reset_index(drop=True)
+temp.iloc[:11,:]
+
+#hide_input
+make_chart(dfd, 'Days since first death', 'Confirmed Deaths', 0, 'Confirmed Deaths (log scale)',
+           'Deaths over time for US states', ['US'], baseline=1)
+
+#hide_input
+make_chart(dfd, 'Days since 1 death per million', 'Deaths per Million', 0, 'Confirmed Deaths per Million (log scale)',
+           'Deaths over time for US states (per capita)', ['US'], baseline=1.5)
+
+#hide
+def make_daily_chart(df, xcol, ycol, xlimit, ylabel, title, highlight_states=[], baseline_states=['CA', 'MA', 'NY', 'OH'], filter=False, last=1):
+    max_date = df['Date'].max()
+    color_domain = list(states_df.state.unique())
+    
+    selection = alt.selection_multi(fields=['State'], bind='legend', 
+                                    init=[{'State': x} for x in highlight_states + baseline_states])
+
+    # Remove any 0's
+    if filter:
+        df_tmp = df[df[ycol] > 0].copy()
+    else:
+        df_tmp = df.copy()
+
+    # Replace any 0's with 0.1
+    df_tmp.loc[df_tmp[ycol] <= 0, ycol] = 0.1
+
+    base = alt.Chart(df_tmp.loc[lambda x: x[xcol] >= xlimit], width=CHART_WIDTH, height=CHART_HEIGHT).encode(
+        x=xcol+':Q',
+        y=alt.Y(ycol+':Q', scale=alt.Scale(type='log'), title=ylabel),
+        color=alt.Color(
+            'State:N',
+            scale=alt.Scale(scheme="tableau20"),
+            legend=alt.Legend(columns=NUM_COLUMNS, symbolLimit=len(color_domain))),
+        tooltip=list(df),
+        opacity=alt.condition(selection, alt.value(1), alt.value(0.06))
+    )
+
+    return (
+        base.mark_line(point=True).add_selection(selection) + 
+        base.transform_filter(
+            (alt.datum['Date'] >= int(max_date.timestamp() * 1000) - last*60*60*24*1000) &
+            (alt.datum['Date'] < int(max_date.timestamp() * 1000) - (last-1)*60*60*24*1000)
+        ).mark_text(dx=20, dy=-8, align='right', fontWeight='bold').encode(text='State:N')
+    ).properties(
+        title=title
+    ).configure_title(fontSize=18).configure_legend(labelFontSize=13, titleFontSize=15).configure_axis(
+    labelFontSize=13,
+    titleFontSize=15
+)
+
+#hide_input
+make_daily_chart(dfc, 'Days since 100 cases', 'Daily Confirmed Cases', 0, 'Daily Cases (log scale)',
+                 'Daily cases for US states', ['US'], last=0)
+
+#hide_input
+make_daily_chart(dfc, 'Days since 10 cases per million', 'Daily Cases per M', 0, 'Daily Cases per Million (log scale)',
+                 'Daily cases for US states (per capita)', ['US'], filter=True, last=0)
+
+#hide_input
+make_daily_chart(dfd, 'Days since first death', 'Daily Confirmed Deaths', 0, 'Daily Deaths (log scale)',
+                 'Daily deaths for US states', ['US'], last=0)
+
+#hide_input
+make_daily_chart(dfd, 'Days since 1 death per million', 'Daily Deaths per M', 0, 'Daily Deaths per Million (log scale)',
+                 'Daily deaths for US states (per capita)', ['US'], filter=True, last=0)
+
+#hide
+def make_trajectory_chart(df, col, xlabel, ylabel, title, highlight_states=[], baseline_states=['CA', 'MA', 'NY', 'OH'], window=7, filter=True):
+    max_date = df['Date'].max()
+
+    color_domain = list(states_df.state.unique())
+
+    # State selector
+    selection = alt.selection_multi(fields=['State'], bind='legend', 
+                                    init=[{'State': x} for x in highlight_states + baseline_states])
+
+    df_tmp = df.copy()
+    df_tmp['window_total'] = df_tmp[col] - df_tmp[col].shift(window)
+
+    # Remove false values between state boundaries in df
+    df_tmp.loc[(df_tmp.State.ne(df_tmp.State.shift(window))).astype(int), 'window_total'] = np.nan
+
+    # Remove any 0's
+    if filter:
+        df_tmp = df_tmp[df_tmp['window_total'] > 0]    
+
+    base = alt.Chart(df_tmp, width=CHART_WIDTH, height=CHART_HEIGHT).encode(
+        x=alt.X(col+':Q', scale=alt.Scale(type='log'), title=xlabel),
+        y=alt.Y('window_total'+':Q', scale=alt.Scale(type='log'), title=ylabel),
+        color=alt.Color(
+            'State:N',
+            scale=alt.Scale(scheme="tableau20"),
+            legend=alt.Legend(columns=NUM_COLUMNS, symbolLimit=len(color_domain))),
+        tooltip=list(df),
+        opacity=alt.condition(selection,
+                              alt.value(1), alt.value(0.06))
+    )
+
+    return (
+        base.mark_line(point=True).add_selection(selection) + 
+        base.transform_filter(
+            alt.datum['Date'] >= int(max_date.timestamp() * 1000)
+        ).mark_text(dx=20, dy=-8, align='right', fontWeight='bold').encode(text='State:N')
+    ).properties(
+        title=title
+    ).configure_title(fontSize=18).configure_legend(labelFontSize=13, titleFontSize=15).configure_axis(
+    labelFontSize=13,
+    titleFontSize=15
+)
+
+#hide_input
+make_trajectory_chart(df, 'Confirmed Cases', 'Total Confirmed Cases', 'New Confirmed Cases (in past week)',
+                      'Trajectory of confirmed cases', ['US'], window=7)
+
+#hide_input
+make_trajectory_chart(df, 'Confirmed Deaths', 'Total Confirmed Deaths', 'New Confirmed Deaths (in past week)',
+                      'Trajectory of deaths', ['US'], window=7)
+
+#hide
+def make_fig(df, col, xlabel, ylabel, title, window):
+    df_tmp = df.copy()
+    df_tmp['window_total'] = df_tmp[col] - df_tmp[col].shift(window)
+
+    # Remove false values between state boundaries in df
+    df_tmp.loc[(df_tmp.State.ne(df_tmp.State.shift(window))).astype(int), 'window_total'] = np.nan
+
+    # Remove any 0's
+    if filter:
+        df_tmp = df_tmp[df_tmp['window_total'] > 0]    
+
+    # Initialize figure
+    fig_dict = {
+        "data": [],
+        "layout": {},
+        "frames": []
+    }
+
+    # Fill in layout
+    df_tmp = df_tmp.sort_values('Date').reset_index(drop=True)
+    df_tmp.Date = df_tmp.Date.dt.strftime('%Y-%m-%d')
+    dates = df_tmp.Date.unique().tolist()
+    fig_dict["layout"]["height"] = CHART_HEIGHT*1.5
+    fig_dict["layout"]["width"] = CHART_WIDTH*1.5
+    fig_dict["layout"]["xaxis"] = {"range": [np.log10(5), np.log10(df_tmp[col].max() + 5000)], "title": xlabel, "type": "log"}
+    fig_dict["layout"]["yaxis"] = {"range": [np.log10(1), np.log10(df_tmp['window_total'].max() + 500)], "title": ylabel, "type": "log"}
+    fig_dict["layout"]["hovermode"] = "closest"
+    fig_dict["layout"]["sliders"] = {
+        "args": [
+            "transition", {
+                "duration": 100,
+                "easing": "cubic-in-out"
+            }
+        ],
+        "initialValue": min(dates),
+        "plotlycommand": "animate",
+        "values": dates,
+        "visible": True
+    }
+
+    # Buttons
+    fig_dict["layout"]["updatemenus"] = [
+        {
+            "buttons": [
+                {
+                    "args": [None, {"frame": {"duration": 100, "redraw": True},
+                                    "fromcurrent": True, "transition": {"duration": 100,
+                                                                        "easing": "linear"}}],
+                    "label": "Play",
+                    "method": "animate"
+                },
+                {
+                    "args": [[None], {"frame": {"duration": 0, "redraw": False},
+                                      "mode": "immediate",
+                                      "transition": {"duration": 0}}],
+                    "label": "Pause",
+                    "method": "animate"
+                }
+            ],
+            "direction": "left",
+            "pad": {"r": 10, "t": 87},
+            "showactive": False,
+            "type": "buttons",
+            "x": 0.05,
+            "xanchor": "right",
+            "y": 0.05,
+            "yanchor": "top"
+        }
+    ]
+
+    # Sliders
+    sliders_dict = {
+        "active": len(dates)-1,
+        "yanchor": "top",
+        "xanchor": "left",
+        "currentvalue": {
+            "font": {"size": 16},
+            "visible": True,
+            "xanchor": "right"
+        },
+        "transition": {"duration": 100},
+        "pad": {"b": 10, "t": 50},
+        "len": 0.9,
+        "x": 0.1,
+        "y": 0,
+        "steps": []
+    }
+
+    # Make data
+    date = max(dates)
+    states = df_tmp.State.unique()
+    for state in states:
+        temp = df_tmp[(df_tmp.Date <= date) & (df_tmp.State == state)]
+        
+        data_dict = {
+            "x": list(temp[col]),
+            "y": list(temp['window_total']),
+            "mode": "lines",
+            "text": temp[[col, 'window_total']],
+            "name": state,
+            'hoverlabel': {'namelength': 0},
+            'hovertemplate': '<b>%{hovertext}</b><br>'+xlabel+': %{x:,d}<br>New in past week: %{y:,d}',
+            'hovertext': temp.State
+        }
+        fig_dict["data"].append(data_dict)
+
+    # Make frames
+    for date in dates:
+        frame = {"data": [], "name": date}
+        for state in states:
+            temp = df_tmp[(df_tmp.Date <= date) & (df_tmp.State == state)]
+            
+            data_dict = {
+                "x": list(temp[col]),
+                "y": list(temp['window_total']),
+                "mode": "lines",
+                "text": temp[[col, 'window_total']],
+                "name": state,
+            }
+            frame["data"].append(data_dict)
+
+        fig_dict["frames"].append(frame)
+        slider_step = {"args": [
+            [date],
+            {"frame": {"duration": 100, "redraw": True},
+            "mode": "immediate",
+            "transition": {"duration": 100, 'easing': 'linear'}}
+        ],
+            "label": date,
+            "method": "animate"}
+        sliders_dict["steps"].append(slider_step)
+
+    fig_dict["layout"]["sliders"] = [sliders_dict]
+    fig = go.Figure(fig_dict)
+
+    return fig
+
+#hide_input
+fig = make_fig(df, 'Confirmed Cases', 'Total Confirmed Cases', 'New Confirmed Cases (in past week)',
+               'Trajectory of confirmed cases', window=7)
+fig.show()
+
+#hide_input
+fig = make_fig(df, 'Confirmed Deaths', 'Total Confirmed Deaths', 'New Confirmed Deaths (in past week)',
+               'Trajectory of confirmed cases', window=7)
+fig.show()

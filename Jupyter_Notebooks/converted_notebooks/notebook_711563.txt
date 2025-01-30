@@ -1,0 +1,137 @@
+# naložimo knjižnice
+import numpy as np 
+import pandas as pd
+import os
+
+# naložimo razpredelnico, s katero bomo delali
+anime = pd.read_csv('anime/anime.csv')
+
+# izberemo interaktivni "notebook" stil risanja
+%matplotlib inline
+
+
+# vidimo, v kateri mapi se trenutno nahajamo -> specificiramo pot, kjer naj pd isce .csv datoteko
+os.getcwd()
+
+anime
+
+# poglejmo najprej povprečno oceno animejev, da vidimo, kakšno filtriranje glede na ocene je najbolj smiselno
+# najprej izoliramo stolpec ocen
+anime_ocene = anime['ocena'] 
+#nato izračunamo povprečno vrednost
+anime_ocene.mean()
+
+# naravno se zdi, da animeje grupiramo po (maturity) rating-u ter nato izračunamo povprečno oceno po posamezni skupini, da vidimo, če obstaja kakšna korelacija
+anime_group_by_rating = anime.groupby('rating')
+# pogledamo povprečje posamezne skupine za ocene in število epizod
+anime_group_by_rating.mean()
+
+# zanima nas, ali obstaja korelacija med oceno in številom epizod
+# prepostavljamo, da imajo bolj popularni animeji večje število epizod
+# pogrupiramo jih po številu epizod
+anime.groupby('stevilo_epizod').size()
+
+# izračunamo povprečno oceno posamezne skupine animejev, glede na število epizod
+anime.groupby('stevilo_epizod').mean()
+
+# poglejmo število animejev glede na vrsto/zvrst (type)
+# previdevamo, da je TV najbolj popularen tip
+anime_group_by_type = anime.groupby('type')
+anime_group_by_type.size()
+
+# zanima nas, ali obstaja kakšna povezava med tem, kakšne vrste je anime in tem, kakšno oceno ima
+anime_group_by_type['ocena'].mean()
+
+# presenetljiva ugotovitev je, da se povprečna ocena glede na tip ne razlikuje
+
+# zanima nas, kateri animeji so zelo nadpovprečni oz podpovprečni ter koliko jih je
+podvoprecni = anime['ocena'] < 7.5
+nadpovprecni = anime['ocena'] > 9
+anime[podvoprecni | nadpovprecni]
+
+# sedaj jih še preštejemo
+anime.groupby(anime.ocena < 7.5).size()
+
+anime.groupby(anime.ocena > 9).size()
+
+def povprecno_st_besed(x):
+    words = x.split()
+    return len(words) 
+
+counter = 0
+st_animejev = 0
+for naslov in anime['naslov']:
+    counter += povprecno_st_besed(naslov)
+    st_animejev += 1
+print(counter / st_animejev)
+
+letnice_zacetka = []
+letnice_konca = []
+
+
+for i,j in anime['start_date'].iteritems():
+    leto = anime['start_date'][i].split("-")[-1]
+    if leto == "":
+        leto = 0 #za animeje, pri katerih nimamo podatka o začetnem letu predvajanja, le-to vrednost nastavimo na 0
+    else:
+        leto = int(leto)
+
+        if leto > 20:
+	        leto += 1900
+        else:
+            leto += 2000
+    letnice_zacetka.append(leto)
+
+
+for i,j in anime['end_date'].iteritems():
+    leto = anime['end_date'][i].split("-")[-1]
+    if leto == "":
+        leto = 0
+    else:
+        leto = int(leto)
+        if leto > 20:
+            leto += 1900
+        else:
+            leto += 2000
+    letnice_konca.append(leto)
+
+#    #letnice_zacetka.append(anime['start_date'][i].split("-")[-1])
+#    #letnice_konca.append(anime['end_date'][i].split("-")[-1])
+
+anime['start_year'] = letnice_zacetka
+anime['end_year'] = letnice_konca
+
+
+# pogrupiramo animeje po letih začetka predvajanja
+anime_by_start_year = anime.groupby('start_year')
+
+#preštejemo njihovo število
+anime_by_start_year.size()
+
+# pogrupiramo animeje po letih konca predvajanja
+anime_by_end_year = anime.groupby('end_year')
+
+#preštejemo njihovo število
+anime_by_end_year.size()
+
+# narišemo graf, ki prikazuje število animejev za posamezen tip
+anime_group_by_type.size().plot.bar(x='tip', y='število animejev')
+
+# narišemo graf, ki predtsavlja število animejev glede na maturity rating
+anime_group_by_rating.size().plot.bar(x='ocena', y='stevilo animejev')
+
+# ker smo naleteli na problem, da so objekti števila glasov tipa str, mi pa želimo številski tip (int ali float), potakom spremenimo tip
+for i, j in anime['stevilo_glasov'].iteritems():
+    anime['stevilo_glasov'][i] = anime['stevilo_glasov'][i].replace(',', '')
+
+anime['stevilo_glasov'] = anime['stevilo_glasov'].apply(int)
+
+# narišemo razsevni diagram, ki prikazuje povezavo med oceno in številom glasov
+anime.plot.scatter('ocena', 'stevilo_glasov')
+
+
+# grafično predstavimo posamezno število animejev, glede na začetno leto predvajanja 
+anime_vecji = anime[anime.start_year > 1960]
+anime_vecji_zacetek = anime_vecji.groupby('start_year')
+anime_vecji_zacetek.size().plot()
+

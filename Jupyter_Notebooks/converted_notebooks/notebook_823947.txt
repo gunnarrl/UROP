@@ -1,0 +1,63 @@
+import pandas as pd
+import json
+from pandas.io.json import json_normalize
+import urllib.request as rq
+import json
+import os
+import matplotlib.pyplot as plt
+pd.set_option("display.max_columns",100)
+
+def fetch_data(index,type):
+    response = rq.urlopen(os.environ["ES_URL"]+ index+'/'+type+'/_search?size=1000000')
+    data = json.load(response)   
+    data = data["hits"]["hits"]
+    df = json_normalize(data)
+    return df
+
+df = fetch_data("ucdp","event")
+
+print(df.shape)
+print(df.columns)
+
+df[5:10]
+
+violence_countries = df.groupby(["_source.ccd"]).sum()["_source.high_est"]
+violence_countries.values
+
+violence_countries[violence_countries<=200000].quantile([0.6,0.85,0.95,0.99])
+
+ddd = fetch_data("health","deaths")
+
+print(ddd.shape)
+print(ddd.columns)
+
+ddd[3:5]
+
+ddd["_source.value"].describe(percentiles=[0.2,0.9])
+
+print(ddd["_source.yr"].describe())
+ddd[ddd["_source.yr"]>=1989].groupby(["_source.ccode"]).count()["_source.yr"].describe()
+
+edu = fetch_data("cr","cr_country_year")
+
+print(edu.shape)
+print(edu.columns)
+
+edu[3:5]
+
+print(edu["_source.yr"].describe())
+edu[(edu["_source.yr"]>=1989) & (edu["_source.yr"]<=2014)].groupby(["_source.ccode"]).count()["_source.yr"].describe()
+
+edu["_source.value"].describe(percentiles=[0.2,0.9])
+
+ineq = fetch_data("ineq","ineq_country_year")
+
+print(ineq.shape)
+print(ineq.columns)
+
+ineq[3:5]
+
+ineq["_source.value"].describe(percentiles=[0.2,0.9])
+
+print(ineq["_source.yr"].describe())
+ineq[(ineq["_source.yr"]>=1989) & (ineq["_source.yr"]<=2014)].groupby(["_source.ccode"]).count()["_source.yr"].describe()

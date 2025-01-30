@@ -1,0 +1,185 @@
+data_path = "/home/deepvision/production/code/chapter-8/image-tagging/data-may-2020"
+validation_images_path = data_path + "/val2017"
+
+import json
+
+with open(data_path + "/final-ground-truth-tags.json") as json_file:
+    ground_truth = json.load(json_file)
+
+# helper functions to get image name from image id and converse.
+def get_id_from_name(name):
+    return int(name.split("/")[-1].split(".jpg")[0])
+
+
+def get_name_from_id(image_id):
+    filename = validation_images_path + \
+        "/000000" + str(image_id) + ".jpg"
+    return filename
+
+# Class ids to their string equivalent
+with open(data_path + '/class-id-to-name.json') as f:
+    class_id_to_name = json.load(f)
+
+def convert_class_id_to_string(l):
+    result = []
+    for class_id in l:
+        result.append(class_id_to_name[str(class_id)])
+    return result
+
+def parse(l):
+    l1 = []
+    for each in l:
+        if len(each) >= 2:
+            l1.append(each.lower())
+    return l1
+
+def get_class_from_prediction(l):
+    return list([item[0] for item in l])
+
+import gensim
+from gensim.models import Word2Vec
+model = gensim.models.KeyedVectors.load_word2vec_format(data_path + 
+    '/GoogleNews-vectors-negative300.bin', binary=True)
+
+def check_gensim(word, pred):
+    # get similarity between word and all predicted words in returned predictions
+    similarity = 0
+    for each_pred in pred:
+        # check if returned prediction exists in the Word2Vec model
+        if each_pred not in model:
+            continue
+        current_similarity = model.similarity(word, each_pred)
+        #print("Word=\t", word, "\tPred=\t", each_pred, "\tSim=\t", current_similarity)
+        if current_similarity > similarity:
+            similarity = current_similarity
+    return similarity
+
+def microsoft_name(image_id):
+    return "000000" + str(image_id) + ".jpg"
+
+def parse_microsoft_inner(word):
+    b = word.replace("_", " ")
+    c = b.lower().strip().split()
+    return c
+
+def parse_microsoft_response_v1(l):
+    result = []
+    b = ""
+    for each in l["categories"]:
+        a = each["name"]
+        result.extend(parse_microsoft_inner(a))
+    for each in l["tags"]:
+        a = each["name"]
+        result.extend(parse_microsoft_inner(a))
+        if "hint" in each:
+            a = each["hint"]
+            result.extend(parse_microsoft_inner(a))
+    return list(set(result))
+
+def parse_microsoft_response(l):
+    result = []
+    b = ""
+    for each in l:
+        result.extend(parse_microsoft_inner(each[0]))
+    return list(set(result))
+
+def parse_amazon_response(l):
+    result = []
+    for each in l:
+        result.append(each.lower())
+    return list(set(result))
+
+def parse_google_response(l):
+    l1 = []
+    for each in l:
+        l1.append(each[0].lower())
+        if len(each[0].split()) > 1:
+            l1.extend(each[0].split())
+    return l1
+
+threshold = .3
+
+def calculate_score(ground_truth, predictions, arg):
+    total = 0
+    correct = 0
+    avg_ground_truth_length = 0
+    avg_amazon_length = 0
+    avg_microsoft_length = 0
+    avg_google_length = 0
+    for each in ground_truth.keys():
+        pred = []
+        gt = list(set(convert_class_id_to_string(ground_truth[each])))
+        if gt == None or len(gt) < 1:
+            continue
+        total += len(gt)
+        avg_ground_truth_length += len(gt)
+        if arg == "google" and get_name_from_id(each) in predictions:
+            pred = predictions[get_name_from_id(each)]
+            if pred == None or len(pred) <= 0:
+                continue
+            pred = parse_google_response(predictions[get_name_from_id(each)])
+            avg_google_length += len(pred)
+        elif arg == "microsoft" and microsoft_name(each) in predictions:
+            pred = predictions[microsoft_name(each)]
+            if pred == None or len(pred) <= 0:
+                continue
+            pred = parse_microsoft_response(predictions[microsoft_name(each)])
+            avg_microsoft_length += len(pred)
+        elif arg == "amazon" and get_name_from_id(each) in predictions:
+            pred = predictions[get_name_from_id(each)]
+            if pred == None or len(pred) <= 0:
+                continue
+            pred = parse_amazon_response(predictions[get_name_from_id(each)])
+            avg_amazon_length += len(pred)
+        match = 0
+        match_word = []
+        for each_word in gt:
+            # Check if ground truth exists "as is" in the entire list of predictions
+            if each_word in pred:
+                correct += 1
+                match += 1
+                match_word.append(each_word)
+            # Also, ensure that ground truth exists in the Word2Vec model
+            elif each_word not in model:
+                continue
+            # Otherwise, check for similarity between the ground truth and the predictions
+            elif check_gensim(each_word, pred) >= threshold:
+                correct += 1
+                match += 1
+                match_word.append(each_word)
+    if arg == "google":
+        print("Google's Stats\nTotal number of tags returned = ", avg_google_length,
+              "\nAverage number of tags returned per image = ",
+              avg_google_length * 1.0 / len(ground_truth.keys()))
+    elif arg == "amazon":
+        print("Amazon's Stats\nTotal number of tags returned = ", avg_amazon_length,
+              "\nAverage number of tags returned per image = ",
+              avg_amazon_length * 1.0 / len(ground_truth.keys()))
+    elif arg == "microsoft":
+        print("Microsoft's Stats\nTotal number of tags returned = ",
+              avg_microsoft_length, "\nAverage number of tags returned per image = ",
+              avg_microsoft_length * 1.0 / len(ground_truth.keys()))
+    print("\nGround Truth Stats\nTotal number of Ground Truth tags = ", total,
+          "\nTotal number of correct tags predicted = ", correct)
+    print("\nScore = ", float(correct) / float(total))
+
+# Google
+with open(data_path + '/google-tags.json') as f:
+    google = json.load(f)
+
+# Get Google Score
+calculate_score(ground_truth, google, "google")
+
+# Microsoft
+with open(data_path + '/microsoft-tags.json') as f:
+    microsoft = json.load(f)
+
+# Get Microsoft score
+calculate_score(ground_truth, microsoft, "microsoft")
+
+# Amazon
+with open(data_path + '/amazon-tags.json') as f:
+    amazon = json.load(f)
+
+# Get Amazon score
+calculate_score(ground_truth, amazon, "amazon")

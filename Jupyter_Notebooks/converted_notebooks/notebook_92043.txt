@@ -1,0 +1,129 @@
+from itertools import islice
+
+from sklearn.model_selection import train_test_split
+import torch
+from torchvision import transforms
+from torchvision.datasets import MNIST
+import numpy as np
+import matplotlib.pyplot as plt
+
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+MNIST_FLAT_DIM = 28 * 28
+
+mnist_train = MNIST('../data/', train=True, transform=transforms.Compose([
+    transforms.ToTensor()
+]))
+
+mnist_test = MNIST('../data/', train=False, transform=transforms.Compose([
+    transforms.ToTensor()
+]))
+
+X_example, y_example = zip(*islice(iter(mnist_train), 5))
+
+def plot_example(X, y, n=5):
+    fig = plt.figure()
+    rows = len(X) // n + 1
+    for i, (img, y) in enumerate(zip(X, y)):
+        ax = fig.add_subplot(rows, n, i+1)
+        ax.imshow(img.squeeze())
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_title(y)
+    plt.tight_layout()
+    return None
+
+plot_example(X_example, y_example)
+
+y_train = np.array([y for x, y in iter(mnist_train)])
+
+from torch import nn
+
+class CNN(nn.Module):
+    def __init__(self):
+        super(CNN, self).__init__()
+        self.feature1 = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(16),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2)
+        )
+        self.feature2 = nn.Sequential(
+            nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2)
+        )
+        self.feature3 = nn.Sequential(
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2)
+        )
+        
+        self.dense1 = nn.Sequential(
+            nn.Linear(3*3*64, 128),
+            nn.ReLU(),
+            nn.Dropout(0.5)
+        )
+        self.dense2 = nn.Sequential(
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Dropout(0.3)
+        )
+        self.dense3 = nn.Sequential(
+            nn.Linear(64, 10)
+        )
+        
+    def forward(self, x, **kwargs):
+        x = self.feature1(x)
+        x = self.feature2(x)
+        x = self.feature3(x)
+        x = x.reshape(x.size(0), -1)
+        x = self.dense1(x)
+        x = self.dense2(x)
+        x = self.dense3(x)
+        return x
+
+from skorch import NeuralNetClassifier
+from skorch.callbacks import EarlyStopping, Checkpoint, ProgressBar
+
+callbacks = []
+callbacks.append(EarlyStopping(patience=10))
+callbacks.append(Checkpoint(fn_prefix='cnn_', dirname='saved_models/cnn'))
+callbacks.append(ProgressBar())
+
+torch.manual_seed(0)
+
+net = NeuralNetClassifier(
+    CNN,
+    max_epochs=50,
+    iterator_train__num_workers=4,
+    iterator_valid__num_workers=4,
+    lr=1e-3,
+    criterion=nn.CrossEntropyLoss,
+    optimizer=torch.optim.Adam,
+    device=DEVICE,
+    callbacks=callbacks
+)
+
+net.fit(mnist_train, y=y_train);
+
+from sklearn.metrics import accuracy_score
+
+y_pred = net.predict(mnist_test)
+y_test = np.array([y for x, y in iter(mnist_test)])
+
+accuracy_score(y_test, y_pred)
+
+from IPython import display
+
+display.set_matplotlib_formats('svg')
+
+train_loss = [epoch['train_loss'] for epoch in net.history]
+test_loss = [epoch['valid_loss'] for epoch in net.history]
+
+plt.figure()
+plt.plot(train_loss, label='Train loss')
+plt.plot(test_loss, label='Valid loss')
+plt.xlabel('epoch')
+plt.legend();

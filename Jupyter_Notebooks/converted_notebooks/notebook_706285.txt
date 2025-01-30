@@ -1,0 +1,120 @@
+import pandas as pd
+import numpy as np
+
+titanic=pd.read_csv("titanic_train.csv") 
+#Loading dataset from the csv file into "Pandas Dataframe"
+titanic.head() #Head shows the first 5 entries of the dataframe
+
+#Name column can never decide survival of a person, hence we can safely delete it
+#Better to display the entire dataframe after a deletion of a column to get a better view
+del titanic["Name"]
+titanic.head()
+
+del titanic["PassengerId"]
+titanic.head()
+
+del titanic["Ticket"]
+titanic.head()
+
+#To see how many entries are there
+
+
+
+titanic.shape
+
+#To see how many null entries are there in each column
+#Here isnull() returns 1 if there is a null entry adding upon 
+#which(using sum() function) we get number of null entries in each column 
+
+
+
+titanic.isnull().sum()
+
+del titanic["Cabin"]
+titanic.head()
+
+#Applying statistical approach on the above dataframe to analyse 
+#which feature or column is affecting the survival rate and which is useless colum
+titanic.describe()
+
+del titanic["Fare"]
+titanic.head()
+
+# Finding the number of people who have survived 
+# given that they have embarked or boarded from a particular port
+
+survivedS = titanic[titanic.Embarked == 'Q'][titanic.Survived == 1].shape[0]
+survivedS
+
+#similarly checked for C and S too and the results were
+# Survived for C=93
+# Survived for S=217
+
+# Finding the number of people who have not survived 
+# given that they have embarked or boarded from a particular port
+
+
+survivedNS= titanic[titanic.Embarked=="Q"][titanic.Survived==0].shape[0]
+survivedNS
+
+#similarly checked for C and S too and the results were
+# Not Survived for C = 75
+# Not Survived for S = 427
+
+def getNumber(str):
+    if str=="male":
+        return 1
+    else:
+        return 2
+titanic["gender"]=titanic["Sex"].apply(getNumber)
+#We have created a new column called "gender" and 
+#filling it with values 1 ,2 based on the values of sex column
+titanic.head()
+
+#Deleting Sex column, since no use of it now
+del titanic["Sex"]
+titanic.head()
+
+import matplotlib.pyplot as plt
+from matplotlib import style
+
+males = (titanic['gender'] == 1).sum() 
+#Summing up all the values of column gender with a 
+#condition for male and similary for females
+females = (titanic['gender'] == 2).sum()
+print(males)
+print(females)
+p = [males, females]
+plt.pie(p,    #giving array
+       labels = ['Male', 'Female'], #Correspndingly giving labels
+       colors = ['blue', 'red'],   # Corresponding colors
+       explode = (0.15, 0),    #How much the gap should me there between the pies
+       startangle = 0)  #what start angle should be given
+plt.axis('equal') 
+plt.show()
+
+#finding mean survived age
+meanS= titanic[titanic.Survived==1].Age.mean()
+meanS
+
+titanic["age"]=np.where(pd.isnull(titanic.Age) & titanic["Survived"]==1  ,meanS, titanic["Age"])
+titanic
+
+# Finding the mean age of "Not Survived" people
+meanNS=titanic[titanic.Survived==0].Age.mean()
+meanNS
+
+titanic.age.fillna(meanNS,inplace=True)
+titanic
+
+#We can safely delete the Age column
+del titanic["Age"]
+titanic
+
+#Renaming "age" and "gender" columns
+titanic.rename(columns={'age':'Age'}, inplace=True)
+titanic.rename(columns={'gender':'Sex'}, inplace=True)
+titanic.head()
+
+titanic.dropna(inplace=True)
+titanic.head()

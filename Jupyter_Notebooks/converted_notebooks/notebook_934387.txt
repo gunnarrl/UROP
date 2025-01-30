@@ -1,0 +1,202 @@
+import numpy as np 
+import matplotlib.pyplot as plt 
+from matplotlib import style
+style.use('ggplot')
+%matplotlib inline
+from sklearn.svm import SVC
+from scipy.io import loadmat
+from sympy import Symbol, diff
+
+# domain
+x1 = -3
+x2 = 3
+x = np.linspace(x1, x2, 100)
+
+# logreg cost
+c_lr = lambda x: - np.log(1/(1 + np.exp(-x)))
+c_lr_vals = c_lr(x)
+
+# 1st derivative of logreg cost
+h = 0.01
+diff1_approx = lambda x :(c_lr(x+h)-c_lr(x-h))/(2*h)
+diff1_act = lambda x: -1/(1+np.exp(x))
+
+# svm cost        
+k = -0.645 # manually configured slope
+c_svm = [k * x - k if x<=1 else 0 for x in x]
+    
+# visualize   
+plt.figure(figsize=(12,8))
+plt.plot(x, c_lr(x), label='logistic regression cost')
+plt.plot(x, diff1_act(x), label='theoretical derivative of logreg cost')
+plt.plot(x, diff1_approx(x), marker='x', markevery=5, linestyle='None', label='numerical derivative of logreg cost')
+plt.plot(x, c_svm, label='svm cost')
+
+plt.xlabel('x')
+plt.ylabel('y')
+plt.legend(loc='best')
+plt.show()
+
+dataset1 = loadmat('data/ex6data1.mat')
+print(dataset1['__header__'])
+X = dataset1['X']
+y = dataset1['y']
+
+def plotData(X, y):
+    pos = np.where(y==1)[0]
+    neg = np.where(y==0)[0]
+    plt.plot(X[pos, 0], X[pos, 1], 
+             marker='+',
+             color='black',
+             markersize=7,
+             linestyle='None',
+             label='pos examps')
+
+    plt.plot(X[neg, 0], X[neg, 1], 
+             marker='o',
+             color='red',
+             markersize=7,
+             linestyle='None',
+             label='neg examps')
+    plt.xlabel('x1')
+    plt.ylabel('x2')
+    
+    
+def trainSVM(X, y, C, kernel, tol, max_iter):
+    return SVC(C, kernel=kernel, tol=tol, max_iter=max_iter)
+
+def visualizeBoundary(X, y, model):
+    # make classification predictions over a grid of values
+    x1plot = np.linspace(np.min(X[:, 0]), np.max(X[:, 0]), num=100)
+    x2plot = np.linspace(np.min(X[:, 1]), np.max(X[:, 1]), num=100)
+    preds = np.zeros((len(x1plot), len(x2plot)))
+    for i, x1 in enumerate(x1plot):
+        for j, x2 in enumerate(x2plot):
+            preds[i,j] = model.predict(np.array([x1, x2]).reshape(1, -1))
+    
+    #X1, X2 = np.meshgrid(x1plot, x2plot)
+    contr = plt.contour(x1plot, x2plot, preds.T)
+
+plotData(X, y)
+plt.legend(loc='lower left')
+plt.show()
+
+# train a model
+C = 1
+kernel = 'linear'
+tol = 1e-3
+max_iter=1000
+model = trainSVM(X, y, C, kernel, tol, max_iter)
+model.fit(X, y.ravel())
+
+# plot the SVM boundary
+plotData(X, y)
+visualizeBoundary(X, y, model)
+plt.axis([np.min(X[:, 0])-0.2, np.max(X[:, 0])+0.2,
+         np.min(X[:, 1])-0.2, np.max(X[:, 1])+0.2])
+plt.legend(loc='lower left')
+plt.show()
+
+Cs = [0.1, 1, 10, 100]
+for i, C in enumerate(Cs):
+    kernel = 'linear'
+    tol = 1e-2
+    max_iter=1000
+    model = trainSVM(X, y, C, kernel, tol, max_iter)
+    model.fit(X, y.ravel())
+    
+    plt.figure(figsize=(12,9))
+    plt.subplot(2,2,i+1)
+    plotData(X, y)
+    plt.axis([np.min(X[:, 0])-0.2, np.max(X[:, 0])+0.2,
+             np.min(X[:, 1])-0.2, np.max(X[:, 1])+0.2])
+    visualizeBoundary(X, y, model)
+    plt.title(f'C = {C}')
+    plt.legend(loc='lower left')
+    plt.show()
+
+def gaussianKernel(x1, x2, sigma):
+    x1 = x1.flatten()
+    x2 = x2.flatten()
+    
+    return np.exp(-np.sum((x1-x2)**2)/(2*sigma**2))
+
+x1 = np.array([1, 2, 1])
+x2 = np.array([0, 4, -1])
+sigma = 2
+
+sim = gaussianKernel(x1, x2, sigma)
+
+print(f'Gaussian kernel between x1={x1} and x2={x2} with sigma={sigma} is {sim}')
+print(f'Expected value ~ 0.324652')
+
+dataset2 = loadmat('data/ex6data2.mat')
+print(dataset2['__header__'])
+X = dataset2['X']
+y = dataset2['y']
+
+plt.figure(figsize=(12, 8))
+plotData(X, y)
+plt.legend(loc='best')
+plt.show()
+
+# rbf is ootb sklearn gaussian kernel
+# instead of sigma it takes gamma=1/sigma^2 as parameter
+C = 1
+sigma = 0.1
+model = SVC(C=C,
+            kernel='rbf',
+            gamma=sigma**(-2),
+           )
+model.fit(X, y.ravel())
+
+plt.figure(figsize=(12, 8))
+plotData(X, y)
+plt.axis([np.min(X[:, 0])-0.05, np.max(X[:, 0])+0.05,
+         np.min(X[:, 1])-0.05, np.max(X[:, 1])+0.05])
+visualizeBoundary(X, y, model)
+plt.legend(loc='lower left')
+plt.show()
+
+dataset3 = loadmat('data/ex6data3.mat')
+print(dataset3['__header__'])
+X = dataset3['X']
+y = dataset3['y']
+Xval = dataset3['Xval']
+yval = dataset3['yval']
+
+plt.figure(figsize=(12, 8))
+plotData(X, y)
+plt.legend(loc='best')
+plt.show()
+
+def cvParams(X, y, Xval, yval):
+    params = [0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30]
+    
+    opt_accuracy = 0
+    opt_C, opt_sigma = 0, 0
+    
+    for i, C in enumerate(params):
+        for j, sigma in enumerate(params):
+            model = SVC(C, kernel='rbf', gamma=1/(sigma**2))
+            model.fit(X, y.ravel())
+            predictions = model.predict(Xval)
+            accuracy = np.mean(predictions.ravel() == yval.ravel())
+            if accuracy > opt_accuracy:
+                opt_accuracy = accuracy
+                opt_C = C
+                opt_sigma = sigma
+    return opt_C, opt_sigma, opt_accuracy
+
+C, sigma, acc = cvParams(X, y, Xval, yval)
+model = SVC(C, kernel='rbf', gamma=1/(sigma**2))
+model.fit(X, y.ravel())
+
+plt.figure(figsize=(12, 8))
+plotData(X, y)
+plt.axis([np.min(X[:, 0])-0.05, np.max(X[:, 0])+0.05,
+         np.min(X[:, 1])-0.05, np.max(X[:, 1])+0.05])
+visualizeBoundary(X, y, model)
+plt.legend(loc='lower left')
+plt.title(f'accuracy = {acc*100}%')
+plt.show()

@@ -1,0 +1,113 @@
+import glob
+import os
+
+import numpy as np
+import pandas as pd
+import csv
+
+hr_filenames = glob.glob('/data/crisdb/*.npz')
+
+# Determine number of files
+len(hr_filenames)
+
+# Explore the format of hr_filenames
+for i in range(10):
+    print(hr_filenames[i])
+
+"""
+# Load CSV with Python Standard Library
+metadata_filename = '/data/crisdb/metadata.csv'
+
+# Load the metadata file into this variable.
+with open(metadata_filename, 'r') as f:
+    reader = csv.reader(f, delimiter=',')
+    headers = next(reader)
+    metadata = np.array(list(reader)).astype(str)
+    
+for i in range(5):
+    print(metadata[i])
+"""
+
+"""
+# Load CSV with Numpy
+metadata_filename = '/data/crisdb/metadata.csv'
+
+# Load the metadata file into this variable.
+metadata = np.genfromtxt(metadata_filename, dtype='b', delimiter=',', names=True)
+
+print(metadata)
+"""
+
+# Load CSV with Pandas
+metadata_filename = '/data/crisdb/metadata.csv'
+
+# Load the metadata file into this variable.
+metadata = pd.read_csv(metadata_filename)
+metadata = metadata.set_index('subject')
+
+metadata.head()
+
+print(metadata[metadata.age == '20-24'])
+
+# TEST 1: Load the heart rate timeseries 
+# *** PASSED ***
+filename = hr_filenames[0]
+np.load(filename)['hr']
+
+# TEST 2: Compute the resting heart rate from the timeseries by finding the lowest 5th percentile value in hr_data
+# *** PASSED ***
+filename = hr_filenames[0]
+hr_data = np.load(filename)['hr']
+np.percentile(hr_data, 5)
+
+# Check on TEST 2: Number of HR measurements in data
+len(sorted(hr_data))
+
+# Check on TEST 2: Value at 5th percentile
+sorted(hr_data)[4300]
+
+# TEST 3: Find the subject ID from the filename.
+# *** PASSED ***
+filename = hr_filenames[0]
+(filename.split('/')[3]).split('.')[0]
+
+# TEST 4: Find the age group for this subject in metadata.
+# *** PASSED ***
+subject = 'e190a'
+metadata.at[subject, 'age']
+
+# TEST 5: Find the sex for this subject in metadata.
+# *** PASSED ***
+subject = 'e190a'
+metadata.at[subject, 'sex']
+
+def AgeAndRHR(metadata, filename):
+
+    # Load the heart rate timeseries
+    hr_data = np.load(filename)['hr']                           # CORRECT
+    
+    # Compute the resting heart rate from the timeseries by finding the lowest 5th percentile value in hr_data
+    rhr = np.percentile(hr_data, 5)                             # CORRECT
+
+    # Find the subject ID from the filename.
+    subject = (filename.split('/')[3]).split('.')[0]            # CORRECT
+
+    # Find the age group for this subject in metadata.
+    age_group = metadata.at[subject, 'age']                     # CORRECT
+    
+    # Find the sex for this subject in metadata.
+    sex = metadata.at[subject, 'sex']                           # CORRECT
+
+    return age_group, sex, rhr
+
+df = pd.DataFrame(data=[AgeAndRHR(metadata, filename) for filename in hr_filenames],
+                  columns=['age_group', 'sex', 'rhr'])
+
+import seaborn as sns
+from matplotlib import pyplot as plt
+
+labels = sorted(np.unique(df.age_group))
+df['xaxis'] = df.age_group.map(lambda x: labels.index(x)).astype('float')
+plt.figure(figsize=(12, 8))
+sns.lineplot(x='xaxis', y='rhr', hue='sex', data=df)
+plt.xticks(np.arange(len(labels)), labels)

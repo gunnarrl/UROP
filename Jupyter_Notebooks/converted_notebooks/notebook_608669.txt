@@ -1,0 +1,120 @@
+def modify_list(lst, lmbda):
+    """
+    Input: list and lambda expression
+    Output: the transformed list
+    """
+
+    # your code here
+
+
+lst = ['Himan-shu', 'Denisse', 'Leandro.', 'Skye.']
+import re
+str_upper =' '.join(lst)
+str_upper  = re.sub('[.-]','',str_upper).upper()
+lst = re.split(' ', str_upper)
+# Lst_upper = [Lst.upper() for x in Lst]
+# print(Lst_upper)
+print(lst)
+
+# your code here
+ctok = lambda c: c + 273.15
+
+ctok(30)
+
+temps = [12, 23, 38, -55, 24]
+
+# your code here
+ktemps = [ ctok(i) for i in temps]
+print(ktemps)
+
+
+# your code here
+
+mod= lambda x, y: 1 if (x%y==0) else 0
+
+mod(5,5)
+
+# def divisor(b):
+#     """
+#     Input: a number
+#     Output: a function that returns 1 if the number is
+#     divisible by another number (to be passed later) and zero otherwise.
+#     """
+
+    # your code here
+
+def divisor(b):
+    return lambda x: 1 if (x%b==0) else 0
+
+# your code here
+divisible5 = divisor(5)
+
+#here we are specifying that b = 5, and divisor will return a lambda expression, so now we just have to do divisible5(x)
+# and we will have the answer
+
+divisible5(10)
+
+divisible5(8)
+
+# Here is an example of passing one list to the zip function.
+# Since the zip function returns an iterator, we need to evaluate the iterator by using a list comprehension.
+
+l = [1,2,3,4,5]
+[x for x in zip(l)]
+
+list1 = ['Green', 'cheese', 'English', 'tomato']
+list2 = ['eggs', 'cheese', 'cucumber', 'tomato']
+
+# your code here
+# full_list = [x for x in zip(list1)]
+
+full_list = [[x, y] for x, y in zip(list1, list2)]
+print(full_list)
+
+# full_list = []
+# for x in zip(,list1)
+#     full_list.append(x)
+
+#the sets below work, but it isn't using list comprehensions
+# mapped = zip(list1, list2)
+# mapped = set(mapped)
+# print(mapped)
+
+# zipped = zip(list1, list2)
+# list(zipped)
+
+# if i wanted to compare consecutive elements of two lists
+# compare = lambda a,b: print("True") if (a>b) else print ("False")
+# for tup in zip(list1, list2):
+# compare(tup[0],tup[0])
+
+
+list1 = ['Engineering', 'Computer Science', 'Political Science', 'Mathematics']
+list2 = ['Lab', 'Homework', 'Essay', 'Module']
+
+# your code here
+
+full_list = [[x, y] for x, y in zip(list1, list2)]
+full_list = sorted(full_list, key=lambda x: x[1])
+print(full_list)
+
+d = {'Honda': 1997, 'Toyota': 1995, 'Audi': 2001, 'BMW': 2005}
+
+# your code here
+# we have to convert to a list of tuples
+# d_list = list(d.items())
+# d_list.sort(key = lambda X:X[1])
+# convert back to dict
+# d = {}
+
+d_sorted = sorted(d(), key=lambda item: item[1])
+print(d_sorted)
+
+import random
+
+rannum = random.randint(1,101)
+
+print(rannum)
+
+prompt = input('Welcome to Guess a Numebr. To play, please enter a number between 1-100')
+print(prompt)

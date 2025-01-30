@@ -1,0 +1,328 @@
+from run_info_utils import *
+from utils import create_dir
+import config
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from os.path import join
+
+experiment_name = 'iccm2019'
+plot_dir = 'plot_figures'
+fig_ext = 'pdf'
+all_correct_case = 'init_all_correct'  # 'init_complete_all_correct', 'init_all_correct'
+font_size = {'xlabel':20, 'ylabel':20, 'xtick':18, 'ytick':18}
+
+def save_fig(fig_name, experiment_name):
+    plot_fig_path = '{}/{}/{}.{}'.format(plot_dir, experiment_name, fig_name, fig_ext)
+    create_dir('{}/{}'.format(plot_dir, experiment_name))
+    plt.savefig(plot_fig_path, bbox_inches='tight')
+
+df_mean_answer_step_by_carries_add_cp7_h24 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-add-cp7-h24.csv'))
+df_mean_answer_step_by_carries_add_cp7_h48 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-add-cp7-h48.csv'))
+df_mean_answer_step_by_carries_add_cp7_h72 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-add-cp7-h72.csv'))
+
+df_mean_answer_step_by_carries_add_cp8_h24 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-add-cp8-h24.csv'))
+df_mean_answer_step_by_carries_add_cp8_h48 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-add-cp8-h48.csv'))
+df_mean_answer_step_by_carries_add_cp8_h72 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-add-cp8-h72.csv'))
+
+df_mean_answer_step_by_carries_add_cp9_h24 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-add-cp9-h24.csv'))
+df_mean_answer_step_by_carries_add_cp9_h48 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-add-cp9-h48.csv'))
+df_mean_answer_step_by_carries_add_cp9_h72 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-add-cp9-h72.csv'))
+
+x = df_mean_answer_step_by_carries_add_cp7_h24['carries'].unique()
+
+n_carry_types = 5
+plt.figure(figsize=(2 * 6 / 7 * (n_carry_types-1), 6))
+plt.xlabel('#Carries', fontsize=font_size['xlabel'])
+plt.ylabel('Mean answer step', fontsize=font_size['ylabel'])
+plt.tick_params(axis='x', labelsize=font_size['xtick'])
+plt.tick_params(axis='y', labelsize=font_size['ytick'])
+plt.xticks(x)
+plt.ylim(bottom=0, top=6)  
+plt.grid(axis='y')
+
+markersize = 12
+
+y = df_mean_answer_step_by_carries_add_cp7_h24.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_add_cp7_h24.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='cp7_h24')
+plt.plot(x, y, color='b', linestyle=':', marker='*', markersize=markersize, label=r'$\mathtt{\theta}$7d24')
+
+y = df_mean_answer_step_by_carries_add_cp7_h48.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_add_cp7_h48.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='cp7_h48')
+plt.plot(x, y, color='b', linestyle=':', marker='.', markersize=markersize, label=r'$\mathtt{\theta}$7d48')
+
+y = df_mean_answer_step_by_carries_add_cp7_h72.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_add_cp7_h72.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='cp7_h72')
+plt.plot(x, y, color='b', linestyle=':', marker='x', markersize=markersize, label=r'$\mathtt{\theta}$7d72')
+
+y = df_mean_answer_step_by_carries_add_cp8_h24.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_add_cp8_h24.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='b:o', ecolor='orange', capsize=3, label='cp8_h24')
+plt.plot(x, y, color='g', linestyle=':', marker='*', markersize=markersize, label=r'$\mathtt{\theta}$8d24')
+
+y = df_mean_answer_step_by_carries_add_cp8_h48.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_add_cp8_h48.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='b:o', ecolor='orange', capsize=3, label='cp8_h48')
+plt.plot(x, y, color='g', linestyle=':', marker='.', markersize=markersize, label=r'$\mathtt{\theta}$8d48')
+
+y = df_mean_answer_step_by_carries_add_cp8_h72.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_add_cp8_h72.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='b:o', ecolor='orange', capsize=3, label='cp8_h72')
+plt.plot(x, y, color='g', linestyle=':', marker='x', markersize=markersize, label=r'$\mathtt{\theta}$8d72')
+
+y = df_mean_answer_step_by_carries_add_cp9_h24.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_add_cp9_h24.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='g:o', ecolor='orange', capsize=3, label='cp9_h24')
+plt.plot(x, y, color='#cc0000', linestyle=':', marker='*', markersize=markersize, label=r'$\mathtt{\theta}$9d24')
+
+y = df_mean_answer_step_by_carries_add_cp9_h48.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_add_cp9_h48.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='g:o', ecolor='orange', capsize=3, label='cp9_h48')
+plt.plot(x, y, color='#cc0000', linestyle=':', marker='.', markersize=markersize, label=r'$\mathtt{\theta}$9d48')
+
+y = df_mean_answer_step_by_carries_add_cp9_h72.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_add_cp9_h72.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='g:o', ecolor='orange', capsize=3, label='cp9_h72')
+plt.plot(x, y, color='#cc0000', linestyle=':', marker='x', markersize=markersize, label=r'$\mathtt{\theta}$9d72')
+
+plt.legend(ncol=3, loc='upper left', fontsize=15)
+
+save_fig('mean_answer_step_by_carries-add', 'iccm2019')
+
+df_mean_answer_step_by_carries_sub_cp7_h24 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-sub-cp7-h24.csv'))
+df_mean_answer_step_by_carries_sub_cp7_h48 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-sub-cp7-h48.csv'))
+df_mean_answer_step_by_carries_sub_cp7_h72 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-sub-cp7-h72.csv'))
+
+df_mean_answer_step_by_carries_sub_cp8_h24 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-sub-cp8-h24.csv'))
+df_mean_answer_step_by_carries_sub_cp8_h48 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-sub-cp8-h48.csv'))
+df_mean_answer_step_by_carries_sub_cp8_h72 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-sub-cp8-h72.csv'))
+
+df_mean_answer_step_by_carries_sub_cp9_h24 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-sub-cp9-h24.csv'))
+df_mean_answer_step_by_carries_sub_cp9_h48 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-sub-cp9-h48.csv'))
+df_mean_answer_step_by_carries_sub_cp9_h72 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_carries-sub-cp9-h72.csv'))
+
+x = df_mean_answer_step_by_carries_sub_cp7_h24['carries'].unique()
+
+n_carry_types = 4
+plt.figure(figsize=(2 * 6 / 7 * (n_carry_types-1), 6))
+plt.xlabel('#Carries', fontsize=font_size['xlabel'])
+plt.ylabel('Mean answer step', fontsize=font_size['ylabel'])
+plt.tick_params(axis='x', labelsize=font_size['xtick'])
+plt.tick_params(axis='y', labelsize=font_size['ytick'])
+plt.xticks(x)
+plt.ylim(bottom=0, top=6)  
+plt.grid(axis='y')
+
+markersize = 12
+
+y = df_mean_answer_step_by_carries_sub_cp7_h24.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_sub_cp7_h24.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='cp7_h24')
+plt.plot(x, y, color='b', linestyle=':', marker='*', markersize=markersize, label=r'$\mathtt{\theta}$7d24')
+
+y = df_mean_answer_step_by_carries_sub_cp7_h48.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_sub_cp7_h48.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='cp7_h48')
+plt.plot(x, y, color='b', linestyle=':', marker='.', markersize=markersize, label=r'$\mathtt{\theta}$7d48')
+
+y = df_mean_answer_step_by_carries_sub_cp7_h72.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_sub_cp7_h72.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='cp7_h72')
+plt.plot(x, y, color='b', linestyle=':', marker='x', markersize=markersize, label=r'$\mathtt{\theta}$7d72')
+
+y = df_mean_answer_step_by_carries_sub_cp8_h24.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_sub_cp8_h24.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='b:o', ecolor='orange', capsize=3, label='cp8_h24')
+plt.plot(x, y, color='g', linestyle=':', marker='*', markersize=markersize, label=r'$\mathtt{\theta}$8d24')
+
+y = df_mean_answer_step_by_carries_sub_cp8_h48.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_sub_cp8_h48.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='b:o', ecolor='orange', capsize=3, label='cp8_h48')
+plt.plot(x, y, color='g', linestyle=':', marker='.', markersize=markersize, label=r'$\mathtt{\theta}$8d48')
+
+y = df_mean_answer_step_by_carries_sub_cp8_h72.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_sub_cp8_h72.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='b:o', ecolor='orange', capsize=3, label='cp8_h72')
+plt.plot(x, y, color='g', linestyle=':', marker='x', markersize=markersize, label=r'$\mathtt{\theta}$8d72')
+
+y = df_mean_answer_step_by_carries_sub_cp9_h24.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_sub_cp9_h24.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='g:o', ecolor='orange', capsize=3, label='cp9_h24')
+plt.plot(x, y, color='#cc0000', linestyle=':', marker='*', markersize=markersize, label=r'$\mathtt{\theta}$9d24')
+
+y = df_mean_answer_step_by_carries_sub_cp9_h48.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_sub_cp9_h48.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='g:o', ecolor='orange', capsize=3, label='cp9_h48')
+plt.plot(x, y, color='#cc0000', linestyle=':', marker='.', markersize=markersize, label=r'$\mathtt{\theta}$9d48')
+
+y = df_mean_answer_step_by_carries_sub_cp9_h72.groupby('carries').mean()['mean_answer_steps'].values
+e = df_mean_answer_step_by_carries_sub_cp9_h72.groupby('carries').std()['mean_answer_steps'].values
+#plt.errorbar(x, y, e, fmt='g:o', ecolor='orange', capsize=3, label='cp9_h72')
+plt.plot(x, y, color='#cc0000', linestyle=':', marker='x', markersize=markersize, label=r'$\mathtt{\theta}$9d72')
+
+plt.legend(ncol=3, loc='upper left', fontsize=15, handletextpad=0.1, columnspacing=0.1)
+
+save_fig('mean_answer_step_by_carries-sub', 'iccm2019')
+
+df_mean_answer_step_by_cp_add_h24 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_cp-add-h24.csv'))
+df_mean_answer_step_by_cp_add_h48 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_cp-add-h48.csv'))
+df_mean_answer_step_by_cp_add_h72 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_cp-add-h72.csv'))
+
+x = df_mean_answer_step_by_cp_add_h24['confidence_prob'].unique()
+x.sort()
+
+ylimit = 3
+
+plt.figure(figsize=(6, ylimit))
+plt.xlabel(r'Confidence threshold ($\theta_{c}$)', fontsize=font_size['xlabel'])
+plt.ylabel('Mean answer step', fontsize=font_size['ylabel'])
+plt.tick_params(axis='x', labelsize=font_size['xtick'])
+plt.tick_params(axis='y', labelsize=font_size['ytick'])
+plt.xticks(x)
+plt.yticks(np.arange(0,ylimit+0.1,1))
+plt.ylim(bottom=0, top=ylimit)  
+plt.grid(axis='y')
+
+markersize = 12
+
+y = df_mean_answer_step_by_cp_add_h24.groupby('confidence_prob').mean()['mean_answer_step'].values
+e = df_mean_answer_step_by_cp_add_h24.groupby('confidence_prob').std()['mean_answer_step'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='cp7_h24')
+plt.plot(x, y, color='b', linestyle=':', marker='.', markersize=markersize, label=r'd24')
+
+y = df_mean_answer_step_by_cp_add_h48.groupby('confidence_prob').mean()['mean_answer_step'].values
+e = df_mean_answer_step_by_cp_add_h48.groupby('confidence_prob').std()['mean_answer_step'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='cp7_h24')
+plt.plot(x, y, color='g', linestyle=':', marker='.', markersize=markersize, label=r'd48')
+
+y = df_mean_answer_step_by_cp_add_h72.groupby('confidence_prob').mean()['mean_answer_step'].values
+e = df_mean_answer_step_by_cp_add_h72.groupby('confidence_prob').std()['mean_answer_step'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='cp7_h24')
+plt.plot(x, y, color='#cc0000', linestyle=':', marker='.', markersize=markersize, label=r'd72')
+
+plt.legend(ncol=3, loc='upper left', fontsize=15)
+
+save_fig('mean_answer_step_by_cp-add', 'iccm2019')
+
+df_mean_answer_step_by_cp_sub_h24 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_cp-sub-h24.csv'))
+df_mean_answer_step_by_cp_sub_h48 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_cp-sub-h48.csv'))
+df_mean_answer_step_by_cp_sub_h72 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_cp-sub-h72.csv'))
+
+x = df_mean_answer_step_by_cp_sub_h24['confidence_prob'].unique()
+x.sort()
+
+ylimit = 3
+
+plt.figure(figsize=(6, ylimit))
+plt.xlabel(r'Confidence threshold ($\theta_{c}$)', fontsize=font_size['xlabel'])
+plt.ylabel('Mean answer step', fontsize=font_size['ylabel'])
+plt.tick_params(axis='x', labelsize=font_size['xtick'])
+plt.tick_params(axis='y', labelsize=font_size['ytick'])
+plt.xticks(x)
+plt.yticks(np.arange(0,ylimit+0.1,1))
+plt.ylim(bottom=0, top=ylimit)  
+plt.grid(axis='y')
+
+markersize = 12
+
+y = df_mean_answer_step_by_cp_sub_h24.groupby('confidence_prob').mean()['mean_answer_step'].values
+e = df_mean_answer_step_by_cp_sub_h24.groupby('confidence_prob').std()['mean_answer_step'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='h24')
+plt.plot(x, y, color='b', linestyle=':', marker='.', markersize=markersize, label=r'd24')
+
+y = df_mean_answer_step_by_cp_sub_h48.groupby('confidence_prob').mean()['mean_answer_step'].values
+e = df_mean_answer_step_by_cp_sub_h48.groupby('confidence_prob').std()['mean_answer_step'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='h48')
+plt.plot(x, y, color='g', linestyle=':', marker='.', markersize=markersize, label=r'd48')
+
+y = df_mean_answer_step_by_cp_sub_h72.groupby('confidence_prob').mean()['mean_answer_step'].values
+e = df_mean_answer_step_by_cp_sub_h72.groupby('confidence_prob').std()['mean_answer_step'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='h72')
+plt.plot(x, y, color='#cc0000', linestyle=':', marker='.', markersize=markersize, label=r'd72')
+
+plt.legend(ncol=3, loc='upper left', fontsize=15)
+
+save_fig('mean_answer_step_by_cp-sub', 'iccm2019')
+
+df_mean_answer_step_by_hd_add_cp7 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_hd-add-cp7.csv'))
+df_mean_answer_step_by_hd_add_cp8 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_hd-add-cp8.csv'))
+df_mean_answer_step_by_hd_add_cp9 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_hd-add-cp9.csv'))
+
+x = df_mean_answer_step_by_hd_add_cp7['hidden_dimension'].unique()
+x.sort()
+
+ylimit = 3
+
+plt.figure(figsize=(6, ylimit))
+plt.xlabel(r'Hidden dimension ($d_c$)', fontsize=font_size['xlabel'])
+plt.ylabel('Mean answer step', fontsize=font_size['ylabel'])
+plt.tick_params(axis='x', labelsize=font_size['xtick'])
+plt.tick_params(axis='y', labelsize=font_size['ytick'])
+plt.xticks(x)
+plt.yticks(np.arange(0,ylimit+0.1,1))
+plt.ylim(bottom=0, top=ylimit)  
+plt.grid(axis='y')
+
+markersize = 12
+
+y = df_mean_answer_step_by_hd_add_cp7.groupby('hidden_dimension').mean()['mean_answer_step'].values
+e = df_mean_answer_step_by_hd_add_cp7.groupby('hidden_dimension').std()['mean_answer_step'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='cp7')
+plt.plot(x, y, color='b', linestyle=':', marker='.', markersize=markersize, label=r'$\mathtt{\theta}$7')
+
+y = df_mean_answer_step_by_hd_add_cp8.groupby('hidden_dimension').mean()['mean_answer_step'].values
+e = df_mean_answer_step_by_hd_add_cp8.groupby('hidden_dimension').std()['mean_answer_step'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='cp8')
+plt.plot(x, y, color='g', linestyle=':', marker='.', markersize=markersize, label=r'$\mathtt{\theta}$8')
+
+y = df_mean_answer_step_by_hd_add_cp9.groupby('hidden_dimension').mean()['mean_answer_step'].values
+e = df_mean_answer_step_by_hd_add_cp9.groupby('hidden_dimension').std()['mean_answer_step'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='cp9')
+plt.plot(x, y, color='#cc0000', linestyle=':', marker='.', markersize=markersize, label=r'$\mathtt{\theta}$9')
+
+plt.legend(ncol=3, loc='upper left', fontsize=15)
+
+save_fig('mean_answer_step_by_hd-add', 'iccm2019')
+
+df_mean_answer_step_by_hd_sub_cp7 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_hd-sub-cp7.csv'))
+df_mean_answer_step_by_hd_sub_cp8 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_hd-sub-cp8.csv'))
+df_mean_answer_step_by_hd_sub_cp9 = pd.read_csv(join(config.dir_result_statistics(), experiment_name, 'mean_answer_step_by_hd-sub-cp9.csv'))
+
+x = df_mean_answer_step_by_hd_sub_cp7['hidden_dimension'].unique()
+x.sort()
+
+ylimit = 3
+
+plt.figure(figsize=(6, ylimit))
+plt.xlabel(r'Hidden dimension ($d_c$)', fontsize=font_size['xlabel'])
+plt.ylabel('Mean answer step', fontsize=font_size['ylabel'])
+plt.tick_params(axis='x', labelsize=font_size['xtick'])
+plt.tick_params(axis='y', labelsize=font_size['ytick'])
+plt.xticks(x)
+plt.yticks(np.arange(0,ylimit+0.1,1))
+plt.ylim(bottom=0, top=ylimit)  
+plt.grid(axis='y')
+
+markersize = 12
+
+y = df_mean_answer_step_by_hd_sub_cp7.groupby('hidden_dimension').mean()['mean_answer_step'].values
+e = df_mean_answer_step_by_hd_sub_cp7.groupby('hidden_dimension').std()['mean_answer_step'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='cp7')
+plt.plot(x, y, color='b', linestyle=':', marker='.', markersize=markersize, label=r'$\mathtt{\theta}$7')
+
+y = df_mean_answer_step_by_hd_sub_cp8.groupby('hidden_dimension').mean()['mean_answer_step'].values
+e = df_mean_answer_step_by_hd_sub_cp8.groupby('hidden_dimension').std()['mean_answer_step'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='cp8')
+plt.plot(x, y, color='g', linestyle=':', marker='.', markersize=markersize, label=r'$\mathtt{\theta}$8')
+
+y = df_mean_answer_step_by_hd_sub_cp9.groupby('hidden_dimension').mean()['mean_answer_step'].values
+e = df_mean_answer_step_by_hd_sub_cp9.groupby('hidden_dimension').std()['mean_answer_step'].values
+#plt.errorbar(x, y, e, fmt='r:o', ecolor='orange', capsize=3, label='cp9')
+plt.plot(x, y, color='#cc0000', linestyle=':', marker='.', markersize=markersize, label=r'$\mathtt{\theta}$9')
+
+plt.legend(ncol=3, loc='upper left', fontsize=15)
+
+save_fig('mean_answer_step_by_hd-sub', 'iccm2019')

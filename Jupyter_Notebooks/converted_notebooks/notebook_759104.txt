@@ -1,0 +1,189 @@
+from jaqs.data import DataApi
+
+import matplotlib.pyplot as plt
+%matplotlib inline
+import pandas as pd
+import numpy as np
+
+api = DataApi(addr='tcp://data.tushare.org:8910')
+phone = '18612562791'
+token = 'eyJhbGciOiJIUzI1NiJ9.eyJjcmVhdGVfdGltZSI6IjE1MTI2NTczNDEzMDQiLCJpc3MiOiJhdXRoMCIsImlkIjoiMTg2MTI1NjI3OTEifQ.gGA4qLXQ9KgkN_KntXSK8dVpzBHMEaIiGXX3JpALTpc'
+df, msg = api.login(phone, token)
+print(df, msg)
+
+df, msg = api.query(
+                view="jz.instrumentInfo",
+                fields=",market,symbol,list_date,status",
+                filter="inst_type=1&status=1&market=SH,SZ",
+                data_format='pandas')
+
+df = df.set_index('symbol')
+df.loc[:, 'list_date'] = df['list_date'].astype(int)
+df.sort_index(inplace=True)
+
+df.head()
+
+print(len(df))
+print(len(df[df['market']=='SZ']))
+print(len(df[df['market']=='SH']))
+
+df['list_date'].max()
+
+df_daily, msg = api.daily('000001.SH', df['list_date'].min(), df['list_date'].max())
+df_daily = df_daily.set_index('trade_date')
+df_daily.tail()
+
+list_date = df['list_date']
+ser_year = list_date // 10000
+
+year_month = list_date // 100
+
+gp = df.groupby(by=year_month)
+count = gp.count().iloc[:, 0]
+
+
+year_month_full = [year * 100 + month for year in range(ser_year.min(), ser_year.max()+1) for month in range(1, 13)]
+
+count = count.reindex(year_month_full).fillna(0).astype(int)
+count.tail()
+
+presidents = {'SFL': 20021201,
+ 'GSQ': 20111029,
+ 'XG': 20130318,
+ 'LSY': 20160220}
+
+presidents_dt = {k: pd.to_datetime(v, format="%Y%m%d") for k, v in presidents.items()}
+presidents_dt
+
+# 画图用代码 可忽略
+
+from matplotlib.ticker import Formatter
+
+class MyFormatter(Formatter):
+    def __init__(self, dates, fmt='%Y%m'):
+        self.dates = dates
+        self.fmt = fmt
+
+    def __call__(self, x, pos=0):
+        """Return the label for time x at position pos"""
+        ind = int(np.round(x))
+        if ind >= len(self.dates) or ind < 0:
+            return ''
+
+        # return self.dates[ind].strftime(self.fmt)
+        return pd.to_datetime(self.dates[ind], format="%Y%m").strftime(self.fmt)
+
+plt.rcParams.update({'font.size': 14})
+
+fig, ax1 = plt.subplots(figsize=(16, 5))
+ax2 = ax1.twinx()
+
+start_time = 200201
+start_time_day = start_time * 100 + 1
+
+idx = count.loc[start_time:].index
+idx0 = list(range(len(idx)))
+ipo = count.loc[start_time:].values
+ser_price = df_daily.loc[start_time_day:]['close']
+price = ser_price.values
+price_idx = [idx.get_loc(x // 100) + (x % 100) / 31. for x in ser_price.index]
+
+
+
+ax1.bar(idx0, ipo, width=.6)
+ax1.set(xlabel='Date', ylabel='Number of IPO', title='Index v.s. IPOs',
+        xlim=(idx0[0] - 2, idx0[-1] + 2),
+        xticks=idx0[::12])
+
+
+ax2.plot(price_idx, price, color='orange')
+ax2.set(ylabel='000001.SH')
+
+ipo_max = np.max(ipo)
+y_ = ipo_max * .9
+for name, debut_time in presidents.items():
+    x_ = idx.get_loc(debut_time // 100)
+    ax1.axvline(x_, color='indianred', linestyle='--')
+    ax1.annotate(s=name, xy=(x_, y_))
+
+ax1.xaxis.set_major_formatter(MyFormatter(idx, '%Y'))
+
+
+start_date = 20161230
+end_date   = 20171130
+
+df_symbols = ",".join(df.index)
+print(df_symbols)
+
+# 获取日行情 start_date
+df_daily_start, msg = api.daily(df_symbols, start_date, start_date)
+df_daily_start = df_daily_start.set_index('symbol')
+df_daily_start.head()
+
+# 获取日行情 end_date
+df_daily_end, msg = api.daily(df_symbols, end_date, end_date)
+df_daily_end = df_daily_end.set_index('symbol')
+df_daily_end.head()
+
+
+# 获取复权因子 start_date
+filter="symbol=" + df_symbols + "&start_date=" + str(start_date) + "&end_date=" + str(start_date)
+
+df_adjfactor_start, msg = api.query(
+                  view="lb.secAdjFactor",
+                  fields="",
+                  filter=filter,
+                  data_format='pandas')
+
+df_adjfactor_start = df_adjfactor_start.set_index('symbol')
+df_adjfactor_start = df_adjfactor_start['adjust_factor'].astype('float')
+
+# 获取复权因子 end_date
+filter="symbol=" + df_symbols + "&start_date=" + str(end_date) + "&end_date=" + str(end_date)
+
+df_adjfactor_end, msg = api.query(
+                  view="lb.secAdjFactor",
+                  fields="",
+                  filter=filter,
+                  data_format='pandas')
+
+df_adjfactor_end = df_adjfactor_end.set_index('symbol')
+df_adjfactor_end = df_adjfactor_end['adjust_factor'].astype('float')
+
+
+# 计算个股收益率
+
+df_return = (df_daily_end['close'] * df_adjfactor_end) / (df_daily_start['close'] * df_adjfactor_start) - 1.0
+df_return = df_return.sort_values().dropna()
+
+
+fig, ax1 = plt.subplots(1, 1, figsize=(10, 4))
+ax1.hist(df_return, bins=200)
+ax1.set(xlabel='Return', ylabel='Number', title='Return List')
+fig.show()
+
+# 统计指标
+
+df_return.describe()
+
+np.median(df_return)
+
+# 选出今年涨幅超过80%的股票，但剔除次新股
+df_return = df_return[(df_return>0.8)&(df_return < 6)]
+
+sel_symbol = ",".join(df_return.index)
+
+df, msg = api.query(
+                view="jz.instrumentInfo",
+                fields="status,list_date, fullname_en, market",
+                filter="inst_type=1&status=1&symbol="+sel_symbol,
+                data_format='pandas')
+
+df = df.set_index('symbol')
+df['return'] = df_return
+
+df = df[df['list_date'].astype(int)<20160101]
+
+df = df.sort_values('return', ascending=False)
+df
+

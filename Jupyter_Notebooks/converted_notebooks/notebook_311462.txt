@@ -1,0 +1,127 @@
+import pandas as pd
+from sklearn import preprocessing as process
+from sklearn.model_selection import ShuffleSplit
+import keras as k
+import numpy as np
+import matplotlib.pyplot as plt
+
+df = pd.read_csv('data/features.csv', encoding='utf-8')
+df = df[df.Company == 'HEM']  # drop SMC data?
+del df['Company']
+del df['JobNum']
+
+df.head()
+
+df.info()
+
+df.describe()
+
+from sklearn.externals import joblib
+
+# 80% of the samples will be used for training
+m = np.floor(df.shape[0] * 0.8).astype('int')
+
+# Processing X: standardize feature values
+X = df.iloc[:m, :-1].values
+x_test = df.iloc[m:, :-1].values
+
+scale = process \
+    .StandardScaler() \
+    .fit(X)
+
+joblib.dump(scale, 'app/scaler.pkl')  # saving the transformation for deployed system
+
+X = scale.transform(X)
+x_test = scale.transform(x_test)
+
+# Processing Y: to categories by week (over 25 weeks aka 6 months are just grouped together)
+Y = df.iloc[:m, -1:].apply(lambda x: np.where(x // 5 < 25, x // 5, 25)).values
+Y = k.utils.to_categorical(Y, num_classes=26)
+
+y_test = df.iloc[m:, -1:].apply(lambda x: np.where(x // 5 < 25, x // 5, 25)).values
+y_test = k.utils.to_categorical(y_test, num_classes=26)
+
+
+#### NOT USED ###############
+# Log shift data to get a gaussian distribution for each feature
+shift = process \
+    .QuantileTransformer(random_state=0) \
+    .fit(X)
+
+# Shuffling function for k-folds (model.train_on_batch)
+ss = ShuffleSplit(n_splits=5, 
+                  test_size=0.25, 
+                  random_state=0)
+
+def preprocess(x):
+#     x = scale.transform(x)
+    x = shift.transform(x)
+    return x
+#### NOT USED ###############
+
+from keras.models import Model
+from keras.layers import Input, Dense
+from keras import regularizers
+
+I = Input(shape=(7,))
+H = Dense(24, activation='tanh')(I)
+O = Dense(26, activation='softmax', activity_regularizer=regularizers.l2(0.01))(H)
+
+model = Model(inputs=I, outputs=O)
+model.compile(optimizer='sgd', loss='categorical_crossentropy')
+
+model.summary()
+
+Y.shape
+
+from keras import optimizers
+from keras import metrics
+
+sgd = optimizers.SGD(lr=0.001, decay=1e-6, momentum=0.9, nesterov=True)
+
+model = Model(inputs=I, outputs=O)
+model.compile(optimizer='sgd', loss='categorical_crossentropy', metrics=[metrics.categorical_accuracy])
+hist = model.fit(X,Y, validation_split=0.2, epochs=50, batch_size=5, verbose=0)
+
+
+import matplotlib.pyplot as plt
+plt.gca().set_title('Training Loss History', size=20)
+plt.gca().set_ylabel('error', size=14)
+plt.gca().set_xlabel('epoch', size=14)
+plt.plot(hist.history['loss'], 'o', markersize=2, label='Train')
+plt.plot(hist.history['val_loss'], 'ro', markersize=2, label='Test')
+plt.legend();
+
+from keras import backend as K
+K.set_value(model.optimizer.lr, 0.0005)
+new_hist = model.fit(X,Y, validation_split=0.2, epochs=20, batch_size=10, verbose=0)
+
+# Convert business-week categories to business days
+pred = np.argmax(model.predict(x_test), axis=1) * 5 + 5
+act = np.argmax(y_test, axis=1) * 5 + 5
+
+# calculate Mean Absolute Error
+mae = np.sum(np.abs(pred - act)) / x_test.shape[0]
+print("Model predicts with a {0:.0f} business day average lead time error".format(mae))
+
+import json
+with open('app/model.json', 'w') as outfile:
+    json.dump(model.to_json(), outfile)
+    
+model.save_weights('app/weights.h5')
+
+from keras.models import model_from_json
+
+with open('app/model.json') as json_data:
+    json_string = json.load(json_data)
+    model_v2 = model_from_json(json_string)
+    
+model_v2.load_weights('app/weights.h5')
+
+# Convert business-week categories to business days
+pred = np.argmax(model_v2.predict(x_test), axis=1) * 5 + 5
+act = np.argmax(y_test, axis=1) * 5 + 5
+
+# calculate Mean Absolute Error
+mae = np.sum(np.abs(pred - act)) / x_test.shape[0]
+print("Model predicts with a {0:.0f} business day average lead time error".format(mae))

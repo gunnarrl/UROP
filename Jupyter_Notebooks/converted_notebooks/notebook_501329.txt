@@ -1,0 +1,376 @@
+"Libraries"
+#from helpers import *
+from pathlib import Path
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.image as mplimg
+import os
+from keras.models import Sequential
+from keras.layers import Dense, Dropout, Activation, Flatten, Convolution2D, MaxPooling2D, LeakyReLU
+from keras.optimizers import Adamax
+from keras.regularizers import l2
+from keras.callbacks import ReduceLROnPlateau, EarlyStopping
+from keras.utils import np_utils
+from keras import backend as K
+from theano import ifelse
+import random
+random.seed(45)
+
+window_size = 50 # Size of the window to be fed to the Neural Network.
+patch_size = 16 # This is a size of the patch that will be classified.
+padding = int((window_size - patch_size)/2) #padding to be added to the image to extract windows
+
+def Import_images():
+    
+    """import all necessary images"""
+    # Load the training set
+    root_dir = "training/"
+
+    image_dir = root_dir + "images/"
+    files = os.listdir(image_dir)
+    n = len(files)
+    print("Loading " + str(n) + " images")
+    imgs = np.asarray([mplimg.imread(image_dir + files[i]) for i in range(n)])
+
+    gt_dir = root_dir + "groundtruth/"
+    print("Loading " + str(n) + " images")
+    gt_imgs = np.asarray([mplimg.imread(gt_dir + files[i]) for i in range(n)])
+    
+    return imgs,gt_imgs
+
+import shutil
+from PIL import Image
+import os
+from helper import *
+from Pipeline import *
+
+"""Make a second set of images with rotation of 45 degrees to make the program learn about diagonal road"""
+
+def data_augmentation(): 
+    
+    print('Training Starts ...')
+
+    # Load the training set
+    root_dir = "training/"
+
+    SampleNumberForEachRotation = 25
+
+    #ORIGINAL IMAGE SET
+    image_dir = root_dir + "images/"
+    files = os.listdir(image_dir)
+    n = len(files)
+    print("Loading " + str(n) + " images")
+    imgs = np.asarray([load_image(image_dir + files[i]) for i in range(n)])
+
+    #ORIGINAL IMAGE SET
+    gt_dir = root_dir + "groundtruth/"
+    files = os.listdir(gt_dir)
+    print("Loading " + str(n) + " images")
+    gt_imgs = np.asarray([load_image(gt_dir + files[i]) for i in range(n)])
+
+    #DATA AUGEMENTATION by Rotation 
+    path = "training/images"
+    path2 = "training/groundtruth"
+    p = Pipeline(path, path2) 
+    p.rotate(probability=1, max_left_rotation=20, max_right_rotation=20, negative_rotation = False)
+    p.sample(SampleNumberForEachRotation) #NUMBER OF NEW IMAGES CREATED 
+
+    os.rmdir('training/images/augmentedData/0')
+    os.rmdir('training/groundtruth/augmentedData/0')
+
+    #IMPORT THE AUGEMENTED IMAGE SET
+    image_dir = root_dir + "images/augmentedData/"
+    files = os.listdir(image_dir)
+    n = SampleNumberForEachRotation
+    print("Loading " + str(n) + " images")
+    imgs_aug = np.asarray([load_image(image_dir + files[i]) for i in range(n)])
+
+    #MERGE ORIGINAL AND MERGED DATA 
+    imgs_merged = []
+    for i in range(imgs.shape[0]):
+        imgs_merged.append(imgs[i])
+    for i in range(imgs_aug.shape[0]):
+        imgs_merged.append(imgs_aug[i])
+
+    gt_dir = root_dir + "groundtruth/augmentedData/"
+    print("Loading " + str(n) + " images")
+
+    import matplotlib.pyplot as plt
+    import matplotlib.image as mpimg
+
+    #CONVERT IMAGES NAME TO 101, 102, etc.  
+    for i in range (1, n+1):
+        image = Image.open(image_dir + 'images_' + str(i) +'.png')
+        image.save(image_dir + 'satImage_' + str(i+100) +'.png') #Have the same files names as the orginial 
+        os.remove(image_dir + 'images_' + str(i) + '.png')
+
+    #CONVERT IMAGES BACK TO GRAY SINCE ROTATION GIVES US RGB BACK 
+    for i in range (1, n+1):
+        image = Image.open(gt_dir + 'groundtruth_' + str(i) +'.png').convert('L')
+        image.save(gt_dir + 'satImage_' + str(i+100) +'.png') #Have the same files names as the orginial 
+        os.remove(gt_dir + 'groundtruth_' + str(i) + '.png')
+
+
+    p2 = Pipeline(path, path2)
+    p2.rotate(probability=1, max_left_rotation=20, max_right_rotation=20, negative_rotation = True)
+    p2.sample(SampleNumberForEachRotation) #NUMBER OF NEW IMAGES CREATED 
+
+    os.rmdir('training/images/augmentedData/0')
+    os.rmdir('training/groundtruth/augmentedData/0')
+
+    #IMPORT THE AUGEMENTED IMAGE SET
+    image_dir = root_dir + "images/augmentedData/"
+    files = os.listdir(image_dir)
+    n = SampleNumberForEachRotation
+    print("Loading " + str(n) + " images")
+    imgs_aug_2 = np.asarray([load_image(image_dir + files[i]) for i in range(n)])
+
+    for i in range(imgs_aug.shape[0]):
+        imgs_merged.append(imgs_aug_2[i])
+
+    ##CONTAINS ALL THE AUGEMENTED DATA (satimages)    
+    imgs_merged = np.array(imgs_merged)
+
+    gt_dir = root_dir + "groundtruth/augmentedData/"
+    print("Loading " + str(n) + " images")
+
+    #CONVERT IMAGES NAME TO 126, 127, ..., etc.  
+    for i in range (1, n+1):
+        image = Image.open(image_dir + 'images_' + str(i) +'.png')
+        image.save(image_dir + 'satImage_' + str(i+125) +'.png') #Have the same files names as the orginial 
+        os.remove(image_dir + 'images_' + str(i) + '.png')
+
+    #CONVERT IMAGES BACK TO GRAY SINCE ROTATION GIVES US RGB BACK 
+    for i in range (1, n+1):
+        image = Image.open(gt_dir + 'groundtruth_' + str(i) +'.png').convert('L')
+        #image = load_image(gt_dir + files[1])
+        #image.convert('L')
+        #image.convert('LA')
+        image.save(gt_dir + 'satImage_' + str(i+125) +'.png') #Have the same files names as the orginial 
+        os.remove(gt_dir + 'groundtruth_' + str(i) + '.png')
+
+    ############################## PUTTING LEFT AND RIGHT ROTATION TOGETHER ###################################
+    files = os.listdir(gt_dir)    
+    gt_imgs_aug = np.asarray([load_image(gt_dir + files[i]) for i in range(n)])
+
+    #MERGE ORIGINAL AND MERGED DATA 
+    merged_aug_gt = []
+    for i in range(gt_imgs.shape[0]):
+        merged_aug_gt.append(gt_imgs[i])
+    for i in range(imgs_aug.shape[0]):
+        merged_aug_gt.append(gt_imgs_aug[i])
+    merged_aug_gt = np.array(merged_aug_gt)
+
+    #save the data in the variable that we are using later 
+    imgs = imgs_merged
+    imgs_gt = gt_imgs_aug
+
+    #REMOVES THE PREVIOUS DATA AUGMENTATION DATA SET 
+    shutil.rmtree('training/images/augmentedData')
+    shutil.rmtree('training/groundtruth/augmentedData')
+
+def Preprocessing(Satellite_images,GT_images,rect_size,patch_size):
+    """Preprocess images for Learning"""
+    
+    """Minibatch"""
+    group_size = 300
+
+    def minibatching(): # Minibatch creation technics.
+
+            # Generate one minibatch
+            Satellite_images_group = np.zeros((group_size, rect_size, rect_size, 3)) #j'aurais aussi pu utiliser np.empty
+            GT_images_group = np.zeros((group_size, 2))
+            for i in range(group_size):
+                # Select a random image
+                number_image=Satellite_images.shape[0]
+                index = np.random.choice(number_image) #https://docs.scipy.org/doc/numpy-dev/reference/generated/numpy.random.choice.html
+
+                image_selected=Satellite_images[index]
+                image_ground_selected = GT_images[index]
+                image_selected_shape = Satellite_images[index].shape
+                image_ground_selected_shape = GT_images[index].shape
+                
+                
+                # Sample a random window from the image
+                center = np.random.randint(rect_size//2, image_selected_shape[0] - rect_size//2, 2) #Return random integers from the “discrete uniform” distribution of the specified dtype in the “half-open” interval [low, high). #https://docs.scipy.org/doc/numpy-1.13.0/reference/generated/numpy.random.randint.html
+                sub_image = image_selected[center[0]-rect_size//2:center[0]+rect_size//2,center[1]-rect_size//2:center[1]+rect_size//2,:]
+                # We selected a part of the selected image next to the center that we choose randomly.
+                image_window = image_ground_selected[center[0]-patch_size//2:center[0]+patch_size//2,center[1]-patch_size//2:center[1]+patch_size//2]
+                # We selected the same part of the image_selected with the random center but this time we take it in the groundthruth image.
+
+                # The label : if the mean of the pixel of the group is superior to the theresold, we thus consider that this is road and the label is one.
+                mean = np.array([np.mean(image_window)])
+                threshold = 0.35
+                label = (mean > threshold) * 1
+                # This is the true label that we obtain thanks to the groundthruth image
+                # We could have rotate the images rondomly there but we decide to do another way : we create new image wich are rotated
+
+                label = np_utils.to_categorical(label, 2) #road =1 and not_a_road=0 --> Converts a class vector (integers) to binary class matrix.
+                Satellite_images_group[i,:] = sub_image
+                GT_images_group[i] = label
+
+            return Satellite_images_group, GT_images_group
+
+    #dans dossier on a du code pour baisser le temps de computation et pour fair marcher keras et theanos ensemble
+    while(1):
+        x,y=minibatching()
+        yield(x,y)
+
+def Learn(ws,Satellite_images,GT_images,rect_size,patch_size):
+        """Process learning on data"""
+        in_shape=(ws,ws,3)
+    
+        def define_model(in_shape):
+            CNN_model = Sequential()
+            CNN_model.add(Convolution2D(64,5,5,border_mode='same',input_shape=in_shape))
+            CNN_model.add(LeakyReLU(alpha=0.05))
+            CNN_model.add(MaxPooling2D(pool_size=(2,2),border_mode='same'))
+            
+            CNN_model.add(Convolution2D(128,3,3, border_mode='same'))
+            CNN_model.add(LeakyReLU(alpha=0.05))
+            CNN_model.add(MaxPooling2D(pool_size=(2,2),border_mode='same'))
+            
+            CNN_model.add(Convolution2D(256,3,3,border_mode='same'))
+            CNN_model.add(LeakyReLU(alpha=0.05))
+            CNN_model.add(MaxPooling2D(pool_size=(2,2),border_mode='same'))
+            CNN_model.add(Dropout(0.25))
+            
+            CNN_model.add(Convolution2D(512,3,3,border_mode='same'))
+            CNN_model.add(LeakyReLU(alpha=0.05))
+            CNN_model.add(MaxPooling2D(pool_size=(2,2),border_mode='same'))
+
+
+            CNN_model.add(Flatten())
+            CNN_model.add(Dense(256,W_regularizer=l2(1e-6)))
+            CNN_model.add(LeakyReLU(alpha=0.01))
+            CNN_model.add(Dropout(0.4))
+            CNN_model.add(Dense(128,W_regularizer=l2(1e-6)))
+            CNN_model.add(LeakyReLU(alpha=0.01))
+            CNN_model.add(Dense(64,W_regularizer=l2(1e-6)))
+            CNN_model.add(LeakyReLU(alpha=0.01))
+            CNN_model.add(Dense(32,W_regularizer=l2(1e-6)))
+            CNN_model.add(LeakyReLU(alpha=0.01))
+            CNN_model.add(Dense(2,W_regularizer=l2(1e-6),activation='softmax'))
+            CNN_model.summary()
+            return CNN_model
+
+        def compile_model(CNN_model):
+            CNN_model.compile(loss='categorical_crossentropy',optimizer='Adamax',metrics=['accuracy'])
+
+        print("Creating model")
+        model = define_model(in_shape)
+        print("Compiling model")
+        compile_model(model)
+        print("Fitting model")
+        reduce_lr = ReduceLROnPlateau(monitor='acc', factor=0.2, patience=3, min_lr=0.001)
+        try:
+            model.fit_generator(Preprocessing(Satellite_images,GT_images,rect_size,patch_size), steps_per_epoch=100, epochs=150, verbose=1, callbacks=[reduce_lr])
+        except KeyboardInterrupt:
+            pass
+        print("Saving model")
+        model.save("models/my_model.h5")
+
+        return model
+
+def Test(model,ws,ps,padding):
+    """Test the model with testing data"""
+    def load_test_images():
+        test_dir = "test_set_images/"
+        files = os.listdir(test_dir)
+        n = len(files)-1
+        print("Loading " + str(n) + " images")
+        test_img=[]
+        for i in range(n):
+            cd=test_dir+"test_"+str(i+1)+"/"
+            im = mplimg.imread(cd + os.listdir(cd)[0])
+            test_img.append(im)
+        test_img = np.asarray(test_img)
+        return test_img
+    
+    Test = load_test_images()
+    print(Test.shape)
+    
+    def extract_patches(test_img):
+        Test_patches = np.empty((72200,ws,ws,3))
+        imgs_id=[]
+        
+        def img_crop(im, w, h, l):
+            list_patches = np.empty((1444,ws,ws,3))
+            img_id=[]
+            imgwidth = im.shape[0]
+            imgheight = im.shape[1]
+            for i in range(0,imgheight-2*padding,h):
+                for j in range(0,imgwidth-2*padding,w):
+                    im_patch = im[j:(j+w+2*padding), i:i+h+2*padding, :]
+                    list_patches[int((i/h)*38+(j/w)),...]=im_patch
+                    if (l<9):
+                        img_id.append("00"+str(l+1)+"_"+str(i)+"_"+str(j))
+                    else: img_id.append("0"+str(l+1)+"_"+str(i)+"_"+str(j))
+            return np.asarray(list_patches), img_id
+        
+        def pad_img(img,p):
+            image=np.pad(img,((p,p),(p,p),(0,0)),'edge')
+            return image
+        
+        for k in range(test_img.shape[0]):
+            image = test_img[k]
+            img = pad_img(image,int(padding))
+            img_patches, img_id=img_crop(img,ps,ps,k)
+            Test_patches[int(k*1444):int((k+1)*1444),...] = img_patches
+            imgs_id = np.append(imgs_id,img_id)
+        Test_patches = np.asarray(Test_patches)
+        print("Test_patches size")
+        print(Test_patches.shape)
+        print("imgs_id length")
+        print(len(imgs_id))
+        return Test_patches,imgs_id
+            
+    Test_patches,img_id = extract_patches(Test)
+    Z = model.predict(Test_patches, verbose=1)
+    
+    Z=(Z[:,0]>Z[:,1])*1
+    
+    return Z,img_id,Test
+
+def visualize_prediction(predictions, Test, path):
+        my_file=Path(path)
+        if not my_file.is_dir(): #check if directory already exists
+            print(my_file.is_dir())
+            os.makedirs(path) #creates directory if it does not exist
+        for k in range(Test.shape[0]):
+            gt_values = predictions[k*1444:(k+1)*1444]
+            gt_test = np.empty((38,38))
+            for i in range(38):
+                for j in range(38):
+                    gt_test[j,i] = gt_values[i*38+j]
+            gt_test=np.asarray(gt_test)
+            fig = plt.figure(figsize=(10,10))
+            plt.imshow(Test[k],extent=(0,608,0,608))
+            plt.imshow(gt_test,cmap='gray_r',alpha=0.4,extent=(0,608,0,608))
+            plt.show()
+            #Save image in folder
+            image_name = path + "prediction_image_" + str(k)
+            fig.savefig(image_name)
+
+def create_submission(predictions, ids, submission_filename):
+
+    my_file=Path(submission_filename)
+    if my_file.is_file():
+        os.remove(submission_filename)
+    with open(submission_filename, 'w') as f:
+        f.write('id,prediction\n')
+        for k in range(len(ids)):
+            f.writelines(ids[k]+','+str(predictions[k])+'\n')  
+
+imgs,gt_imgs=Import_images()
+print(imgs.shape)
+
+model = Learn(window_size,imgs,gt_imgs,window_size,patch_size)
+
+pred,img_id, Test_imgs=Test(model,window_size,patch_size,padding)
+
+visualize_prediction(pred,Test_imgs,"prediction_images/")
+
+create_submission(1-pred,img_id,"submission.csv")
+
+pred[pred==0].shape

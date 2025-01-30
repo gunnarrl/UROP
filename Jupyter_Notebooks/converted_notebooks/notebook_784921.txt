@@ -1,0 +1,492 @@
+# En archivo exercise01.txt x1, x2 y x3 es el nombre de las variables, se usaron esas para seguir con el estándar de nombramiento en Programación Lineal.
+# Es necesario escribir si es min/max para que el programa identifique si es de maximización o minimización, st para indicar que esas son las restricciones y end para indicar al programa que el problema termina ahí
+
+def parse_coefficients(coefficient_list, monomial):
+    """
+    Este es un parseador de coeficientes. Consiste en comprobar si una cadena tiene una expresión regular en donde pueda extraer caracteres específicos, en este caso se busca extraer los coeficientes.
+
+    Args:
+        :rtype: None
+        :param coefficient_list: Lista en la que se almacenarán los coeficientes
+        :param monomial: Una cadena (por ejemplo, -3x1) que será analizada hasta su coeficiente (por ejemplo, -3)
+
+    Verifica qué patrón coincide. Válidos son: (s)(n)lv
+        Los paréntesis indican la existencia opcional
+        s es + o - (la ausencia significa +)
+        n es un número (coeficiente, la ausencia significa 1)
+        l es una letra latina minúscula (letra variable)
+        v es un número, probablemente incremental (número variable)
+
+    Import re:
+        Una expresión regular (o RE) especifica un conjunto de cadenas que se corresponde con ella; las funciones de este módulo le permiten comprobar si una cadena particular se corresponde con una expresión regular dada (o si una expresión regular dada se corresponde con una cadena particular, que se reduce a lo mismo)
+        Source: https://docs.python.org/3/library/re.html
+    """
+    import re
+
+    if re.match('[ ]*[\+ ]?[\d]+[\.]?[\d]*', monomial):
+        float_cast = float(re.match('[ ]*[\+ ]?[\d]+[\.]?[\d]*', monomial).group(0))
+        coefficient_list.append(float_cast)
+    elif re.match('[ ]*[\-][\d]+[\.]?[\d]*', monomial):
+        float_cast = float(re.match('[ ]*[\-][\d]+[\.]?[\d]*', monomial).group(0))
+        coefficient_list.append(float_cast)
+    elif re.match('[ ]*[\+]*[a-z][\d]+', monomial):
+        coefficient_list.append(1)
+    elif re.match('[ ]*[\-][a-z][\d]+', monomial):
+        coefficient_list.append(-1)
+
+lines = []
+def parse_lp1(input_filename):
+    """
+    Esta función es la encargada de leer el archivo, hará uso del parser para mandar línea a línea el contenido del .txt y según los coeficientes que obtenga devolverá las matrices y arrays correspondientes. 
+
+    Tiene tareas como verificar que el archivo haya sido encontrado, leer si es un problema de maximización o minimización, llenar las matrices/ arrays.
+
+    :rtype : tuple
+    :param input_filename: Nombre de archivo de la entrada del problema lineal
+    :return: Retorna A-matrix, b-vector, c-vector, MinMax
+    """
+    import re
+
+    error = 0 # Inicializar la variable de error. Si el error!=0 entonces hubo un problema de entrada de archivo 
+
+
+    try:
+        infile = open('exercise01.txt')
+    except FileNotFoundError:
+        error = 1
+        print('\nInput file error: Archivo no encontrado.') # Archivo no encontrado
+
+    #lines = []
+    if error != 1:
+        for line in infile:
+            lines.append(line)
+        infile.close()
+    for line in lines:
+        print(line, end='')    
+
+    minmax_line = '' # Verficar si el problema es de maximización o de minimización
+    for line in lines:
+        if re.match('^[ ]*max|min', line):
+            minmax_line = line
+
+    minmax = 0
+    objective_function = ''
+
+    if re.match('^[ ]*max', minmax_line): #Si en el archivo se encuentra la palabra 'max' entonces el problema es de maximización
+        minmax = -1
+        objective_function = minmax_line
+        objective_function = objective_function.strip('max')
+    
+    elif re.match('^[ ]*min', minmax_line): # Si en el archivo se encuentra la palabra 'min' entonces el problema es de minimización
+        minmax = 1
+        objective_function = minmax_line
+        objective_function = objective_function.strip('min')
+
+    if minmax_line == '' and minmax == 0: # Si en el archivo no se encuentra ni 'max' ni  'min' entonces no hay función objetivo
+        error = 2
+        print('\nInput file error: Función objetivo no encontrada.')
+
+    c_vector = [] # Rellenar el vector c con coeficientes de función objetiva
+
+    regex = re.compile('^[\+\- ]?[\d]*[\.]?[\d]*[a-z][\d+]')
+    while regex.match(objective_function):
+        monomial = regex.match(objective_function).group(0)
+        parse_coefficients(c_vector, monomial)
+        objective_function = objective_function.replace(monomial, '', 1)
+
+    a_matrix = [] # Rellenar la matriz A (coeficientes) y el vector b utilizando las restricciones del problema
+    b_vector = []
+    eqin = []
+
+    st_line = ''
+    st_index = 0
+    for index, line in enumerate(lines):
+        if 'st' in line:
+            st_index = index
+            st_line = line
+
+    if re.match('^[ ]*st', st_line):
+        st_line = st_line.replace('st', '  ', 1)
+
+    if st_line == '':
+        error = 3
+        print('\nInput file error: Línea de restricciones no encontrada. No existe la keyword \'st\'.')
+
+    while st_index < len(lines) - 1:
+        sub_a_vector = []
+        a_matrix.append(sub_a_vector)
+        while True:
+            st_line = st_line.strip(' ')
+            if re.match('^[\+\- ]?[\d]*[\.]?[\d]*[a-z][\d+]', st_line):
+                monomial = re.match('^[\+\- ]?[\d]*[\.]?[\d]*[a-z][\d+]', st_line).group(0)
+                parse_coefficients(sub_a_vector, monomial)
+                st_line = st_line.replace(monomial, '', 1)
+            elif re.match('^[<>=]+', st_line):
+                monomial = re.match('^[<>=]+', st_line).group(0)
+                if monomial == '<=':
+                    eqin.append(-1)
+                elif monomial == '>=':
+                    eqin.append(1)
+                elif monomial == '=':
+                    eqin.append(0)
+                else:
+                    error = 4
+                    print('\nInput file error: Caracter inesperado; esperados <=, >=, = al menos', monomial)
+                st_line = st_line.replace(monomial, '', 1)
+            elif re.match('^[\d]+', st_line):
+                monomial = re.match('^[\d]+', st_line).group(0)
+                int_cast = int(re.match('^[\d]+', st_line).group(0))
+                b_vector.append(int_cast)
+                st_line = st_line.replace(monomial, '', 1)
+            else:
+                if not sub_a_vector:    # Evalúa true cuando las líneas están vacías entre las restricciones
+                    a_matrix.pop()
+                break
+
+        st_index += 1 #         Incrementar el número de línea y obtener el siguiente
+        st_line = lines[st_index]
+
+        if st_line == 'end\n' and error == 0: #         Búsqueda de la declaración final y ausencia de errores
+            print('\nArchivo cargado exitosamente.')
+            break
+
+    return a_matrix, b_vector, c_vector, eqin, minmax # Devolver todas las listas y variables creadas
+
+def convert_to_dual(input_filename, output_filename):
+    """
+    Verifica si son restricciones de >=, <= o =. También tiene como tarea hacer un archivo de salida en el que muestre los resultados de las matrices que se llenaron.
+
+    :param input_filename: Nombre de archivo de la entrada del problema lineal
+    :param output_filename: Filename of the linear problem output
+    :return: Returns A-matrix, b-vector, c-vector, Variable-constraints, MinMax
+    """
+
+    (a_matrix, b_vector, c_vector, eqin, minmax) = parse_lp1(input_filename)     # Llamar la función parse_lp1
+
+    variable_constraints = [] # Convertir las restricciones a equivalentes duales '*' significa libre
+    if minmax == -1:
+        for el in eqin:
+            if el == 0:
+                variable_constraints.append('*')
+            elif el == 1:
+                variable_constraints.append('>=0')
+            elif el == -1:
+                variable_constraints.append('<=0')
+
+    a_matrix = list(zip(a_matrix)) # Traspuesta de A-matrix
+
+    minmax = -minmax # min(max) el problema dual es max(min)
+
+    outfile = open(output_filename, 'w') # Escribir el problema a un archivo de salida
+    outfile.write('(Objective Function) b-vector: [' + ', '.join(map(str, b_vector)) + ']\n')
+
+    outfile.write('\nA-matrix: [')
+    thing = ''
+    for index, sub_a_vector in enumerate(a_matrix):
+        thing += '[ ' + ', '.join(map(str, sub_a_vector)) + ']'
+        if index != (len(a_matrix) - 1):
+            thing += ', '
+    outfile.write(thing + ']\n')
+
+    outfile.write('\n(Contraints) c-vector: [' + ', '.join(map(str, c_vector)) + ']\n')
+    outfile.write('\n(Variable Contraints) variable_constraints-vector: [' + ', '.join(map(str, c_vector)) + ']\n')
+    outfile.write('\nEqin: [' + ', '.join(map(str, eqin)) + ']\n')
+    outfile.write('\nMinMax: [' + str(minmax) + ']\n')
+    outfile.close()
+
+    return a_matrix, b_vector, c_vector, variable_constraints, eqin, minmax
+
+(a_matrix, b_vector, c_vector, variable_contraints, eqin, minmax) = convert_to_dual('input-lp1', 'output-lp2')
+
+import numpy as np
+import math
+from sympy.abc import x,y
+from sympy import *
+
+lista = []
+
+#Soluciones(Interceptos) en x
+def x_intercepts():
+
+    """
+    Esta función nos ayuda a encontrar los interceptos en el eje x, almacenarlos en una matriz y verificar cuál de estos interceptos pordría ser una solución óptima para el proyecto.
+    """
+
+    new_mat= np.array(a_matrix).reshape(2,2) # Pasar los valores a una matriz operable
+    new_b= np.array(b_vector).reshape(2,1)
+    sol = np.linalg.solve(new_mat, new_b) # Resolver para la matriz
+
+    new_mat[1,1]=0 # Únicamente se tomarán los valores de x
+    new_mat[0,1]=0
+    new_mat_2=[new_mat[0,0], 0],[0, new_mat[1,0]]
+    new_mat_2 = np.array(new_mat_2)
+    sol = np.linalg.solve(new_mat_2,new_b)
+    #new_mat_2= [new_mat[0,1],new_mat[1,1]]
+
+    x_intercepts=[[sol[0][0],0],[sol[1][0],0]]
+    #print(x_intercepts)
+    return x_intercepts
+        
+
+#x_intercepts()
+x_i_min = math.inf
+
+for i in x_intercepts():
+    if i[0] < x_i_min:
+        x_i_min = i[0]
+
+lista.append([x_i_min, 0])
+print(lista)
+
+
+equations_evalued = []
+def check(x,y):
+    for i in range(1,len(lines)-5): # recorremos el array de strings para convertir cada ecuación str a symbolic.
+        
+        string_eq = lines[i].replace("max ",'').replace('min ','').replace("st ",'').replace("end",'').replace('\n','').replace(" ",'').replace("x1","*x").replace("x2","*y")
+        if eval(string_eq):
+            equations_evalued.append(string_eq) # añadimos cada restricción sym a un arreglo
+        else:
+            pass
+        
+    return (equations_evalued[0]) and (equations_evalued[1]) and (x>=0) and (y>=0) # retornamos un booleano que para chequear cada punto cuando se invoque la func check()
+
+
+#Soluciones(Interceptos) en y
+def y_intercepts():
+
+    """
+    Esta función nos ayuda a encontrar los interceptos en el eje y, almacenarlos en una matriz y verificar cuál de estos interceptos pordría ser una solución óptima para el proyecto.
+    """
+
+    new_mat= np.array(a_matrix).reshape(2,2) # Pasar los valores a una matriz operable
+    new_b= np.array(b_vector).reshape(2,1)
+    sol = np.linalg.solve(new_mat, new_b) # Resolver para la matriz
+
+    new_mat[0,0]=0 # Únicamente se tomarán los valores de y
+    new_mat[1,0]=0
+    new_mat_2=[0,new_mat[0,1]],[new_mat[1,1],0]
+    new_mat_2 = np.array(new_mat_2)
+    sol = np.linalg.solve(new_mat_2,new_b)
+    y_intercepts=[[0, sol[0][0]],[0,sol[1][0]]]
+    #print(y_intercepts)
+    return y_intercepts
+
+#y_intercepts()
+
+y_i_min = math.inf
+
+for i in y_intercepts():
+    if i[1] < y_i_min:
+        y_i_min = i[1]
+
+lista.append([0, y_i_min]) # Almacena el elemento en la lista principal
+print(lista)
+
+#Funcion 0,0
+def p_origen():
+
+    """
+    El objetivo de tener esta función es de ingreser el origen (0, 0) dentro de la lista principal para ser verificado si es el punto óptimo, es decir que el origen también es tomado como un candidato.
+    """
+
+    origen = [0,0]
+    #print(origen)
+    lista.append(origen)
+print(lista)
+
+def solve_equation():
+    
+    """
+    Aquí se resuelve la intersección entre las dos restricciones ingresadas. Los puntos (x, y) obtenidos son ingresados a la lista principal de candidatos a ser puntos óptimos
+    """
+
+    #print(a_matrix)
+    new_mat= np.array(a_matrix).reshape(2,2)
+    new_b= np.array(b_vector).reshape(2,1)
+    sol = np.linalg.solve(new_mat, new_b)
+    return sol
+
+solve_e = [[solve_equation()[0][0], solve_equation()[1][0]]]
+print(solve_e[0])
+
+lista.append(solve_e[0])
+print(lista)
+
+
+# Se imprimen los coeficientes de la función objetivo
+print(c_vector)
+
+solved = False
+
+
+maxi = 0
+x_max = 0
+y_max = 0
+
+solved = False
+
+
+maxi = 0
+x_max = 0
+y_max = 0
+
+def resultado(): 
+    global maxi
+    for each_point in lista:
+        #print(f"each_point {each_point}")
+        solved = check(each_point[0],each_point[1])
+        #print(f"eval_eq_arr {equations_evalued}")
+      #  print(check(each_point[0],each_point[1]))
+        
+        if solved is False:
+            lista.remove(each_point[0],each_point[1])
+            solved = True
+            
+    if solved:
+        """
+        En esta función se hacen las verificaciones para saber cuál de los puntos candidatos hacen la optimización de la función objetivo. La variable maxi es la que indica la maximización, y_max y x_max son los puntos que optimizan la función con las restricciones dadas
+        """
+
+        
+        for i in lista:
+            temporal = c_vector[0]*i[0]+c_vector[1]*i[1]
+            if temporal > maxi:
+                maxi = temporal
+                print(f"temporal: {temporal}")
+                y_max = i[1]
+                x_max = i[0]
+                
+        print("\n\n=== Resultados ===")
+
+        print('c-vector:', c_vector)
+        print('A-matrix:', a_matrix)
+        print('b-vector:', b_vector)
+        print('Variable-contraints-vector:', variable_contraints)
+        #print('Eqin:', eqin)
+        print('MinMax:', minmax)
+        print('Punto y:', y_max)
+        print("Punto x: ", x_max)
+        print('Resultado optimización:', maxi)
+
+    else:
+        print("ERROR PLS FIX ME :(")
+
+(a_matrix, b_vector, c_vector, variable_contraints, eqin, minmax) = convert_to_dual('input-lp1', 'output-lp2')
+
+
+
+resultado()
+print(f"\nmaxi {maxi}")
+
+
+"""
+Esto únicamente imprime las matrices importantes para la solución del problema.
+    c-vector es para el vector de la función objetivo
+    A-matrix es la matriz que contiene las restricciones
+    b-vector es el vector que contiene los coeficientes del lado derecho de las restricciones
+    MinMax indica si es maximización o minimización
+"""
+
+print('\n===Results===')
+
+print('c-vector:', c_vector)
+print('A-matrix:', a_matrix)
+print('b-vector:', b_vector)
+#print('Variable-contraints-vector:', variable_contraints)
+#print('Eqin:', eqin)
+print('MinMax:', minmax)
+
+"""
+La matriz A-matrix generada en pasos anteriores se tiene lo siguiente
+A-matrix: [([4.0, 2.0],), ([3.0, 6.0],)]
+
+Aquí lo que se hace es hacer dos matrices nuevas, una llamada a_matrix_const1 para que contenga a [4.0, 2.0] y otra llamada 
+a_matrix_const2 = a_matrix[1][0] que contiene los valores [3.0, 6.0]
+"""
+
+a_matrix_const1 = a_matrix[0][0]
+print(a_matrix_const1)
+a_matrix_const2 = a_matrix[1][0]
+print(a_matrix_const2)
+a_matrix_const1[1]
+
+"""
+Aquí se calculan las pendientes de los constraints y la pendiente de la función objetivo
+    m_const1 es la pendiente de la constraint 1
+    m_const2 es la pendiente de la constraint 2
+    m_c1 es la pendiente de la función objetivo, siendo c1 el primer coeficiente de la función
+    m_c2 es la pendiente de la función objetivo, siendo c2 el segundo coeficiente de la función
+    
+Es MENESTER mencionar que c1 es el primer coeficiente de la función objetivo, por lo que todo lo que a continuación se menciona
+como c1, se refiere a este número. c2 es el segundo coeficiente de la función objetivo, al igual que c1, a partir de aquí
+c2 se refiere al número indicado.
+"""
+
+m_const1 = -1 * a_matrix_const1[0]/a_matrix_const1[1]
+
+m_const2 = -1 * a_matrix_const2[0]/a_matrix_const2[1]
+
+m_c1 = -1 / c_vector[1]
+
+m_c2 = -c_vector[0]
+
+print(f"m_const1: {m_const1}")
+print(f"m_const2: {m_const2}")
+print(f"m_c1: {m_c1}")
+print(f"m_c2: {m_c2}")
+
+"""
+Aquí se analizan los rangos en los que c1 y c2 son válidos. Lo que hace es analizar las pendientes para c1 y c2 contra
+las pendientes de las restricciones 1 y 2. Al dividirse, se obtiene tanto el límite superior como el límite inferior permitido
+tanto para c1 como para c2
+"""
+
+limit_lo_c1 = m_const1 / m_c1
+
+limit_up_c1 = m_const2 / m_c1
+
+limit_lo_c2 = m_c2 / m_const2
+
+limit_up_c2 = m_c2 / m_const1
+
+#print(f"Límite c1 permitido:\n{limit_lo_c1}")
+#print(f"{limit_up_c1}")
+#print(f"Límite c2 permitido:\n{limit_lo_c2}")
+#print(f"{limit_up_c2}")
+
+"""
+Aquí se calculan los decreases and increases permitidos. Lo que hace es tomar el valor de c1, evalúa el límite superior
+obtenido, la diferencia obtenida es el increase permitido. Luego toma el mismo valor de c1, evalúa el límite inferior, la
+diferencia entre ambos es el decrease permitido. Luego evalúa el valor de c2 y hace lo mismo en los límites para calcular el
+increase y decrease permitidos para c2.
+"""
+
+#1
+allow_increasex = limit_up_c1 - c_vector[0]
+if allow_increasex < 0:
+    print(f"Incremento en x permitido: infinito")
+else:
+    print(f"allow_increasex: {allow_increasex}")
+#2
+allow_decreasex = c_vector[0] - limit_lo_c1 
+
+if allow_decreasex < 0:
+    print(f"allow_decreasex: infinito")
+else:
+    print(f"allow_decreasex: {allow_decreasex}")
+
+#3
+allow_increasey = limit_up_c2 - c_vector[1]
+if allow_increasey < 0:
+    print(f"allow_increasey: infinito")
+else:
+    print(f"allow_increasey: {allow_increasey}")
+
+    #4
+allow_decreasey = c_vector[1] - limit_lo_c2
+if allow_decreasey < 0:
+    print(f"allow_decreasey: infinito")
+else:
+    print(f"allow_decreasey: {allow_decreasey}")
+

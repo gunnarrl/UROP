@@ -1,0 +1,79 @@
+import matplotlib as mpl
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import confusion_matrix
+from matplotlib.colors import ListedColormap
+
+mpl.style.use("seaborn")
+
+network = pd.read_csv("Social_Network_Ads.csv")
+network.head()
+
+network.shape
+
+network.isnull().sum(axis=0)
+
+X = network.iloc[:, 2:4].values.astype(float)
+X.shape
+
+y = network.Purchased.values.astype(float)
+y.shape
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25,
+                                                    random_state=123)
+
+sc_X = StandardScaler()
+
+X_train = sc_X.fit_transform(X_train)
+X_test = sc_X.fit_transform(X_test)
+
+lrc = LogisticRegression(solver='lbfgs', random_state=123)
+lrc.fit(X_train, y_train)
+
+test_pred = lrc.predict(X_test)
+
+confusion_matrix(y_test, test_pred)
+
+def actual_vs_predicted(ax, classifier, X, y, 
+                        title=None, xlabel=None, ylabel=None,
+                        postive_color="red", negative_color="green", edge_color="black",
+                        postive_legend=None, negative_legend=None, legend_loc="best"):
+    X1, X2 = np.meshgrid(np.arange(X[:, 0].min() - 1, X[:, 0].max() + 1, 0.01),
+                         np.arange(X[:, 1].min() - 1, X[:, 1].max() + 1, 0.01))
+
+    ax.contourf(X1, X2, classifier.predict(np.array([X1.ravel(),X2.ravel()]
+                                                    ).T).reshape(X1.shape),
+                 alpha = 0.75, cmap = ListedColormap((negative_color,
+                                                      postive_color)))
+    ax.scatter(X[y == 0, 0], X[y == 0, 1], c=negative_color,
+               label=negative_legend, edgecolors=edge_color, alpha=0.8)
+    ax.scatter(X[y == 1, 0], X[y == 1, 1], c=postive_color,
+               label=postive_legend, edgecolors=edge_color, alpha=0.8)
+    
+    ax.set_xlim(X1.min(), X1.max())
+    ax.set_ylim(X2.min(), X2.max())
+    ax.set_title(title, fontdict={'fontsize': 15, 'fontweight': "bold"})
+    ax.set_xlabel(xlabel, fontsize=13)
+    ax.set_ylabel(ylabel, fontsize=13)
+    ax.legend(frameon=True, framealpha=0.3, fancybox=True, fontsize=12)
+
+fig = plt.figure(figsize=[24, 8])
+ax1 = fig.add_subplot(1, 2, 1)
+ax2 = fig.add_subplot(1, 2, 2)
+
+actual_vs_predicted(ax1, lrc, X_train, y_train,
+                    title="Logistic Regression Classifier: the classified training set",
+                    xlabel="Age", ylabel="Estimated Salary",
+                    postive_legend="Bought SUV", negative_legend="Did not buy SUV")
+
+actual_vs_predicted(ax2, lrc, X_test, y_test,
+                    title="Logistic Regression Classifier: the slassified test set",
+                    xlabel="Age", ylabel="Estimated Salary",
+                    postive_legend="Bought SUV", negative_legend="Did not buy SUV")
+
+plt.show()

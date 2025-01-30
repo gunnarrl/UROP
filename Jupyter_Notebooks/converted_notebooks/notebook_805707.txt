@@ -1,0 +1,162 @@
+import re
+from pathlib import Path
+
+PROJECT_ROOT = Path().absolute().parent
+
+import embedeval
+from embedeval.parsers.word2vec_gensim import load_embedding
+
+import numpy as np
+import pandas as pd
+
+from keras.preprocessing.text import one_hot
+from keras.preprocessing.sequence import pad_sequences
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.layers import Flatten
+from keras.layers import GlobalAveragePooling1D
+from keras.layers import LSTM
+from keras.layers import Dropout
+from keras.layers.embeddings import Embedding
+from keras.preprocessing.text import Tokenizer
+
+from nltk.tokenize import word_tokenize
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from embedeval.tasks.offense_detection import f1_metric
+
+EMBEDDING_PATH = PROJECT_ROOT / "tests" / "data" / "downloads" / "cc.de.300.vec"
+
+embedding = load_embedding(EMBEDDING_PATH)
+
+train_dataset_file = PROJECT_ROOT / "src" / "embedeval" / "tasks" / "data" / "germeval-2018" / "train.txt"
+test_dataset_file = PROJECT_ROOT / "src" / "embedeval" / "tasks" / "data" / "germeval-2018" / "test.txt"
+
+def load_dataset(corpus_file):
+    df = pd.read_csv(corpus_file, sep="\t", names=["tweet", "label"], usecols=[0, 1])
+    df["label"] = df["label"].map({"OFFENSE": 1, "OTHER": 0})
+    
+    # remove words starting with an @ from all tweets
+    def remove_mentions(text):
+        return re.sub(r"@[A-Za-z0-9_]{3,}", "", text)
+        
+    df["tweet"] = df["tweet"].apply(remove_mentions)
+    
+    return df
+
+train_df = load_dataset(train_dataset_file)
+test_df = load_dataset(test_dataset_file)
+
+train_df.head()
+
+sns.countplot(train_df["label"])
+
+test_df.head()
+
+sns.countplot(test_df["label"])
+
+def calculate_sentence_length(corpus):
+    word_count = lambda sentence: len(word_tokenize(sentence))
+    longest_sentence = max(corpus, key=word_count)
+    length_long_sentence = len(word_tokenize(longest_sentence))
+    
+    return length_long_sentence
+    
+
+def tokenize_corpus(corpus):
+    word_tokenizer = Tokenizer()
+    word_tokenizer.fit_on_texts(corpus)
+    
+    return word_tokenizer
+
+
+def pad_text(corpus, text, sentence_length):
+    padded_text = pad_sequences(text, sentence_length, padding='post')
+    return padded_text
+
+
+def prepare_corpus(corpus, tokenizer, sentence_length):
+    text = tokenizer.texts_to_sequences(corpus)
+    padded_text = pad_text(corpus, text, sentence_length)
+    
+    return padded_text
+
+entire_corpus = pd.concat([train_df, test_df])["tweet"]
+tokenizer = tokenize_corpus(entire_corpus)
+
+sentence_length = calculate_sentence_length(entire_corpus)
+
+train_corpus = prepare_corpus(train_df["tweet"], tokenizer, sentence_length)
+test_corpus = prepare_corpus(test_df["tweet"], tokenizer, sentence_length)
+
+def create_embedding_matrix(embedding, tokenizer):
+    # Get the Vocabulary length and add 1 for all unknown words
+    vocab_length = len(tokenizer.word_index) + 1
+    
+    embedding_matrix = np.zeros((vocab_length, 300))
+    
+    for word, index in tokenizer.word_index.items():
+        try:
+            embedding_vector = embedding.get_word_vector(word)
+        except KeyError:
+            embedding_vector = None
+            
+        if embedding_vector is not None:
+            embedding_matrix[index] = embedding_vector
+    
+    return embedding_matrix
+
+train_embedding_matrix = create_embedding_matrix(embedding, tokenizer)
+
+model = Sequential()
+model.add(Embedding(
+    train_embedding_matrix.shape[0], 
+    train_embedding_matrix.shape[1], 
+    weights=[train_embedding_matrix], 
+    input_length=sentence_length, 
+    #trainable=False,
+    trainable=True
+))
+
+#model.add(GlobalAveragePooling1D())
+#model.add(Dense(16, activation='relu'))
+
+model.add(Flatten())
+
+# model.add(LSTM(units=128, dropout=0.2, recurrent_dropout=0.2))     SLOW AF
+
+#model.add(Dense(256, activation='relu'))
+#model.add(Dropout(0.3))
+#model.add(Dense(256, activation='relu'))
+
+model.add(Dense(1, activation='sigmoid'))
+
+model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['acc', f1_metric])
+
+model.summary()
+
+history = model.fit(train_corpus, train_df["label"], validation_split=0.3, epochs=5, verbose=1)
+
+loss = history.history['loss']
+acc = history.history['acc']
+
+epochs = list(range(1, 6))
+
+plt.plot(epochs, loss, 'ko', label='Training Loss')
+plt.xlabel('Epochs')
+plt.ylabel('Loss')
+plt.title('Training Loss')
+plt.legend()
+
+plt.plot(epochs, acc, 'yo', label='Training Accuracy')
+plt.xlabel('Epochs')
+plt.ylabel('Accuracy')
+plt.title('Training Accuracy')
+plt.legend()
+plt.show()
+
+loss, accuracy, f1_score = model.evaluate(test_corpus, test_df["label"], verbose=0)
+
+loss, accuracy, f1_score

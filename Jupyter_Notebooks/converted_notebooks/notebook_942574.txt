@@ -1,0 +1,166 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.stats import multivariate_normal
+from sklearn.metrics import classification_report
+from matplotlib import cm
+
+class1_train = pd.read_csv('https://raw.githubusercontent.com/shala2020/shala2020.github.io/master/Lecture_Materials/Assignments/MachineLearning/L3/class1_train').to_numpy()
+class2_train = pd.read_csv('https://raw.githubusercontent.com/shala2020/shala2020.github.io/master/Lecture_Materials/Assignments/MachineLearning/L3/class2_train').to_numpy()
+
+class1_train[:10]
+
+class1_train.shape
+
+class2_train.shape
+
+import seaborn as sns
+classes = ['class-1','class-2']
+
+for i in range(class1_train.shape[0]):
+    
+    plt.scatter(class1_train[i][0],class1_train[i][1] ,c="red",alpha=0.6, edgecolors='none')
+
+    # plt.legend(loc='best', fontsize=16)
+    plt.xlabel('Growth %')
+    plt.ylabel('Population')
+
+for j in range(class2_train.shape[0]):
+    plt.scatter(class1_train[j][0],class1_train[j][1] ,c="blue")
+
+
+def calculate_pi_1():
+  num = class1_train.shape[0]
+  deno = class1_train.shape[0] + class2_train.shape[0]
+  return num/deno
+
+def calculate_pi_2():
+  num = class2_train.shape[0]
+  deno = class1_train.shape[0] + class2_train.shape[0]
+  return num/deno
+
+def calculate_mu_1():
+  return class1_train.mean(axis=0)
+
+def calculate_mu_2():
+  return class2_train.mean(axis=0)
+
+def calculate_cov_1():
+  x = class1_train
+  print(x.shape)
+  mu = x.mean(axis=0) 
+  x_norm = x-mu
+  x_transpose = x_norm.transpose()
+  return np.cov(x_transpose)
+
+def calculate_cov_2():
+  x = class2_train
+  print(x.shape)
+  mu = x.mean(axis=0)
+  x_norm = x-mu
+  x_transpose = x_norm.transpose()
+  return np.cov(x_transpose)
+
+
+print( 'pi_1 : {} and pi_2 : {}'.format(calculate_pi_1(),calculate_pi_2()))
+print( 'mu_1 : {} and mu_2 : {}'.format(calculate_mu_1(),calculate_mu_2()))
+print( 'sigma_1 : \n{} \n sigma_2 : \n{}'.format(calculate_cov_1(),calculate_cov_2()))
+
+## Another way to get Pi , mu and sigma
+
+pi1 = len(class1_train)/(len(class1_train)+len(class2_train))
+pi2 = len(class2_train)/(len(class1_train)+len(class2_train))
+mu1 = class1_train.mean(axis=0)
+mu2 = class2_train.mean(axis=0)
+sig1 = np.cov(class1_train,rowvar=False)
+sig2 = np.cov(class2_train,rowvar=False)
+
+print("Pi-1 {} and Pi-2 {}".format(pi1,pi2))
+print("mu-1 {} and mu-2 {}".format(mu1,mu2))
+print("sig-1 {} and sig-2 {}".format(sig1,sig2))
+
+
+from matplotlib import cm
+
+x,y = np.mgrid[-5:5:.01, -5:5:.01]
+pos = np.empty(x.shape + (2,))
+pos[:, :, 0] = x; pos[:, :, 1] = y
+
+mu1 = calculate_mu_1()
+mu2 = calculate_mu_2()
+cov1 = calculate_cov_1()
+cov2 = calculate_cov_2()
+rv1 = multivariate_normal(mean = mu1, cov = cov1)
+rv2 = multivariate_normal(mean = mu2, cov = cov2)
+
+fig = plt.figure(figsize=(20,10))
+ax = fig.add_subplot(121, projection='3d')
+plt.xlabel('x')
+plt.ylabel('y')
+ax.plot_surface(x,y,rv1.pdf(pos), cmap=cm.Reds,alpha=0.5)
+ax.plot_surface(x,y,rv2.pdf(pos), cmap=cm.Blues,alpha=0.5)
+
+plt.subplot(122)
+plt.contourf(x, y, rv1.pdf(pos), cmap=cm.Reds,alpha=0.5)
+plt.contourf(x, y, rv2.pdf(pos), cmap=cm.Blues,alpha=0.5)
+
+plt.colorbar()
+plt.xlabel('x')
+plt.ylabel('y')
+
+likelihood1 = rv1.pdf(pos)
+likelihood2 = rv2.pdf(pos)
+
+p1 = (likelihood1 * pi1)/(likelihood1*pi1+likelihood2*pi2)
+p2 = (likelihood2 * pi2)/(likelihood1*pi1+likelihood2*pi2)
+
+x, y = np.mgrid[-5:5:.01, -5:5:.01]
+pos = np.empty(x.shape + (2,))
+pos[:, :, 0] = x; pos[:, :, 1] = y
+fig = plt.figure(figsize=(20,10))
+ax = fig.add_subplot(131, projection='3d')
+plt.xlabel('x')
+plt.ylabel('y')
+ax.plot_surface(x,y,p1, cmap=cm.Reds,alpha=0.5)
+ax.plot_surface(x,y,p2, cmap=cm.Blues,alpha=0.5)
+plt.subplot(132)
+plt.contourf(x,y,p1,cmap=cm.Reds,alpha=0.5)
+plt.contourf(x,y,p2,cmap=cm.Blues,alpha=0.5)
+plt.xlabel('x')
+plt.ylabel('y')
+
+des = p2>p1
+plt.contourf(x,y,p1,cmap=cm.Reds,alpha=0.5)
+plt.contourf(x,y,p2,cmap=cm.Blues,alpha=0.5)
+plt.contourf(x,y,des,cmap=cm.Greens,alpha=0.3)
+plt.xlabel('x')
+plt.ylabel('y')
+plt.scatter(class1_train[:,0],class1_train[:,1],marker='*',color='red')
+plt.scatter(class2_train[:,0],class2_train[:,1],marker='+',color='blue')
+
+test = pd.read_csv('https://raw.githubusercontent.com/shala2020/shala2020.github.io/master/Lecture_Materials/Assignments/MachineLearning/L3/test').to_numpy()
+test_data, test_label = test[:,:2], test[:,2]
+
+test_data
+
+
+## likelihood 
+l1 = rv1.pdf(test_data)
+l2 = rv2.pdf(test_data)
+
+##Posterior 
+p1_test= (l1*pi1)/(l1*pi1+l2*pi2)
+p2_test= (l2*pi2)/(l1*pi1+l2*pi2)
+
+## Descision bundory 
+test_data_predict=p2_test>p1_test
+test_data_predict
+
+test_data_predict = np.where(test_data_predict==True,1,0)
+test_data_predict
+
+from sklearn.metrics import classification_report,accuracy_score
+
+print(accuracy_score(test_label,test_data_predict))
+
+print(classification_report(test_label,test_data_predict))

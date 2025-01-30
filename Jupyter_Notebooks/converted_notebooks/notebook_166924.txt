@@ -1,0 +1,74 @@
+import os
+import sys
+from random import randint
+
+
+module_path = os.path.abspath(os.path.join(os.getcwd(), os.pardir))  
+if module_path not in sys.path:       
+    sys.path.append(module_path)
+
+import librosa
+import museval
+import numpy as np
+import tensorflow as tf
+import IPython.display as ipd
+from utils.helper import wav_to_spectrogram_clips, rebuild_audio_from_spectro_clips
+from utils.dataset import create_samples
+from models.conv_denoising_unet import ConvDenoisingUnet
+from models.conv_encoder_denoising_decoder import ConvEncoderDenoisingDecoder
+from models.conv_resblock_denoising_unet import ConvResblockDenoisingUnet
+
+samples = create_samples('Dev')
+test_sample = samples[0]
+print(test_sample['name'])
+
+sound, sr = librosa.load(test_sample['mix'], sr=44100, mono=True)
+stft = librosa.stft(sound, n_fft=2048, hop_length=512, win_length=2048)
+phase = np.angle(stft)
+
+sorted(os.listdir(os.path.join(os.pardir, 'saved_model')))
+
+# load model
+model_path = os.path.join(os.pardir, 'saved_model', 'conv_denoising_unet?time=20200223_0347.h5')
+model = tf.keras.models.load_model(model_path)
+
+pred = model.predict(wav_to_spectrogram_clips(test_sample['mix']))
+
+pred[2].shape
+
+def play(audio):
+    track, sr = librosa.load(audio, sr=44100)
+    return track
+    
+def play_separated_track(separated_audio, phase):
+    separated_track= np.squeeze(separated_audio, axis=-1)
+    spectrogram = np.concatenate(separated_track, axis=1)
+    phase = phase[tuple(map(slice, spectrogram.shape))]
+    reconstructed_track = librosa.istft(spectrogram * np.exp(1j * phase), hop_length=512, win_length=2048)
+    return reconstructed_track
+
+track = play(test_sample['vocals'])
+ipd.Audio(track, rate=44100)
+
+separated_track = play_separated_track(pred[0], phase)
+ipd.Audio(separated_track, rate=44100)
+
+librosa.output.write_wav('./separated_vocals.wav', separated_track, sr=44100, norm=True)
+
+track = play(test_sample['bass'])
+ipd.Audio(track, rate=44100)
+
+separated_track = play_separated_track(pred[1])
+ipd.Audio(separated_track, rate=44100)
+
+track = play(test_sample['drums'])
+ipd.Audio(track, rate=44100)
+
+separated_track = play_separated_track(pred[2])
+ipd.Audio(separated_track, rate=44100)
+
+track = play(test_sample['other'])
+ipd.Audio(track, rate=44100)
+
+separated_track = play_separated_track(pred[3])
+ipd.Audio(separated_track, rate=44100)

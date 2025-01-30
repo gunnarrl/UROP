@@ -1,0 +1,296 @@
+#
+import base58
+import binascii
+import ecdsa
+import hashlib
+import json
+import os
+import subprocess
+import time
+
+def dSHA256(data):
+    hash_1 = hashlib.sha256(data).digest()
+    hash_2 = hashlib.sha256(hash_1).digest()
+    return hash_2
+
+def hash160(s):
+    '''sha256 followed by ripemd160'''
+    return hashlib.new('ripemd160', hashlib.sha256(s).digest()).digest()
+
+def privkey_to_pubkey(privkey):
+    signing_key = ecdsa.SigningKey.from_string(privkey, curve=ecdsa.SECP256k1) # Don't forget to specify the curve
+    verifying_key = signing_key.get_verifying_key()
+
+    # Use this code block if the address you gave corresponds to the compressed public key
+    x_cor = bytes.fromhex(verifying_key.to_string().hex())[:32] # The first 32 bytes are the x coordinate
+    y_cor = bytes.fromhex(verifying_key.to_string().hex())[32:] # The last 32 bytes are the y coordinate
+    if int.from_bytes(y_cor, byteorder="big", signed=True) % 2 == 0: # We need to turn the y_cor into a number.
+        public_key = bytes.fromhex("02" + x_cor.hex())
+    else:
+        public_key = bytes.fromhex("03" + x_cor.hex())
+    return public_key
+
+# Functions related to generating bitcoin addresses
+
+def encode_base58(s):
+    BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+    count = 0
+    for c in s:  
+        if c == 0:
+            count += 1
+        else:
+            break
+    num = int.from_bytes(s, 'big')
+    prefix = '1' * count
+    result = ''
+    while num > 0:  
+        num, mod = divmod(num, 58)
+        result = BASE58_ALPHABET[mod] + result
+    return prefix + result
+
+def encode_base58_checksum(b):
+    return encode_base58(b + dSHA256(b)[:4])
+
+# https://en.bitcoin.it/wiki/Wallet_import_format
+def privkey_to_wif(privkey, compressed_pubkey, testnet):
+    if testnet:
+        prefix = b"\xEF"
+    else:
+        prefix = b"\x80"
+    
+    # if the privkey will correspond to a compressed public key
+    if compressed_pubkey: 
+        extended = prefix + privkey + b"\x01"
+    else:
+        extended = prefix + privkey 
+        
+    extendedchecksum = extended + dSHA256(extended)[:4]
+    wif = encode_base58(extendedchecksum)
+    
+    return wif
+
+# https://learnmeabitcoin.com/guide/wif
+def wif_to_privkey(private_key_WIF):
+    private_key_full = base58.b58decode(private_key_WIF)
+    
+    # If the WIF encoding includes the optional "01" byte for compressed privKey,
+    # do not include it in the final output.
+    if len(private_key_full) == 38:
+        private_key = private_key_full[1:-5] 
+        print("compressed pubkey")
+    else:
+        private_key = private_key_full[1:-4] 
+        print("not compressed pubkey")
+    return private_key
+
+
+def pk_to_p2pkh(compressed, testnet):
+    '''Returns the address string'''
+    pk_hash = hash160(compressed)
+    if testnet:
+        prefix = b'\x6f'
+    else:
+        prefix = b'\x00'
+    return encode_base58_checksum(prefix + pk_hash)
+
+def pk_to_p2sh_p2wpkh(compressed, testnet):
+    pk_hash = hash160(compressed)
+    redeemScript = bytes.fromhex(f"0014{pk_hash.hex()}")
+    rs_hash = hash160(redeemScript)
+    if testnet:
+        prefix = b"\xc4"
+    else:
+        prefix = b"\x05"
+    return encode_base58_checksum(prefix + rs_hash)
+
+def wif_to_addresses(wif):
+#     wif = "cUy9rC6wteKizfu1fgP2abKUWTkJxjqKp2fba91FkU332CFHo6ix"
+    privkey = wif_to_privkey(wif)
+    public_key = privkey_to_pubkey(privkey)
+    p2pkh_address = pk_to_p2pkh(public_key, testnet = True)
+    p2sh_p2wpkh_address = pk_to_p2sh_p2wpkh(public_key, testnet = True)
+
+    print("WIF Private key: " + wif)
+    print("Private key: " + privkey.hex())
+    print("Public key: " + public_key.hex())
+    print("Public key hash: " + hash160(public_key).hex())
+    print("Address: " + p2pkh_address)
+    print("Address: " + p2sh_p2wpkh_address)
+    
+def privkey_to_addresses(privkey):
+    # privkey = bytes.fromhex("AF933A6C602069F1CBC85990DF087714D7E86DF0D0E48398B7D8953E1F03534A")
+    public_key = privkey_to_pubkey(privkey)
+    p2pkh_address = pk_to_p2pkh(public_key, testnet = True)
+    p2sh_p2wpkh_address = pk_to_p2sh_p2wpkh(public_key, testnet = True)
+
+    print("Private key: " + privkey.hex())
+    print("Public key: " + public_key.hex())
+    print("Public key hash: " + hash160(public_key).hex())
+    print("Address: " + p2pkh_address)
+    print("Address: " + p2sh_p2wpkh_address)
+
+# Generate example priv/pubkeys
+funding_privkey_hex = "1111111111111111111111111111111100000000000000000000000000000000"
+funding_pubkey_hex = privkey_to_pubkey(bytes.fromhex(funding_privkey_hex)).hex()
+
+change_privkey_hex = "1111111111111111111111111111111111111111111111111111111111111111"
+change_pubkey_hex = privkey_to_pubkey(bytes.fromhex(change_privkey_hex)).hex()
+
+merch_privkey_hex = "3911111111111111111111111111111111111111111111111111111111111111"
+merch_pubkey_hex = privkey_to_pubkey(bytes.fromhex(merch_privkey_hex)).hex()
+
+cust_privkey_hex = "7911111111111111111111111111111111111111111111111111111111111111"
+cust_pubkey_hex = privkey_to_pubkey(bytes.fromhex(cust_privkey_hex)).hex()
+
+cust_payout_privkey_hex = "7711111111111111111111111111111111111111111111111111111111111111"
+cust_payout_pubkey_hex = privkey_to_pubkey(bytes.fromhex(cust_payout_privkey_hex)).hex()
+
+merch_payout_privkey_hex = "3711111111111111111111111111111111111111111111111111111111111111"
+merch_payout_pubkey_hex = privkey_to_pubkey(bytes.fromhex(merch_payout_privkey_hex)).hex()
+
+merch_disp_privkey_hex = "3111111111111111111111111111111111111111111111111111111111111111"
+merch_disp_pubkey_hex = privkey_to_pubkey(bytes.fromhex(merch_disp_privkey_hex)).hex()
+
+revocation_secret_hex = "4011111111111111111111111111111111111111111111111111111111111111"
+RL = hashlib.sha256(bytes.fromhex(revocation_secret_hex)).digest()
+revocation_lock_hex = RL.hex()
+
+merch_cpfp_privkey_hex = "2222222222222222222222222222222277777777777777777777777777777777"
+merch_cpfp_pubkey_hex = privkey_to_pubkey(bytes.fromhex(merch_cpfp_privkey_hex)).hex()
+
+cust_cpfp_privkey_hex = "3322222222222222222222222222222277777777777777777777777777777777"
+cust_cpfp_pubkey_hex = privkey_to_pubkey(bytes.fromhex(merch_cpfp_privkey_hex)).hex()
+
+# merch_fee_privkey_hex = "2222222222222222222222222222222266666666666666666666666666666666"
+# merch_fee_pubkey_hex = privkey_to_pubkey(bytes.fromhex(merch_fee_privkey_hex)).hex()
+
+# # cpfp priv/pubkeys
+# merch1_privkey_hex = "0221111111111111111111111111111100000000000000000000000000000000"
+# merch1_privkey = bytes.fromhex(merch1_privkey_hex)
+# merch1_pubkey = privkey_to_pubkey(merch1_privkey)
+
+# merch2_privkey_hex = "2221111111111111111111111111111100000000000000000000000000000000"
+# merch2_privkey = bytes.fromhex(merch2_privkey_hex)
+# merch2_pubkey = privkey_to_pubkey(merch2_privkey).hex()
+
+# merch3_privkey_hex = "3311111111111111111111111111111100000000000000000000000000000000"
+# merch3_privkey = bytes.fromhex(merch3_privkey_hex)
+# merch3_pubkey = privkey_to_pubkey(merch3_privkey).hex()
+
+# Make sure bitcoind is not already running
+os.system("bitcoin-cli -regtest stop")
+time.sleep(2) 
+
+# Delete any previous files to restart regtest
+os.system("rm -rfv $HOME/Library/Application\ Support/Bitcoin/regtest/")
+
+# start up bitcoind in regtest mode
+# os.system("bitcoind -regtest -daemon -minrelaytxfee=0")
+os.system("bitcoind -regtest -daemon")
+time.sleep(2)
+
+# generate 101 blocks so we can fund transactions
+os.system("bitcoin-cli -regtest generate 101")
+blockcount = subprocess.getoutput("bitcoin-cli -regtest getblockcount")
+
+print("blockcount: " + str(blockcount))
+
+# Generate p2sh-p2wpkh address to fund the escrow funder
+privkey = bytes.fromhex(funding_privkey_hex)
+public_key = privkey_to_pubkey(privkey)
+p2sh_p2wpkh_address = pk_to_p2sh_p2wpkh(public_key, testnet = True)
+
+# print("Private key: " + privkey.hex())
+# print("Public key: " + public_key.hex())
+print("Address: " + p2sh_p2wpkh_address)
+
+txid_1 = subprocess.getoutput("bitcoin-cli -regtest sendtoaddress " + p2sh_p2wpkh_address + " 3.0")
+print(txid_1)
+
+# Find which output index the btc was sent to
+raw_tx = subprocess.getoutput("bitcoin-cli -regtest getrawtransaction " + txid_1)
+decoded = subprocess.getoutput("bitcoin-cli -regtest decoderawtransaction " + raw_tx)
+d = json.loads(decoded)
+# print(decoded)
+
+if d["vout"][0]["scriptPubKey"]["addresses"][0] == p2sh_p2wpkh_address:
+    index = 0
+else:
+    index = 1
+print("index: " + str(index))
+
+os.system("bitcoin-cli -regtest generate 1");
+
+raw_escrow_tx = subprocess.getoutput("python funding_tx_with_changev2.py" 
+                        + " --txid " + txid_1
+                        + " --index " + str(index)
+                        + " --input_amount_btc " + "3.0"
+                        + " --funding_privkey " + funding_privkey_hex
+                        + " --escrow_value_btc " + "2.1"
+                        + " --cust_pubkey " + cust_pubkey_hex
+                        + " --merch_pubkey " + merch_pubkey_hex
+                        + " --cust_change_value_btc " + "0.89"
+                        + " --cust_change_pubkey " + change_pubkey_hex)
+print("serialized funding tx:\n" + raw_escrow_tx)
+
+# Broadcast funding tx
+escrow_txid = subprocess.getoutput("bitcoin-cli -regtest sendrawtransaction " + raw_escrow_tx + " true")
+# "true" flag means we are okay with an 'absurdly' high tx fee
+
+print("\nfunding txid:\n"+escrow_txid)
+
+os.system("bitcoin-cli -regtest generate 1");
+
+# raw_escrow_tx1 = subprocess.getoutput("bitcoin-cli -regtest getrawtransaction " + escrow_txid)
+# decoded = subprocess.getoutput("bitcoin-cli -regtest decoderawtransaction " + raw_escrow_tx1)
+# print(decoded)
+
+merch_close_cpfp_tx = subprocess.getoutput("python merch_close_with_cpfp.py"        
+                + " --txid_str " + escrow_txid
+                + " --index " + "0"
+                + " --input_amount_btc " + "2.1"
+                + " --cust_privkey " + cust_privkey_hex 
+                + " --merch_privkey " + merch_privkey_hex
+                + " --output_value_btc " + "1.99"
+                + " --merch_payout_pubkey " + merch_payout_pubkey_hex   
+                + " --to_self_delay " + "05cf" # number of blocks to delay to-self output   
+                + " --merch_cpfp_pubkey " + merch_cpfp_pubkey_hex   
+                + " --merch_cpfp_value_btc " + "0.1") # number of blocks to delay to-self output       
+print("merch close with cpfp tx:\n" + merch_close_cpfp_tx)
+
+merch_close_cpfp_txid = subprocess.getoutput("bitcoin-cli -regtest sendrawtransaction " + merch_close_cpfp_tx)
+print(merch_close_cpfp_txid) 
+
+os.system("bitcoin-cli -regtest generate 1");
+
+mined_merch_close_cpfp_tx = subprocess.getoutput("bitcoin-cli -regtest getrawtransaction " + merch_close_cpfp_txid)
+decoded = subprocess.getoutput("bitcoin-cli -regtest decoderawtransaction " + mined_merch_close_cpfp_tx)
+print(decoded)
+
+cust_close_cpfp_tx = subprocess.getoutput("python cust_close_with_cpfp.py"        
+                + " --spend_from " + "merch-close"
+                + " --txid_str " + merch_close_cpfp_txid
+                + " --index " + "0"
+                + " --input_amount_btc " + "1.99"
+                + " --cust_privkey " + cust_privkey_hex 
+                + " --merch_privkey " + merch_privkey_hex                                           
+                + " --cust_script_value_btc " + "0.88"
+                + " --cust_payout_pubkey " + cust_payout_pubkey_hex
+                + " --to_self_delay " + "05cf"
+                + " --merch_payout_value_btc " + "1"
+                + " --merch_payout_pubkey " + merch_payout_pubkey_hex
+                + " --revocation_lock " + revocation_lock_hex
+                + " --merch_dispute_pubkey " + merch_disp_pubkey_hex
+                + " --cust_cpfp_value_btc " + "0.099"
+                + " --cust_cpfp_pubkey " + cust_pubkey_hex)
+                                          
+print("cust close with cpfp tx:\n" + cust_close_cpfp_tx)
+
+cust_close_cpfp_txid = subprocess.getoutput("bitcoin-cli -regtest sendrawtransaction " + cust_close_cpfp_tx)
+print(cust_close_cpfp_txid) 
+
+os.system("bitcoin-cli -regtest generate 1");
+
+mined_cust_close_cpfp_tx = subprocess.getoutput("bitcoin-cli -regtest getrawtransaction " + cust_close_cpfp_txid)
+decoded = subprocess.getoutput("bitcoin-cli -regtest decoderawtransaction " + mined_cust_close_cpfp_tx)
+print(decoded)

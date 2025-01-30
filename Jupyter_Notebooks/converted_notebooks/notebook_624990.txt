@@ -1,0 +1,266 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import scipy.stats as st
+import statsmodels.tsa.stattools as stats
+import statsmodels.stats.multitest as mt
+import arch.bootstrap as boot
+import pyalgotrade.barfeed.csvfeed as csvfeed
+import pyalgotrade.bar as bar
+import pyalgotrade.strategy as strategy
+import pyalgotrade.technical.roc as roc
+import pyalgotrade.technical.stats as tstats
+import pyalgotrade.broker as broker
+import pyalgotrade.stratanalyzer.returns as ret
+import pyalgotrade.plotter as plotter
+import datetime as dt
+import itertools
+import time
+
+data = pd.read_csv('./Advanced-Trading-Analysis-Data.txt', index_col='Date Time', parse_dates=True)
+dailySPYPrices = data['Adj Close']
+dailySPYReturns = dailySPYPrices.pct_change(1)
+dailySPYReturns[0] = 0
+dailySPYPricesADF = pd.Series(stats.adfuller(dailySPYPrices)[0:2], index=['Test statistic:', 'p-value:'])
+dailySPYReturnsADF = pd.Series(stats.adfuller(dailySPYReturns)[0:2], index=['Test statistic:', 'p-value:'])
+print('')
+print('== SPY Daily Prices Augmented Dickey-Fuller Test ADF ==')
+print('')
+print(round(dailySPYPricesADF, 4))
+print('')
+print('== SPY Daily Returns Augmented Dickey-Fuller Test ADF ==')
+print('')
+print(round(dailySPYReturnsADF, 4))
+print('')
+
+class MeanStrategy3(strategy.BacktestingStrategy):
+
+    # 3.1. Define Strategy Initialization Function
+    def __init__(self, feed, instrument, nper, lowerThreshold, upperThreshold):
+        super(MeanStrategy3, self).__init__(feed, 10000)
+        self.position = None
+        self.instrument = instrument
+        self.setUseAdjustedValues(True)
+        self.roc = roc.RateOfChange(feed[instrument].getPriceDataSeries(), 1)
+        self.zscore = tstats.ZScore(self.roc, nper)
+        self.lowerThreshold = lowerThreshold
+        self.upperThreshold = upperThreshold
+
+    # 3.2. Define Get Technical Indicators Functions
+    def getZScore(self):
+        return self.zscore
+
+    # 3.3. Define Overriding Strategy Functions
+
+    # onEnterCanceled: Get notified when order submitted to enter a position was canceled and update position
+    def onEnterCanceled(self, position):
+        self.position = None
+
+    # onExitOk: Get notified when order submitted to exit a position was filled and update position
+    def onExitOk(self, position):
+        self.position = None
+
+    # onExitCanceled: Get notified when order submitted to exit a position was canceled and re-submit order
+    def onExitCanceled(self, position):
+         self.position.exitMarket()
+
+    # 3.4. Define Trading Strategy Function
+
+    # Mean-Reversion Statistical-Arbitrage Strategy
+    # Enter Long Order = Buy when Z-Score < Lower Threshold
+    # Exit Order = Sell when Z-Score > Upper Threshold
+
+    def onBars(self, bars):
+        if self.zscore[-1] is None:
+            return
+
+        if self.position is None:
+            if self.zscore[-1] < self.lowerThreshold:
+                # 95% equity investment for difference between order day Close price and next day Open price
+                # number of shares can also be a fixed quantity for all transactions (ex. self.shares = 10)
+                self.shares = int(self.getBroker().getCash() * 0.95 / bars[self.instrument].getPrice())
+                self.position = self.enterLong(self.instrument, self.shares, goodTillCanceled=True)
+
+        elif self.zscore[-1] > self.upperThreshold and not self.position.exitActive():
+            self.position.exitMarket()
+
+def MeanStrategyRun3(nper, lowerThreshold, upperThreshold, chart):
+
+    # 4.1. Create Instruments object with stock tickers
+    instruments = ['SPY']
+
+    # 4.2. Load CSV Feed previously downloaded or read
+    feed = csvfeed.GenericBarFeed(bar.Frequency.DAY)
+    feed.addBarsFromCSV(instruments[0], './Advanced-Trading-Analysis-Data.txt', skipMalformedBars=True)
+
+    # 4.3. Evaluate Strategy with CSV Feed and Technical Indicator Parameters
+    meanStrategy3 = MeanStrategy3(feed, instruments[0], nper, lowerThreshold, upperThreshold)
+
+    # 4.4. Set Strategy Commission
+    meanStrategy3.getBroker().setCommission(broker.backtesting.FixedPerTrade(6))
+
+    # 4.5. Attach Strategy Trading Statistics Analyzers
+    retAnalyzer = ret.Returns(maxLen=2518)
+    meanStrategy3.attachAnalyzer(retAnalyzer)
+
+    # 4.6. Attach Strategy Plotter
+    plt = plotter.StrategyPlotter(meanStrategy3, plotPortfolio=False)
+    plt.getOrCreateSubplot('ZScore').addDataSeries('ZScore', meanStrategy3.getZScore())
+    plt.getOrCreateSubplot('ZScore').addLine('Lower', level=-2)
+    plt.getOrCreateSubplot('ZScore').addLine('Upper', level=2)
+
+    # 4.7. Run Strategy
+    meanStrategy3.run()
+
+    # 4.8. Calculate Strategy Returns
+    datesReturns = retAnalyzer.getReturns().getDateTimes()[:]
+    dailyReturns = retAnalyzer.getReturns()[:]
+    dailyReturns = pd.DataFrame(dailyReturns).set_index(pd.DatetimeIndex(datesReturns))
+
+    # 4.9. Plot Strategy
+    if chart == True:
+        plt.plot(fromDateTime=dt.datetime(2016, 1, 1), toDateTime=dt.datetime(2016, 12, 31))
+
+    return dailyReturns
+
+# 4.10. Plot Strategy Example
+MeanStrategyRun3(21, -2, 2, True)
+
+# 5.1. Create Strategy Optimization Parameters Combinations
+lowerThreshold = (-2.5, -2)
+upperThreshold = (2, 2.5)
+pool = [lowerThreshold, upperThreshold]
+
+# 5.2. Calculate Benchmark Daily Returns
+# 100% equity investment for buy and hold benchmark
+mean3DailyReturns = dailySPYReturns
+mean3DailyReturns = pd.DataFrame(mean3DailyReturns)
+
+# 5.3. Do Strategy Optimization
+mean3StartOptimization = time.time()
+print('')
+print('== Strategy Parameters Optimization ==')
+print('')
+print('Parameters Combinations (lowerThreshold, upperThreshold):')
+for n in itertools.product(*pool):
+    print(n)
+    mean3DailyReturns.insert(len(mean3DailyReturns.columns), n, MeanStrategyRun3(21, n[0], n[1], False))
+mean3EndOptimization = time.time()
+mean3DailyReturns.columns = ['B&H', 'Mn3Ret1', 'Mn3Ret2', 'Mn3Ret3', 'Mn3Ret4']
+print('')
+print('Optimization Running Time: ', round(mean3EndOptimization - mean3StartOptimization, 4), ' seconds')
+print('')
+
+# 5.4. Define Cumulative Returns and Performance Metrics Functions
+def CumulativeReturns(dailyReturns):
+    cumulativeReturns = np.cumprod(dailyReturns + 1) ** (252 / len(dailyReturns)) - 1
+    return cumulativeReturns
+
+def PerformanceMetrics(dailyReturns):
+    annualizedReturn = (np.cumprod(dailyReturns + 1) ** (252 / len(dailyReturns)) - 1)[-1]
+    annualizedStdDev = np.std(dailyReturns) * np.sqrt(252)
+    annualizedSharpe = annualizedReturn / annualizedStdDev
+    return annualizedReturn, annualizedStdDev, annualizedSharpe
+
+mean3CumulativeReturns = mean3DailyReturns.apply(CumulativeReturns, axis=0)
+plt.plot(mean3CumulativeReturns['B&H'], label='B&H')
+plt.plot(mean3CumulativeReturns['Mn3Ret1'], label='Mn3Ret1')
+plt.plot(mean3CumulativeReturns['Mn3Ret2'], label='Mn3Ret2')
+plt.plot(mean3CumulativeReturns['Mn3Ret3'], label='Mn3Ret3')
+plt.plot(mean3CumulativeReturns['Mn3Ret4'], label='Mn3Ret4')
+plt.title('Strategy Parameters Optimization Cumulative Returns')
+plt.legend(loc='upper left')
+plt.show()
+
+# 5.6. Calculate Performance Metrics and Print Summary Table
+mean3PerformanceMetrics = mean3DailyReturns.apply(PerformanceMetrics, axis=0)
+mean3PerformanceSummary = [{'0': 'Annualized:', '1': 'B&H', '2': 'Mn3Ret1', '3': 'Mn3Ret2', '4': 'Mn3Ret3',
+                             '5': 'Mn3Ret4'},
+        {'0': 'Return',
+         '1': np.round(mean3PerformanceMetrics[0][0], 4), '2': np.round(mean3PerformanceMetrics[1][0], 4),
+         '3': np.round(mean3PerformanceMetrics[2][0], 4), '4': np.round(mean3PerformanceMetrics[3][0], 4),
+         '5': np.round(mean3PerformanceMetrics[4][0], 4)},
+        {'0': 'Standard Deviation',
+         '1': np.round(mean3PerformanceMetrics[0][1], 4), '2': np.round(mean3PerformanceMetrics[1][1], 4),
+         '3': np.round(mean3PerformanceMetrics[2][1], 4), '4': np.round(mean3PerformanceMetrics[3][1], 4),
+         '5': np.round(mean3PerformanceMetrics[4][1], 4)},
+        {'0': 'Sharpe Ratio (Rf=0%)',
+         '1': np.round(mean3PerformanceMetrics[0][2], 4), '2': np.round(mean3PerformanceMetrics[1][2], 4),
+         '3': np.round(mean3PerformanceMetrics[2][2], 4), '4': np.round(mean3PerformanceMetrics[3][2], 4),
+         '5': np.round(mean3PerformanceMetrics[4][2], 4)}]
+mean3PerformanceSummary = pd.DataFrame(mean3PerformanceSummary)
+print('')
+print('== Strategy Parameters Optimization Performace Summary ==')
+print('')
+print(mean3PerformanceSummary)
+print('')
+
+# 6.1. Calculate Multiple Hypothesis Testing P-Values
+mean3MultipleTTests = mean3DailyReturns.iloc[:, 1:5].apply(st.ttest_1samp, axis=0, popmean=0, nan_policy='omit')
+mean3MultiplePValues = (mean3MultipleTTests[0][1], mean3MultipleTTests[1][1], mean3MultipleTTests[2][1],
+                         mean3MultipleTTests[3][1])
+
+# 6.2. Adjust Multiple Hypothesis Testing P-Values Calculations
+mean3MultiplePValuesFWE = mt.multipletests(mean3MultiplePValues, alpha=0.05, method='bonferroni',
+                                                   is_sorted=False, returnsorted=False)
+mean3MultiplePValuesFDR = mt.multipletests(mean3MultiplePValues, alpha=0.05, method='fdr_bh',
+                                                   is_sorted=False, returnsorted=False)
+
+# 6.3. Print Multiple Hypothesis Testing P-Values Adjustment Summary Table
+mean3MultiplePValuesSummary = [{'0': '', '1': 'Mn3Ret1', '2': 'Mn3Ret2', '3': 'Mn3Ret3', '4': 'Mn3Ret4'},
+        {'0': 'PValues',
+         '1': np.round(mean3MultiplePValues[0], 4), '2': np.round(mean3MultiplePValues[1], 4),
+         '3': np.round(mean3MultiplePValues[2], 4), '4': np.round(mean3MultiplePValues[3], 4)},
+        {'0': 'PValues FWE',
+         '1': np.round(mean3MultiplePValuesFWE[1][0], 4), '2': np.round(mean3MultiplePValuesFWE[1][1], 4),
+         '3': np.round(mean3MultiplePValuesFWE[1][2], 4), '4': np.round(mean3MultiplePValuesFWE[1][3], 4)},
+        {'0': 'PValues FDR',
+         '1': np.round(mean3MultiplePValuesFDR[1][0], 4), '2': np.round(mean3MultiplePValuesFDR[1][1], 4),
+         '3': np.round(mean3MultiplePValuesFDR[1][2], 4), '4': np.round(mean3MultiplePValuesFDR[1][3], 4)}]
+mean3MultiplePValuesSummary = pd.DataFrame(mean3MultiplePValuesSummary)
+print('')
+print('== Multiple Hypothesis Testing P-Values Adjustments ==')
+print('')
+print(mean3MultiplePValuesSummary)
+print('')
+
+# 7.1. Define Bootstrap Mean Function
+def bmean(x):
+    return x.mean(0)
+
+# 7.2. Do Individual Time Series Bootstrap
+mean3StartBoot = time.time()
+print('')
+print('== Individual Time Series Bootstrap ==')
+print('')
+mean3Boot = boot.CircularBlockBootstrap(block_size=10, x=mean3DailyReturns.iloc[:, 3])
+mean3BootMeans = mean3Boot.apply(func=bmean, reps=1000)
+mean3BootIntervals = mean3Boot.conf_int(func=bmean, reps=1000, method='percentile', size=0.95, tail='two')
+mean3EndBoot = time.time()
+print('')
+print('Bootstrap Running Time: ', round(mean3EndBoot - mean3StartBoot, 4), ' seconds')
+print('')
+
+# 7.3. Chart Individual Time Series Bootstrap Histogram
+plt.hist(mean3BootMeans, bins=20, density=True, label='BootMeans')
+plt.title('Population Mean Probability Distribution Simulation')
+plt.axvline(x=np.mean(mean3DailyReturns.iloc[:, 3]), color='purple', linestyle='--', label='mean(Mn3Ret3)')
+plt.axvline(x=np.mean(mean3BootMeans), color='red', linestyle='--', label='mean(BootMeans)')
+plt.axvline(x=0, color='orange', linestyle='--')
+plt.axvline(x=mean3BootIntervals[0], color='green', linestyle='--', label='BootLowerCI')
+plt.axvline(x=mean3BootIntervals[1], color='green', linestyle='--', label='BootUpperCI')
+plt.ylabel('Density')
+plt.xlabel('Bin Edges')
+plt.legend(loc='upper right')
+plt.show()
+
+# 7.4. Calculate Individual Time Series Bootstrap P-Value
+mean3BootPValue = 2 * min(np.mean(mean3BootMeans <= 0), np.mean(mean3BootMeans > 0))
+
+# 7.5. Adjust Individual Time Series Bootstrap P-Value Calculation
+mean3BootPValueFWE = 1 - (1 - mean3BootPValue) ** 4
+print('')
+print('== Individual Time Series Bootstrap Hypothesis Testing ==')
+print('')
+print('Mn3Ret3 P-Value:', np.round(mean3BootPValue, 4))
+print('Mn3Ret3 P-Value FWE:', np.round(mean3BootPValueFWE, 4))

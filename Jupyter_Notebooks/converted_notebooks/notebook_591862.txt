@@ -1,0 +1,35 @@
+import pandas as pd
+%matplotlib inline
+import matplotlib.pyplot as plt 
+import statsmodels.formula.api as smf 
+
+df = pd.read_csv("../data/hanford.csv")
+df.head()
+
+df.describe()
+
+df.corr()
+
+df.plot(kind='scatter',x='Exposure',y='Mortality')
+
+print('Yes.')
+
+lm = smf.ols(formula="Mortality~Exposure",data=df).fit() 
+lm.params
+
+intercept, slope = lm.params
+
+df.plot(kind='scatter',x='Exposure',y='Mortality',color='steelblue',linewidth=0)
+plt.plot(df["Exposure"],slope*df["Exposure"]+intercept,"-",color="red")
+
+lm.summary()
+
+print("R^2 equals to 0.858.")
+
+print("The mortality rate of exposure 10 is", 10*slope+intercept)
+
+def get_mr(exposure):
+    rate = exposure*slope + intercept
+    return rate
+
+get_mr(10)

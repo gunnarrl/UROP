@@ -1,0 +1,244 @@
+import pandas as pd
+
+# Data source: https://www.kaggle.com/nickhould/craft-cans/data
+# Import beers data
+beers = pd.read_csv('data/beers.csv', index_col=0)
+
+# Import breweries data
+breweries = pd.read_csv('data/breweries.csv', index_col=0)
+
+def exercise_1(beers):
+    """ 
+    Create a copy of the beers DataFrame called original_beers
+    Drop lines 3, 14, 15, 92 and 65 of beers
+    
+    Args:
+        beers (pd.DataFrame): the input DataFrame
+
+    Returns:
+        original_beers (pd.DataFrame): the original beers DataFrame
+        beers (pd.DataFrame): the transformed DataFrame
+
+    """
+    
+    # create the original_beers DataFrame
+    # YOUR CODE HERE
+    raise NotImplementedError()
+    
+    # drop lines 3, 14, 15, 92 and 65 of beers
+    # YOUR CODE HERE
+    raise NotImplementedError()
+    
+    # return original_beers and beers
+    # YOUR CODE HERE
+    raise NotImplementedError()
+
+# This cell is what will test your code, please ignore it!
+
+def exercise_2(beers):
+    """ 
+    Drop column ibu
+    
+    Args:
+        beers (pd.DataFrame): the input DataFrame
+
+    Returns:
+        beers (pd.DataFrame): the transformed DataFrame
+
+    """
+    
+    # drop column ibu
+    # YOUR CODE HERE
+    raise NotImplementedError()
+    
+    # return the transformed DataFrame
+    # YOUR CODE HERE
+    raise NotImplementedError()
+
+# This cell is what will test your code, please ignore it!
+
+def exercise_3(beers):
+    """ 
+    Set column brewery_id as index
+    Sort the index
+    
+    Args:
+        beers (pd.DataFrame): the input DataFrame
+
+    Returns:
+        beers (pd.DataFrame): the transformed DataFrame
+
+    """
+    
+    # set brewery_id as index
+    # YOUR CODE HERE
+    raise NotImplementedError()
+    
+    # sort the index
+    # YOUR CODE HERE
+    raise NotImplementedError()
+    
+    # return the transformed DataFrame
+    # YOUR CODE HERE
+    raise NotImplementedError()
+
+# This cell is what will test your code, please ignore it!
+
+def exercise_4(beers, breweries):
+    """ 
+    Define the formula to compute the shape of the concatenation of the beers and breweries DataFrames
+    
+    Args:
+        beers (pd.DataFrame): input DataFrame
+        breweries (pd.DataFrame): input DataFrame
+
+    Returns:
+        shape (tuple): the shape of the DataFrame that results from concatenating the two input DataFrames
+
+    """
+    
+    # find the resulting number of rows 
+    # rows = ...
+    # YOUR CODE HERE
+    raise NotImplementedError()
+    
+    # find the resulting number of columns 
+    # columns = ...
+    # YOUR CODE HERE
+    raise NotImplementedError()
+    
+    # return a tuple with the shape
+    # YOUR CODE HERE
+    raise NotImplementedError()
+
+# This cell is what will test your code, please ignore it!
+
+def exercise_5(beers, breweries):
+    """ 
+    Concatenate the beers and breweries DataFrames
+    Get the shape of the resulting DataFrame
+    
+    Args:
+        beers (pd.DataFrame): input DataFrame
+        breweries (pd.DataFrame): input DataFrame
+
+    Returns:
+        df (pd.DataFrame): the result of concatenating beers and breweries
+        shape (tuple): the shape of df
+
+    """
+
+    # YOUR CODE HERE
+    raise NotImplementedError()
+
+# This cell is what will test your code, please ignore it!
+
+def exercise_6(df):
+    """ 
+    Reset the DataFrame index
+    
+    Args:
+        df (pd.DataFrame): input DataFrame
+
+    Returns:
+        df (pd.DataFrame): transformed DataFrame
+
+    """
+    
+    # Reset the DataFrame index
+    # df = ...
+    # YOUR CODE HERE
+    raise NotImplementedError()
+    
+    # NOT GRADED -> when we reset the index, the new column will be called index.
+    # This instruction renames that column brewery_id
+    df = df.rename(columns={'index': 'brewery_id'})
+    
+    # Return the transformed DataFrame
+    # YOUR CODE HERE
+    raise NotImplementedError()
+
+# This cell is what will test your code, please ignore it!
+
+def exercise_7(df):
+    """ 
+    Add a centilitres column to the DataFrame
+    
+    Args:
+        df (pd.DataFrame): input DataFrame
+
+    Returns:
+        df (pd.DataFrame): transformed DataFrame
+
+    """
+    
+    # YOUR CODE HERE
+    raise NotImplementedError()
+
+# This cell is what will test your code, please ignore it!
+
+def exercise_8(df):
+    """ 
+    Compute the average abv per beer style
+    Order the results from the most alcoholic to the leat alcoholic style
+    Return the top three rows
+    
+    Args:
+        df (pd.DataFrame): input DataFrame
+
+    Returns:
+        df (pd.DataFrame): transformed DataFrame
+
+    """
+    
+    # Compute the average abvs and order the resulting DataFrame
+    # df = ...
+    # YOUR CODE HERE
+    raise NotImplementedError()
+    
+    # Return the top three rows
+    # YOUR CODE HERE
+    raise NotImplementedError()
+
+# This cell is what will test your code, please ignore it!
+
+def exercise_9(df):
+    """ 
+    Get the least alcoholic beers per brewery
+    Return the top 5 brewery names
+    
+    Args:
+        df (pd.DataFrame): input DataFrame
+
+    Returns:
+        brewery_names (list): the top 5 least alcoholic breweries, name list
+
+    """
+    
+    # Group the breweries, get the average abv per brewery and get the top 5 least alcoholic ones
+    # YOUR CODE HERE
+    raise NotImplementedError()
+    
+    # Return the brewery names
+    # YOUR CODE HERE
+    raise NotImplementedError()
+
+# This cell is what will test your code, please ignore it!
+
+def exercise_10(df):
+    """ 
+    Get the state with more beers produced
+    Return the state code
+    
+    Args:
+        df (pd.DataFrame): input DataFrame
+
+    Returns:
+        state_code (string): the state code of the state which has produce more beers
+
+    """
+
+    # YOUR CODE HERE
+    raise NotImplementedError()
+
+# This cell is what will test your code, please ignore it!

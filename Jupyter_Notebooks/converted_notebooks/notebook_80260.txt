@@ -1,0 +1,71 @@
+from time import sleep
+
+def inc(x):
+    from random import random
+    sleep(random())
+    return x + 1
+
+def dec(x):
+    from random import random
+    sleep(random())
+    return x - 1
+    
+def add(x, y):
+    from random import random
+    sleep(random())
+    return x + y
+
+%%time
+x = inc(1)
+y = dec(2)
+z = add(x, y)
+z
+
+import dask
+inc = dask.delayed(inc)
+dec = dask.delayed(dec)
+add = dask.delayed(add)
+
+%%time
+x = inc(1)
+y = dec(2)
+z = add(x, y)
+z
+
+z
+
+z.visualize(rankdir='LR')
+
+%%time
+z.compute()
+
+from dask.distributed import Client, progress
+c = Client()
+c
+
+z.compute()
+
+%%time
+zs = []
+for i in range(256):
+    x = inc(i)
+    y = dec(x)
+    z = add(x, y)
+    zs.append(z)
+    
+zs = dask.persist(*zs)
+total = dask.delayed(sum)(zs)
+
+total.compute()
+
+L = zs
+while len(L) > 1:
+    new_L = []
+    for i in range(0, len(L), 2):
+        lazy = add(L[i], L[i + 1])  # add neighbors
+        new_L.append(lazy)
+    L = new_L                       # swap old list for new
+
+dask.visualize(*L)
+
+dask.compute(L)

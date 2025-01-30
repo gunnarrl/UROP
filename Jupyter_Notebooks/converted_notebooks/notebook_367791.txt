@@ -1,0 +1,230 @@
+# General purpose data handling and graphing
+import random
+import copy as cp
+import numpy as np
+import pandas as pd
+from pylab import *
+from matplotlib import pyplot as plt
+from matplotlib.colors import ListedColormap
+import seaborn as sns
+
+# Clustering
+import scipy.cluster as clu
+import scipy.spatial as spa
+import sklearn.decomposition as dec
+import sklearn.cluster as skc
+import sklearn.ensemble as ske
+import sklearn.model_selection as skms
+import sklearn.metrics as skm
+import sklearn.preprocessing as skp
+import sklearn.tree as skt
+import scipy.cluster.hierarchy as hc
+
+matplotlib.rcParams.update({'font.size': 12}) # bigger text
+
+# Relates compound numbers to names. 
+# Analysis was originally performed with compound names blinded.
+compound_names = {
+    1: 'Atorvastatin',
+    2: 'Simvastatin',
+    3: 'Propranolol',
+    4: 'Betaxolol',
+    5: 'Alprenolol',
+    6: 'Practolol',
+    7: 'Salbutamol',
+    8: 'Isoproteranol',
+    9: 'Chloroquine',
+    10: 'Mefloquine',
+    11: 'Clotrimazole',
+    12: 'Lumefantrine',
+    13: 'Piperaquine',
+    14: 'Bilirubin',
+    15: 'Alpha-tocopherol',
+    16: 'Probucol',
+    17: 'Ascorbate',
+    18: 'Dehydroascorbate',
+    19: 'Chlorpromazine',
+    20: 'Clomipramine',
+    21: 'Chembridge SMM_1 (ID: 19635129)',
+    22: 'Chembridge SMM_2 (ID: 48011879)',
+    23: 'Chembridge_SMM_3 (ID: 60165744)',
+    24: 'Chembridge_SMM_4 (ID: 6965313)',
+    25: 'ACMP',
+    26: 'NITD609',
+    27: 'Quercitin',
+    28: 'Norflurazon'
+}
+# pd.DataFrame(pd.Series(compound_names))
+
+# Import chemometric data and rescue phenotype data
+
+dat_cm = pd.read_csv('Supplementary table - HAL_Rescue_Compounds.csv') # read data 
+dat_cm.index = dat_cm['Compound'] # preserve IDs
+dat_cm = dat_cm.drop(columns='Compound')
+dat_cm = dat_cm.transpose()
+
+# Data labels: rescue phenotype
+dat_lab = dat_cm['Rescue'] 
+dat_cm = dat_cm.drop(columns='Rescue')
+
+# Log-transform these columns to make them more informative, 
+# given their highly skewed distribution
+dat_cm['Lipid accumulation  ratio (LAR)'] \
+    = np.log(dat_cm['Lipid accumulation  ratio (LAR)'])
+dat_cm['Vacuolar accumulation  ratio (VAR)']\
+    = np.log(dat_cm['Vacuolar accumulation  ratio (VAR)'])
+
+dat_cm = dat_cm.drop(columns='log D7.4 (ChemAxon)') 
+    # turns out this is the same as log LAR, so we drop it
+
+dat_cm_scaled = pd.DataFrame( 
+    skp.scale( dat_cm,axis=0 ), 
+    index=dat_cm.index, columns=dat_cm.columns 
+) 
+    # we rescale along time points, each protein independently
+
+pca = dec.PCA() # create PCA object
+pca.fit(dat_cm_scaled) # fit to data, only numeric data
+dat_pca = pca.transform(dat_cm_scaled) # transform it to matrix
+
+print('explained variance ratio (first components): %s'
+      % str(np.sum(pca.explained_variance_ratio_[0:2])))
+
+# Explained variance plot
+
+fig = plt.figure()
+ax = fig.add_subplot(1,1,1) 
+ax.set_xlabel('Principal component')
+ax.set_ylabel('Explained variance')
+
+sns.barplot(np.arange(1,dat_pca.shape[1]+1),pca.explained_variance_ratio_)
+plt.tight_layout()
+fig.savefig("PCA_Explained_variance.png", dpi=300)
+
+# Loadings
+
+ld = pca.components_
+fig = plt.figure(figsize = (7,6))
+ax = fig.add_subplot(1,1,1) 
+plt.scatter(ld[0,:],ld[1,:], alpha=0.6, label="Loadings", color='purple');
+ax.set_xlabel('Principal Component 1')
+ax.set_ylabel('Principal Component 2')
+for i in range(ld.shape[1]): # show text for all
+    if i%50==0:
+        plt.text(ld[0,i]+0.01,ld[1,i]+0.003,dat_cm_scaled.columns[i],fontsize=10,alpha=0.6)
+    else:
+        plt.text(ld[0,i]+0.01,ld[1,i]-0.02,dat_cm_scaled.columns[i],fontsize=10,alpha=0.6)
+
+plt.tight_layout()
+fig.savefig("Loadings_12.png", dpi=300)
+fig.savefig("Loadings_12.eps", dpi=300)
+
+# PC plot by phenotype
+
+fig = plt.figure(figsize = (5,5))
+ax = fig.add_subplot(1,1,1) 
+colors = sns.color_palette('colorblind', 2) 
+    # get a color palette of right length
+types = ['Rescue','No rescue']
+ax.set_xlabel('Principal Component 1')
+ax.set_ylabel('Principal Component 2')
+
+for lab, color in zip(dat_lab.unique(),colors): 
+        # plots first one group of points with one color, then the other
+    plt.scatter(dat_pca[dat_lab == lab, 0], dat_pca[dat_lab == lab, 1], 
+                color=color, alpha=.8, lw=2,label=types[int(lab==0)])
+    
+for i in range(len(dat_cm_scaled.index)): # show text for all
+    plt.text(dat_pca[i,0]-0.2,dat_pca[i,1]-0.3,
+             dat_cm_scaled.index[i],fontsize=10,alpha=0.6)
+    
+plt.legend(loc='best', shadow=False, scatterpoints=1)
+
+plt.tight_layout()
+fig.savefig("PCA_by_phenotype.png", dpi=300)
+fig.savefig("PCA_by_phenotype.eps", dpi=300)
+
+'''
+Plots clustermaps
+'''
+def heatmapClusters(
+    dat,labels,method='average',metric='euclidean',
+    file_name="",col_palette=""):
+
+    # Plot
+    dat = dat.transpose() 
+        # we put the features along rows of heatmap to 
+        # get compound dendrogram on top
+    dat.columns = [
+        str(i+1)+': '+compound_names[i+1] for i in range(len(compound_names))
+    ] # change index to names
+    if col_palette == "": # default behavior for colors
+        col_palette = sns.color_palette('colorblind', len(labels.unique())) 
+        # get a color palette of right length
+        
+    lut = dict(zip(labels.unique(), col_palette)) 
+        # associate each cluster with a color
+    row_colors = pd.Series(labels).map(lut) 
+        # mark each clade with a color
+    row_colors.index = dat.columns 
+        # allows correct colorbar mapping
+    g = sns.clustermap(
+        dat, col_colors=row_colors,method=method,metric=metric, 
+        cbar_kws={'label': 'Scaled value'}, 
+        cmap=sns.cubehelix_palette(start=-1, rot=1, as_cmap=True, reverse=True), 
+        figsize=(12,10)
+    ) # show it
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), 
+                                 rotation=45, horizontalalignment='right')
+    
+    if len(file_name) > 0:
+        plt.tight_layout()
+        g.savefig(file_name+".eps", dpi=300)
+    
+    return g
+
+# Best clustermap, with rescue phenotype color bar
+
+fig = plt.figure()
+g = heatmapClusters(dat_cm_scaled,dat_lab,
+                    method='complete',metric='cityblock')
+g.savefig("Compounds_heatmap_phenotypes.png", dpi=300)
+g.savefig("Compounds_heatmap_phenotypes.eps", dpi=300)
+
+figure = plt.figure(figsize=(10,6))
+
+dat_melt = pd.DataFrame(
+    dat_pca, columns=[i+1 for i in range(dat_pca.shape[1])], 
+    index=dat_lab.index 
+)
+dat_melt['Rescue'] = dat_lab
+dat_melt = dat_melt.melt(id_vars=['Rescue'])
+dat_melt.columns = ['Rescue','Principal Component','Value']
+dat_melt.loc[ dat_melt['Rescue']==1, 'Rescue' ] = 'Rescue'
+dat_melt.loc[ dat_melt['Rescue']==0, 'Rescue' ] = 'No rescue'
+
+ax = sns.violinplot(x='Principal Component', y='Value', hue='Rescue',
+                    data=dat_melt, palette="muted", split=True)
+# ax.set_xticklabels(ax.get_xticklabels(), rotation=45, 
+#                    horizontalalignment='right')
+
+figure.tight_layout()
+figure.savefig("PC_Comp.png", dpi=300)
+# figure.savefig("PC_Comp.eps", dpi=300)
+
+dat = pd.read_csv('27 lipocalins percentage matrix.csv') # read data 
+dat.head()
+
+dat.columns = ['a','b','organism'] + list(dat['BBP Pieris brassicae'])
+
+dat.index = list(dat['organism'])
+dat = dat.drop(columns=['a','b','organism'])
+dat = 100-dat
+
+dat.head()
+
+linkage = hc.linkage(spa.distance.squareform(dat), method='weighted',optimal_ordering=True)
+g = sns.clustermap(dat, row_linkage=linkage, col_linkage=linkage, 
+                   cmap=sns.cubehelix_palette(start=.5, rot=-.75, as_cmap=True, reverse=True), 
+                   cbar_kws={'label': '% Distance'}) # hierarchical clustering
+g.savefig("MFP_Dendrogram.eps", dpi=300)

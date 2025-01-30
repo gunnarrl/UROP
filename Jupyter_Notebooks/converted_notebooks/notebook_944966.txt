@@ -1,0 +1,91 @@
+import math
+
+q = 0.6
+P_mars = 2.0 * 10 ** -6
+A_left = 7.6    # cm^2
+L_left = 131.2  # cm
+A_right = 6.3   # cm^2
+L_right = 126.1 # cm
+
+def solar_torque(P, A, L, q):
+    """
+    Calculates the solar torque (T) based on the Solar Pressure (P), spacecraft Area (A), 
+    distance from centroid of surface A (L), and reflective factor (q)
+    
+    This function uses the following formula:
+        
+        T = P * A * L * (1 + q)
+    
+    
+    Parameters:
+    -----------
+    :param P: Solar Pressure of the orbiting planet (in W/m^2)
+    :param A: Area of the spacecraft side (in m^2)
+    :param L: Distance from the centroid of the surface A (in m)
+    :param q: Reflectance factor between 0 and 1
+    """
+    if not 0 <= q <=1:
+        raise ValueError("q must be between 0 and 1")
+    return P * A * L * (1 + q)
+
+T_right = solar_torque(P_mars, A_right / 100, L_right / 100, q)
+T_left = solar_torque(P_mars, A_left / 100, L_left / 100, q)
+
+print("Total Torque = {}".format(T_right + T_left))
+
+def magnetic_torque(D, B=None, M=None, r=None):
+    """
+    Calculates the magnetic torque on a space craft orbiting a planetary object based on the 
+    residule dipole (D) of the spacecraft and the planetary object's magnetic field (B).
+    
+    This function uses the following formula:
+    
+        T = 10e-7 * D * B
+        
+    Where:
+        
+        B = 2 * M / r^3
+        
+    If B isn't defined, it's assumed that M and r will be, otherwise a ValueError is raised.  
+    If B is defined, the function uses that value, even when M and/or r is defined.  
+    
+    Parameters:
+    -----------
+    :param D: Residual dipole of the spacecraft (in pole-cm)
+    :param B: Planetary object's magnetic field (in gauss)
+    :param M: Magnetic moment of the planetary object (in emu)
+    :param r: Spacecraft orbital radius (in cm)
+    """
+    if B is None and (M is None or r is None):
+        raise ValueError("B or M and r must be defined!")
+    
+    if B is None:
+        B = 2 * M / r ** 3
+        
+    return 10 ** -7 * D * B
+
+mars_r = 3.397  # km
+mars_orbit_dist = .400 # km
+
+mars_B_o = 5 * 10**-8
+mars_r_o = mars_r * 10 ** 8
+r = mars_r + mars_orbit_dist * 10 ** 8
+B = (mars_B_o * mars_r_o ** 3) / (r ** 3) * math.sqrt((3 * math.sin(0)**2 + 1))
+
+B
+
+T_m_left = magnetic_torque(A_left, B)
+T_m_right = magnetic_torque(A_right, B)
+print(T_m_left, T_m_right)
+
+T_m_right < T_right and T_m_left < T_left
+
+def gravity_gradient_torque(u, r, I_z, I_y, theta):
+    return 3 * u / r ** 3 * abs(I_z - I_y) * theta
+
+mars_u = 324858.8
+T_g = gravity_gradient_torque(mars_u, r, L_left / 100, L_right / 100, math.pi / 4)
+
+T_g
+
+T_g < T_left and T_g < T_right

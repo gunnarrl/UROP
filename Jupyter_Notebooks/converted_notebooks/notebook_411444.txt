@@ -1,0 +1,438 @@
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+from sklearn.datasets import load_wine
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, f1_score
+from sklearn.model_selection import KFold, train_test_split, GridSearchCV, RandomizedSearchCV
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.base import TransformerMixin
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import GridSearchCV
+
+%matplotlib inline
+%load_ext pycodestyle_magic
+
+##%%pycodestyle
+
+
+class MyDecisionTreeClassifier:
+    NON_LEAF_TYPE = 0
+    LEAF_TYPE = 1
+
+    def __init__(self, min_samples_split=2, max_depth=None, sufficient_share=1.0, criterion='gini', max_features=None):
+        self.tree = dict()
+        self.min_samples_split = min_samples_split
+        self.max_depth = max_depth
+        self.sufficient_share = sufficient_share
+        self.num_class = -1
+        self.feature_importances_ = None
+        if criterion == 'gini':
+            self.G_function = self.__gini
+        elif criterion == 'entropy':
+            self.G_function = self.__entropy
+        elif criterion == 'misclass':
+            self.G_function = self.__misclass
+        else:
+            print('invalid criterion name')
+            raise
+
+        if max_features == 'sqrt':
+            self.get_feature_ids = self.__get_feature_ids_sqrt
+        elif max_features == 'log2':
+            self.get_feature_ids = self.__get_feature_ids_log2
+        elif max_features == None:
+            self.get_feature_ids = self.__get_feature_ids_N
+        else:
+            print('invalid max_features name')
+            raise
+
+    def __gini(self, l_c, l_s, r_c, r_s):
+        l_s = l_s.astype('float')
+        r_s = r_s.astype('float')
+        l_w = l_s / (l_s + r_s)
+        return l_w * (1 - ((l_c / l_s)**2).sum(axis=1, keepdims=True)) + (1 - l_w) * (1 - ((r_c / r_s)**2).sum(axis=1, keepdims=True))
+    
+    def __entropy(self, l_c, l_s, r_c, r_s):
+        p_l = l_c / l_s
+        p_r = r_c / r_s
+        h_l = -(p_l * np.nan_to_num(np.log2(p_l))).sum(axis=1, keepdims=True)
+        h_r = -(p_r * np.nan_to_num(np.log2(p_r))).sum(axis=1, keepdims=True)
+        l_w = l_s / (l_s + r_s)
+        return l_w * h_l + (1 - l_w) * h_r
+
+    def __misclass(self, l_c, l_s, r_c, r_s):
+        l_w = l_s / (l_s + r_s)
+        
+        return l_w * (1 - np.max((l_c / l_s), axis=1, keepdims=True)) + (1 - l_w) * (1 - np.max((r_c / r_s), axis=1, keepdims=True))
+
+    def __get_feature_ids_sqrt(self, n_feature):
+        feature_ids = np.arange(n_feature)
+        np.random.shuffle(feature_ids)
+        return feature_ids[:int(np.sqrt(n_feature))]
+        
+    def __get_feature_ids_log2(self, n_feature):
+        feature_ids = np.arange(n_feature)
+        np.random.shuffle(feature_ids)
+        return feature_ids[:int(np.log2(n_feature))]
+
+    def __get_feature_ids_N(self, n_feature):
+        return np.arange(n_feature)
+    
+    def __sort_samples(self, x, y):
+        sorted_idx = x.argsort()
+        return x[sorted_idx], y[sorted_idx]
+
+    def __div_samples(self, x, y, feature_id, threshold):
+        left_mask = x[:, feature_id] > threshold
+        right_mask = ~left_mask
+        return x[left_mask], x[right_mask], y[left_mask], y[right_mask]
+
+    def __find_threshold(self, x, y):
+        # Что делает этот блок кода?
+        # Сортируем элементы по x, для того, чтобы лучше находить разбиение по непрерывному признаку
+        # class_number - количество уникальных классов
+        sorted_x, sorted_y = self.__sort_samples(x, y)
+        #class_number = np.unique(y).shape[0]
+        class_number = self.num_class
+        # Slack feature!
+        cut_size = int(self.min_samples_split / 2) - 1
+        # Что делает этот блок кода?
+        # Вырезаем из y середину по минимальному количеству элементов разбиения(min_samples_split\cut_size)
+        splitted_sorted_y = sorted_y[cut_size:-cut_size] if cut_size != 0 else sorted_y 
+        # Получаем индексы, по которым происходит переход между классами, т.е находим индексы порогов 
+        r_border_ids = np.where(splitted_sorted_y[:-1] != splitted_sorted_y[1:])[0] + (cut_size + 1)
+        
+        if len(r_border_ids) == 0:
+            return float('+inf'), None
+        
+        # Что делает этот блок кода?
+        # eq_el_count - расстояния между порогами
+        eq_el_count = r_border_ids - np.append([cut_size], r_border_ids[:-1])
+        # Кодируем категориальные переменные(например для класса 2 будет 0, 0, 1) для каждой левой части разбиений
+        one_hot_code = np.zeros((r_border_ids.shape[0], class_number))
+        one_hot_code[np.arange(r_border_ids.shape[0]), sorted_y[r_border_ids - 1]] = 1
+        # Считаем количество классов в каждой левой части разбиений
+        class_increments = one_hot_code * eq_el_count.reshape(-1, 1)
+        # И добавляем оставшуюся, отрезанную крайнюю левую часть
+        class_increments[0] = class_increments[0] + np.bincount(sorted_y[:cut_size], minlength=class_number)
+        
+        # Что делает этот блок кода?
+        # Считаем сумму количеств классов для каждой левой части
+        l_class_count = np.cumsum(class_increments, axis=0)
+        # Сумма количеств классов для правой части. 
+        # По сути вычитаем из суммы всех классов суммы количеств левой частей разбиений
+        r_class_count = np.bincount(sorted_y, minlength=class_number) - l_class_count
+        # Количество элементов левой и правой частей разбиений
+        l_sizes = r_border_ids.reshape(l_class_count.shape[0], 1)
+        r_sizes = sorted_y.shape[0] - l_sizes
+
+        # Что делает этот блок кода?
+        # Вычисление неопределенности по заданному критерию для каждой из частей разбиений
+        gs = self.G_function(l_class_count, l_sizes, r_class_count, r_sizes)
+        # Ищем индекс наименьшую неопределенность
+        idx = np.argmin(gs)
+    
+        # Что делает этот блок кода?
+        # Получает индекс наилучшего разбиения
+        left_el_id = l_sizes[idx][0]
+        # Возвращает из функции значение наименьшей неопределенности и медиану разбиения к этой неопределенности
+        return gs[idx], (sorted_x[left_el_id-1] + sorted_x[left_el_id]) / 2.0
+    
+    def __create_leaf(self, y):
+        classes_count = np.bincount(y, minlength=self.num_class).astype('float')
+        probs = classes_count / np.sum(classes_count)
+        return (self.LEAF_TYPE, classes_count.argmax(), probs)
+    
+    def __fit_node(self, x, y, node_id, depth, pred_f=-1):
+        # Ваш код
+        # Необходимо использовать следующее:
+        # self.LEAF_TYPE
+        # self.NON_LEAF_TYPE
+        
+        # self.tree
+        # self.max_depth
+        # self.sufficient_share
+        # self.min_samples_split
+
+        # self.get_feature_ids
+        # self.__find_threshold
+        # self.__div_samples
+        # self.__fit_node
+        if depth == self.max_depth or np.unique(y).size == 1 or y.size <= self.min_samples_split:
+            print("Stopping criteria 1")
+            print("Y: ", y)
+            self.tree[node_id] = self.__create_leaf(y)
+            return
+        feature_ids = self.get_feature_ids(x.shape[1])
+        thresholds = np.empty(x.shape[1])
+        gss = np.empty(x.shape[1])
+        for feature_id in feature_ids:
+            gss[feature_id], thresholds[feature_id] = self.__find_threshold(x[:, feature_id], y)
+            #print("GSS: ", gss[feature_id])
+            #print("THREASHOLD: ", thresholds[feature_id])
+        best_feature_id = gss.argmin()
+        best_threashold = thresholds[best_feature_id]
+        print("BEST GS: ", gss.min())
+        print("BEST threashold: ", best_threashold)
+        print("BEST FEATURE_ID: ", best_feature_id)
+        l_x, r_x, l_y, r_y = self.__div_samples(x, y, best_feature_id, best_threashold)
+
+        print("SPLIT")
+        print("l_y: ", l_y)
+        print("r_y: ", r_y)
+        if l_y.size == 0 or r_y.size == 0:
+            #if np.unique(l_y).size != 1 or np.unique(r_y).size != 1:
+                #print("Fucking bullshit X_L", l_x)
+                #print("FUCKING BULLSHIT X_R", r_x)
+            print("Stopping criteria 2")
+            self.tree[node_id] = self.__create_leaf(y)
+            return
+        print(self.info_gain(y, l_y, r_y))
+        self.feature_importances_[best_feature_id] = self.info_gain(y, l_y, r_y).max()
+        self.tree[node_id] = (self.NON_LEAF_TYPE, best_feature_id, best_threashold)
+        # Left subtree
+        self.__fit_node(l_x, l_y, node_id * 2 + 1, depth + 1)
+        # Right subtree
+        self.__fit_node(r_x, r_y, node_id * 2 + 2, depth + 1)
+    
+    def info_gain(self, y, l_y, r_y):
+        y_c = np.bincount(y, minlength=self.num_class)
+        l_y_c = np.bincount(l_y, minlength=self.num_class)
+        r_y_c = np.bincount(r_y, minlength=self.num_class)
+        p = l_y.size / (l_y.size + r_y.size)
+        return (1 - ((y_c / y.size)**2).sum()) - p * (1 - ((l_y_c / l_y.size)**2).sum()) - (1 - p) * (1 - ((r_y_c / r_y.size)**2).sum())
+    
+    def fit(self, x, y):
+        self.num_class = np.unique(y).size
+        self.feature_importances_ = np.empty(x.shape[1])
+        self.__fit_node(x, y, 0, 0) 
+
+    def __predict_class(self, x, node_id):
+        node = self.tree[node_id]
+        if node[0] == self.__class__.NON_LEAF_TYPE:
+            _, feature_id, threshold = node
+            if x[feature_id] > threshold:
+                return self.__predict_class(x, 2 * node_id + 1)
+            else:
+                return self.__predict_class(x, 2 * node_id + 2)
+        else:
+            return node[1]
+
+    def __predict_probs(self, x, node_id):
+        node = self.tree[node_id]
+        if node[0] == self.__class__.NON_LEAF_TYPE:
+            _, feature_id, threshold = node
+            if x[feature_id] > threshold:
+                return self.__predict_probs(x, 2 * node_id + 1)
+            else:
+                return self.__predict_probs(x, 2 * node_id + 2)
+        else:
+            return node[2]
+        
+    def predict(self, X):
+        return np.array([self.__predict_class(x, 0) for x in X])
+    
+    def predict_probs(self, X):
+        return np.array([self.__predict_probs(x, 0) for x in X])
+
+    def fit_predict(self, x_train, y_train, predicted_x):
+        self.fit(x_train, y_train)
+        return self.predict(predicted_x)
+
+my_clf = MyDecisionTreeClassifier(min_samples_split=2)
+clf = DecisionTreeClassifier(min_samples_split=2)
+
+wine = load_wine()
+X_train, X_test, y_train, y_test = train_test_split(wine.data, wine.target, random_state=42, test_size=0.2, stratify=wine.target)
+
+%time clf.fit(X_train, y_train)
+
+%time my_clf.fit(X_train, y_train)
+
+#f1_score(y_pred=clf.predict(X_test), y_true=y_test, average='macro')
+print("Sklearn tree f1 on train: ", f1_score(y_pred=clf.predict(X_train), y_true=y_train, average='macro'))
+print("Sklearn tree f1 on test: ", f1_score(y_pred=clf.predict(X_test), y_true=y_test, average='macro'))
+
+print("My tree f1 on train: ", f1_score(y_pred=my_clf.predict(X_train), y_true=y_train, average='macro'))
+print("My tree f1 on test: ", f1_score(y_pred=my_clf.predict(X_test), y_true=y_test, average='macro'))
+
+# тут делаете то же самое, что и на семинаре https://github.com/stroykova/spheremailru/blob/master/2018-02/lecture_04_trees/pract-speed-dating-trees-proc.ipynb
+import pandas as pd
+import numpy as np
+
+class Transform_Speed_Dating(TransformerMixin):
+    def __init__(self):
+        self.data = None
+    
+    def fit(self, X):
+        self.df = X # It's pandas dataset
+        return self
+    
+    def transform(self, X):
+        df = self.df
+        df = df.iloc[:, :97]
+        df.iid.nunique()
+
+        df = df.drop(['id'], axis=1)
+        df = df.drop(['idg'], axis=1)
+        df.drop_duplicates(subset=['iid']).gender.value_counts()
+        df.drop_duplicates(subset=['iid']).condtn.value_counts()
+        df = df.drop(['condtn'], axis=1)
+
+        df = df.drop(['round'], axis=1)
+        df = df.drop(['position', 'positin1'], axis=1)
+        df = df.drop(['order'], axis=1)
+        df = df.drop(['partner'], axis=1)
+        df = df.drop(['age_o', 'race_o', 'pf_o_att',
+                      'pf_o_sin', 'pf_o_int',
+                      'pf_o_fun', 'pf_o_amb', 'pf_o_sha',
+                      'dec_o', 'attr_o', 'sinc_o', 'intel_o', 'fun_o',
+                      'amb_o', 'shar_o', 'like_o', 'prob_o', 'met_o'],
+                     axis=1)
+        df.drop_duplicates(subset=['iid']).age
+        df.drop_duplicates('iid').age.isnull().sum()
+        df = df.dropna(subset=['age'])
+
+        df.field_cd.isnull().sum()
+
+        df.loc[:, 'field_cd'] = df.loc[:, 'field_cd'].fillna(19)
+
+        df = df.drop(['field'], axis=1)
+        df = df.drop(['undergra'], axis=1)
+
+        df.loc[:, 'mn_sat'] = df.loc[:, 'mn_sat'].str.replace(',', '').astype(np.float)
+
+        df.drop_duplicates('iid').mn_sat
+        df.drop_duplicates('iid').mn_sat.isnull().sum()
+        df.loc[:, 'mn_sat'] = df.mn_sat.fillna(-999)
+
+        df.loc[:, 'tuition'] = df.loc[:, 'tuition'].str.replace(',', '').astype(np.float)
+        df.drop_duplicates('iid').tuition
+        df.drop_duplicates('iid').tuition.isnull().sum()
+        df.loc[:, 'tuition'] = df.tuition.fillna(-999)
+
+        df.drop_duplicates('iid').race.value_counts()
+        df.drop_duplicates('iid').age.isnull().sum()
+        df.drop_duplicates('iid').race
+        df.drop_duplicates('iid').imprace.isnull().sum()
+        df.drop_duplicates('iid').imprelig.isnull().sum()
+
+        df = df.dropna(subset=['imprelig', 'imprace'])
+
+        df = df.drop(['from', 'zipcode'], axis=1)
+        df.loc[:, 'income'] = df.loc[:, 'income'].str.replace(',', '').astype(np.float)
+
+        df.drop_duplicates('iid').loc[:, 'income']
+
+        df.loc[:, 'income'] = df.loc[:, 'income'].fillna(-999)
+
+        df = df.dropna(subset=['date'])
+
+        df.loc[:, 'career_c'] = df.loc[:, 'career_c'].fillna(18)
+
+        df = df.drop(['career'], axis=1)
+        df.loc[:, ['sports', 'tvsports', 'exercise', 'dining', 'museums', 'art', 'hiking', 'gaming',
+                   'clubbing', 'reading', 'tv', 'theater', 'movies', 'concerts', 'music', 'shopping', 'yoga']
+        ].isnull().sum()
+
+        df = df.drop(['sports', 'tvsports', 'exercise', 'dining', 'museums', 'art', 'hiking', 'gaming',
+                      'clubbing', 'reading', 'tv', 'theater', 'movies', 'concerts', 'music', 'shopping', 'yoga'], axis=1)
+        df.drop_duplicates('iid').exphappy.isnull().sum()
+        df.drop_duplicates('iid').expnum.isnull().sum()
+        df = df.drop(['expnum'], axis=1)
+
+        feat = ['iid', 'wave', 'attr1_1', 'sinc1_1', 'intel1_1', 'fun1_1', 'amb1_1', 'shar1_1']
+        temp = df.drop_duplicates(subset=['iid', 'wave']).loc[:, feat]
+        temp.loc[:, 'totalsum'] = temp.iloc[:, 2:].sum(axis=1)
+        idx = ((temp.wave < 6) | (temp.wave > 9)) & (temp.totalsum < 99)
+        temp.loc[idx,]
+        idx = ((temp.wave >= 6) & (temp.wave <= 9))
+
+        temp.loc[idx,]
+        df.loc[:, 'temp_totalsum'] = df.loc[:, ['attr1_1', 'sinc1_1', 'intel1_1', 'fun1_1', 'amb1_1', 'shar1_1']].sum(axis=1)
+        df.loc[:, ['attr1_1', 'sinc1_1', 'intel1_1', 'fun1_1', 'amb1_1', 'shar1_1']] = \
+            (df.loc[:, ['attr1_1', 'sinc1_1', 'intel1_1', 'fun1_1', 'amb1_1', 'shar1_1']].T / df.loc[:,
+                                                                                              'temp_totalsum'].T).T * 100
+        feat = ['iid', 'wave', 'attr2_1', 'sinc2_1', 'intel2_1', 'fun2_1', 'amb2_1', 'shar2_1']
+
+        temp = df.drop_duplicates(subset=['iid', 'wave']).loc[:, feat]
+        temp.loc[:, 'totalsum'] = temp.iloc[:, 2:].sum(axis=1)
+
+        idx = ((temp.wave < 6) | (temp.wave > 9)) & (temp.totalsum < 90) & (temp.totalsum != 0)
+        temp.loc[idx,]
+
+        idx = ((temp.wave >= 6) & (temp.wave <= 9))
+        temp.loc[idx,]
+
+        df.loc[:, 'temp_totalsum'] = df.loc[:, ['attr2_1', 'sinc2_1', 'intel2_1', 'fun2_1', 'amb2_1', 'shar2_1']].sum(axis=1)
+        df.loc[:, ['attr2_1', 'sinc2_1', 'intel2_1', 'fun2_1', 'amb2_1', 'shar2_1']] = \
+            (df.loc[:, ['attr2_1', 'sinc2_1', 'intel2_1', 'fun2_1', 'amb2_1', 'shar2_1']].T / df.loc[:,
+                                                                                              'temp_totalsum'].T).T * 100
+        df = df.drop(['temp_totalsum'], axis=1)
+        for i in [4, 5]:
+            feat = ['attr{}_1'.format(i), 'sinc{}_1'.format(i),
+                    'intel{}_1'.format(i), 'fun{}_1'.format(i),
+                    'amb{}_1'.format(i), 'shar{}_1'.format(i)]
+
+            if i != 4:
+                feat.remove('shar{}_1'.format(i))
+
+            df = df.drop(feat, axis=1)
+
+        df = df.drop(['wave'], axis=1)
+        df_male = df.query('gender == 1').drop_duplicates(subset=['iid', 'pid']) \
+            .drop(['gender'], axis=1) \
+            .dropna()
+        df_female = df.query('gender == 0').drop_duplicates(subset=['iid']) \
+            .drop(['gender', 'match', 'int_corr', 'samerace'], axis=1) \
+            .dropna()
+        df_female.columns = df_female.columns + '_f'
+
+        df_pair = df_male.join(df_female.set_index('iid_f'), on='pid', how='inner')
+        df_pair = df_pair.drop(['iid', 'pid'], axis=1)
+        return df_pair
+
+
+# Data prep with pipeline
+speed_dating_data = pd.read_csv('speed-dating-experiment/sdd.csv', encoding='cp1251')
+pipeline = Pipeline([('transform_speed_dating', Transform_Speed_Dating())])
+data = pipeline.fit_transform(speed_dating_data)
+
+X = data.iloc[:, 1:].values
+y = data.iloc[:, 0].values
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1)
+
+%time clf.fit(X_train, y_train)
+
+%time my_clf.fit(X_train, y_train) 
+
+print(f1_score(y_pred=clf.predict(X_test), y_true=y_test, average='macro'))
+
+print(f1_score(y_pred=my_clf.predict(X_test), y_true=y_test, average='macro'))
+
+# Classifier pipeline
+pipeline = Pipeline([('clf', MyDecisionTreeClassifier())])
+X = pipeline.fit(X_train, y_train)
+print(f1_score(y_pred=pipeline.predict(X_test), y_true=y_test, average='macro'))
+
+# Feature importance
+important_feature_ids_sklearn = clf.feature_importances_.argsort()[:10]
+print("Sklearn Feature importance")
+print(data.columns[1:][important_feature_ids_sklearn].values.reshape(-1, 1))
+important_feature_ids_my_clf = my_clf.feature_importances_.argsort()[:10]
+print("My clf Feature importance")
+print(data.columns[1:][important_feature_ids_my_clf].values.reshape(-1, 1))
+
+# Grid search
+clf = RandomForestClassifier()
+params = {"max_depth": list(range(1, 10)) + [None], "criterion": ["gini", "entropy"]}
+
+grid = GridSearchCV(clf, params, cv=2, n_jobs=-1, verbose=True)
+
+grid.fit(X_train, y_train)
+print("Best estimator")
+print(grid.best_estimator_)
+print("Best score")
+print(grid.best_score_)

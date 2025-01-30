@@ -1,0 +1,124 @@
+# Import required modules:
+import folium
+import pandas as pd
+import geopandas as gpd
+import matplotlib.pyplot as plt
+%matplotlib inline
+
+# Read in data
+data = pd.read_csv("data/seutukunta_tyollisyys_2013.csv", sep=",")
+data.head()
+
+# A layer saved to GeoJson in QGIS..
+#geodata = gpd.read_file('Seutukunnat_2018.geojson')
+
+# Get features directly from the wfs
+url = "http://geo.stat.fi/geoserver/tilastointialueet/wfs?request=GetFeature&typename=tilastointialueet:seutukunta1000k_2018&outputformat=JSON"
+geodata = gpd.read_file(url)
+
+geodata.head()
+
+data["seutukunta"] = data["seutukunta"].apply(lambda x: x[2:])
+data["seutukunta"].head()
+
+#print info
+print("Count of original attributes:", len(data))
+print("Count of original geometries:", len(geodata))
+
+# Merge data
+geodata = geodata.merge(data, on = "seutukunta")
+
+#Print info
+print("Count after the join:", len(geodata))
+
+geodata.head()
+
+## Create a static map
+
+# Define which variable to plot
+geodata.plot(column="tyollisyys")
+
+# Adjust figure size
+fig, ax = plt.subplots(1, figsize=(10, 8))
+
+# Adjust colors and add a legend
+geodata.plot(ax = ax, column="tyollisyys", scheme="quantiles", cmap="Reds", legend=True)
+
+# Create a Geo-id which is needed by the Folium (it needs to have a unique identifier for each row)
+geodata['geoid'] = geodata.index.astype(str)
+
+# Create a Map instance
+m = folium.Map(location=[60.25, 24.8], tiles = 'cartodbpositron', zoom_start=8, control_scale=True)
+
+folium.Choropleth(geo_data = geodata, 
+                  data = geodata, 
+                  columns=['geoid','tyollisyys'], 
+                  key_on='feature.id', 
+                  fill_color='RdYlBu', 
+                  line_color='white',
+                  line_weight=0,
+                  legend_name= 'Employment rate in Finland').add_to(m)
+m
+
+folium.features.GeoJson(geodata, name='Labels',
+               style_function=lambda x: {'color':'transparent','fillColor':'transparent','weight':0},
+                tooltip=folium.features.GeoJsonTooltip(fields=['tyollisyys'],
+                                              aliases = ['Employment rate'],
+                                              labels=True,
+                                              sticky=False
+                                             )
+                       ).add_to(m)
+
+m
+
+import branca
+
+# Create a series (or a dictionary?) out of the variable that you want to map
+employed_series = data.set_index('seutukunta')['tyollisyys']
+
+# Setl colorscale
+colorscale = branca.colormap.linear.RdYlBu_05.to_step(data = geodata['tyollisyys'], n = 6, method = 'quantiles')
+
+#Define style function
+def my_color_function(feature):
+    
+   employed = employed_series.get(int(feature['id']), None)
+
+   return {
+       'fillOpacity': 0.5,
+       'weight': 0,
+       'fillColor': '#black' if employed is None else colorscale(employed)
+       }
+
+# Based on :
+#https://python-visualization.github.io/folium/quickstart.html
+#https://github.com/python-visualization/folium/blob/master/examples/Colormaps.ipynb
+
+
+# Create a Map instance
+m = folium.Map(location=[60.25, 24.8], tiles = 'cartodbpositron', zoom_start=6, control_scale=True)
+
+# add geojson layer on the map, which visualizes the polygons based on your style function, and additional parameters  
+folium.GeoJson(
+   geodata,
+   name = "Employment rate in Finland (2013)",
+   style_function=my_color_function,
+   tooltip=folium.features.GeoJsonTooltip(fields=['nimi','tyollisyys'],
+                                             aliases = ['Region','Employment rate (%)'],
+                                             labels=True,
+                                             sticky=True)
+).add_to(m)
+
+
+#Add a legend
+colorscale .caption = 'Employment rate (%)'
+m.add_child(colorscale)
+
+# Create a layer control object and add it to our map instance
+folium.LayerControl().add_to(m)
+
+#Show map
+m
+
+outfp = "employment_rate_in_finland.html"
+m.save(outfp)

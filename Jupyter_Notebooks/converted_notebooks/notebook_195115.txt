@@ -1,0 +1,171 @@
+import numpy as np
+import pandas as pd
+import glob
+import os
+from bokeh.palettes import brewer
+from bokeh.palettes import Category20
+from bokeh.palettes import viridis
+from bokeh.palettes import inferno
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+from bokeh.models import Legend
+from bokeh.plotting import figure
+
+from bokeh.plotting import figure, show, output_notebook
+from bokeh.layouts import gridplot
+output_notebook()
+
+sns.set(style="ticks")
+
+file_list = glob.glob('../data/CO2 raw/*-Co2r.xls')
+
+economies = []
+
+for file in file_list:
+    economies_dirty = os.path.basename(file)
+    economies_dirty = economies_dirty[:-9]
+    economies.append(economies_dirty)
+
+names = {
+    'AUS':'01_AUS',
+    'BRN':'02_BD',
+    'CAN':'03_CDA',
+    'CHL':'04_CHL',
+    'CHN':'05_PRC',
+    'HKG':'06_HKC',
+    'IDN':'07_INA',
+    'Jpn':'08_JPN',
+    'KOR':'09_ROK',
+    'MYS':'10_MAS',
+    'MEX':'11_MEX',
+    'NZL':'12_NZ',
+    'PNG':'13_PNG',
+    'PER':'14_PE',
+    'PHL':'15_RP',
+    'RUS':'16_RUS',
+    'SGP':'17_SG',
+    'TWN':'18_CT',
+    'THA':'19_THA',
+    'USA':'20_USA',
+    'VNM':'21_VN'
+}
+
+dfs = []
+for file,economy in zip(file_list,economies):
+    #print(file)
+    _df = pd.read_excel(file,
+                      sheet_name='kt-CO2',
+                      skiprows=3,
+                        nrows=19,
+                       usecols='A:AM')
+    _df = _df.rename({'Unnamed: 0':'Item'},axis=1)
+   # _df = (_df.dropna(how="all",axis=1)
+   #           .dropna(how="all", axis=0)
+   #           .reset_index(drop=True)
+   #           .rename({'Unnamed: 0':'Item'},axis=1))
+    
+    _df = _df.melt(id_vars=['Item'],
+                var_name='Year',
+                value_name='Value')
+    _df['Economy'] = economy
+    dfs.append(_df)
+df = pd.concat(dfs)
+df = df.replace(names)
+df['Item'] = df['Item'].str.lstrip()
+df['Item'] = df['Item'].str.rstrip('1')
+df['Item'] = df['Item'].replace({'1.3  Gas':'1.3 Gas',
+                                 '1.1  Coal & Coal Products':'1.1 Coal & Coal Products',
+                                 '1.2  Crude Oil & Petroleum Products':'1.2 Crude Oil & Petroleum Products',
+                                 '2.1.1 Public Utilities':'2.1.1 Main Activity Producer',
+                                 '2.1.2 Auto-Generation':'2.1.2 Autoproducers',
+                                 '2.1.4 Own Use & Loss':'2.1.4 Loss & Own Use',
+                                 '1.4  Others':'1.4 Others'})
+df['Value'] = np.divide(df['Value'],1000)
+df = df[df['Year'] >=1990]
+economies = df['Economy'].unique().tolist()
+
+df.to_csv('../data/CO2 emissions prepared.csv', index=False)
+
+df = pd.read_csv('../data/CO2 emissions prepared.csv')
+
+df = df.sort_values(by='Economy')
+economies = df['Economy'].unique().tolist()
+df = df.reset_index(drop=True)
+
+to_plot = ['Total CO2 Emission']
+_df = df.set_index('Item')
+_df = _df.loc[to_plot]
+
+df_pivot = _df.pivot_table(index=['Year'],columns='Economy',values='Value')
+df_pivot = df_pivot.reset_index(drop=False)
+
+v = figure(width=1000, height=600,title='APEC',x_range=(1990, 2017)) 
+names = df_pivot.drop('Year',axis=1).columns.values.tolist()
+numlines=len(names)
+
+v.varea_stack(names,x='Year', 
+              color=viridis(numlines),
+              alpha=0.7,
+              muted_color=viridis(numlines), 
+              muted_alpha=0.2,
+              legend_label=names, 
+              source=df_pivot)
+v.legend.location = "top_left"
+v.legend.click_policy="mute"
+
+show(v)
+
+def stacked_area(df,things_to_plot,y_range):
+
+    df = df.loc[df['Item'].isin(things_to_plot)]
+    df = df.reset_index(drop=True)
+    df_unstacked = df.set_index(['Economy', 'Year','Item']).unstack('Item')
+    
+    figures = []
+    
+    for economy in economies:
+        _df = df_unstacked.loc[(economy,),]
+        numlines=len(_df.columns)
+        _df = _df.reset_index()
+        _df = _df.droplevel(0,axis=1)
+        _df = _df.rename({'':'Year'},axis=1)
+        names = _df.drop('Year',axis=1).columns.values.tolist()
+        
+        v = figure(width=500, 
+                   height=300,
+                   title=economy,
+                   x_range=(1990, 2017),
+                   y_range=y_range
+                  ) 
+        v.varea_stack(names, x='Year', 
+                      color=Category20[numlines],
+                      alpha=0.7,
+                      muted_color=Category20[numlines], 
+                      muted_alpha=0.2,
+                      legend_label=names, 
+                      source=_df)
+        v.legend.location = "top_left"
+        v.legend.click_policy="mute"
+        figures.append(v)
+    
+    show(gridplot(figures, ncols=3, plot_width=400, plot_height=300))
+
+fuels= ['1.1 Coal & Coal Products',
+                 '1.2 Crude Oil & Petroleum Products',
+                 '1.3 Gas']
+
+sectors= [#'2.1.1 Main Activity Producer',
+          #'2.1.2 Autoproducers',
+          #'2.1.3 Gas Processing',
+          #'2.1.4 Loss & Own Use',
+          #'2.2 Final Energy Consumption Sector',
+          '2.2.1 Industry Sector',
+          '2.2.2 Transport Sector',
+          '2.2.3 Residential & Commercial',
+          '2.2.4 Other'
+          ]
+
+stacked_area(df,fuels,(0,10000))
+
+stacked_area(df,sectors,(0,10000))

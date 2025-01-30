@@ -1,0 +1,416 @@
+import keras
+import nltk
+import numpy as np
+import os
+import pandas as pd
+import pickle
+import spacy
+
+from collections import defaultdict
+from random import choice
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction import text
+
+#!python3 -m spacy download en_core_web_lg
+nlp = spacy.load('en_core_web_lg')
+
+def load_labels(path):
+    target_predicates = set()
+
+    train = pd.read_csv(path + "annotated_fb_data_train.txt", sep="\t", usecols=[1], names=["relation"])
+    valid = pd.read_csv(path + "annotated_fb_data_valid.txt", sep="\t", usecols=[1], names=["relation"])
+    test = pd.read_csv(path + "annotated_fb_data_test.txt", sep="\t", usecols=[1], names=["relation"])
+
+    train_relations = train["relation"].to_list()
+    valid_relations = valid["relation"].to_list()
+    test_relations = test["relation"].to_list()
+
+    target_predicates.update(train_relations)
+    target_predicates.update(valid_relations)
+    target_predicates.update(test_relations)
+
+    predicates = sorted(list(target_predicates))
+    print("Initialize dataset with {} unique predicates.".format(len(predicates)))
+    pred_to_ix = {ch: i for i, ch in enumerate(predicates)}
+    ix_to_pred = {i: ch for i, ch in enumerate(predicates)}
+
+    max_len = -1
+    labels = []
+    for pred in pred_to_ix.keys():
+        pred = pred.replace('www.freebase.com/', '').replace('_', ' ').replace('/', ' ')
+        pred = preprocess(pred)
+        if max_len < len(pred):
+            max_len = len(pred)
+            max_len_ = pred
+        labels.append(pred)
+    print('Max length of relation type: ', max_len, max_len_)
+
+    return pred_to_ix, ix_to_pred, labels
+
+
+def word_to_id(data, word_to_ix):
+    """Pass a list of lists with tokens, and return list of lists of token ids """
+    return [[word_to_ix[token] if token in word_to_ix else word_to_ix['UNK'] for token in txt] for txt in data]
+
+
+def create_targets(path, pred_to_ix):
+    """Gets the identifier of each relation (appearing as text) in the file provided"""
+    df = pd.read_csv(path, sep="\t", usecols=[1], names=["relation"])
+    rel = df["relation"].to_list()  # .str.replace("www.freebase.com/m/", "")
+
+    trgts = []
+    trgts = [pred_to_ix[p] for p in rel]
+
+    return trgts
+
+def get_tokens(samples, keep):
+    # keep == None if you want to keep them all
+    sample_tokens = []
+    for sample in samples:
+        for sent_tokens in sample[:keep]:
+            sample_tokens.extend(sent_tokens)
+
+    return sample_tokens
+
+
+def keep_less_samples(samples, keep):
+    samples_new = []
+    num_of_sent = []
+
+    for sample in samples:
+        keep_samples = sample[:keep]
+        samples_new.append(keep_samples)
+        num_of_sent.append(len(keep_samples))
+
+    return samples_new, num_of_sent
+
+
+def keep_less_negative_samples(samples, keep):
+    samples_new = []
+    for i, sample in enumerate(samples):
+        keep_samples = sample[:keep[i]]
+        samples_new.append(keep_samples)
+
+    return samples_new
+
+
+def preprocess(string):
+    tokens = nltk.word_tokenize(string)
+    return tokens
+
+
+def words_to_ids(samples, word_to_ix, questions, relations, labels):
+    samples_flat = []
+    questions_ = []
+    relations_ = []
+    labels_ = []
+    for indx, sentences in enumerate(samples):
+        samples_flat.extend(sentences)
+        questions_.extend([questions[indx]] * len(sentences))
+        relations_.extend([relations[indx]] * len(sentences))
+        labels_.extend([labels[indx]] * len(sentences))
+
+    data = []
+    for sentence in samples_flat:
+        # data.append([word_to_ix[token] for token in sentence])
+        data.append([word_to_ix[token] if token in word_to_ix else word_to_ix['UNK'] for token in sentence])
+    return data, questions_, relations_, labels_
+
+
+def suffle_lists(a, b):
+    combined = list(zip(a, b))
+    random.shuffle(combined)
+
+    a[:], b[:] = zip(*combined)
+
+    return a, b
+
+def create_dict(questions_string, correct_samples, wrong_samples):
+    tokens = [token.lower() for sentence in questions_string for token in preprocess(sentence)]
+    # tokens = [token.lower() for sentence in questions_string for token in sentence.split()]
+    tokens_correct_samples = get_tokens(correct_samples, None)
+    tokens_wrong_samples = get_tokens(wrong_samples, None)
+    tokens.extend(tokens_correct_samples)
+    tokens.extend(tokens_wrong_samples)
+
+    words = sorted(list(set(tokens)))
+    data_size, vocab_size = len(tokens), len(words)
+    print("Initialize dataset with {} characters, {} unique.".format(data_size, vocab_size))
+    word_to_ix = {ch: i + 1 for i, ch in enumerate(words)}
+    ix_to_word = {i + 1: ch for i, ch in enumerate(words)}
+
+    word_to_ix['UNK'] = len(word_to_ix)
+    ix_to_word[len(ix_to_word)] = 'UNK'
+
+    return word_to_ix, ix_to_word
+
+
+def create_data(path, samples_with_answer_existing, correct_samples, wrong_samples, word_to_ix, realtions, labels,
+                pred_txt):
+    sbj_mid_ = list()
+    obj_mid_ = list()
+    question = list()
+    with open(path) as f:
+        for line in f.readlines():
+            s = line.split('\t')[0]
+            s = s.replace("www.freebase.com/m/", "")
+            sbj_mid_.append(s)
+
+            s = line.split('\t')[2]
+            s = s.replace("www.freebase.com/m/", "")
+            obj_mid_.append(s)
+
+            question.append(line.split('\t')[3])
+    
+    questions_ex_answ = [preprocess(question[q]) for q in samples_with_answer_existing]
+    questions_ex_answ_ = []
+    for q in questions_ex_answ:
+        sentence_ids = [word_to_ix[token.lower()] if token.lower() in word_to_ix else word_to_ix['UNK'] for token in q]
+        questions_ex_answ_.append(sentence_ids)
+    
+    negative_relations = list()
+    negative_labels = list()
+    for inp in labels:
+        neg = choice(labels_intersect[inp])
+        negative_relations.append(pred_txt[neg])
+        negative_labels.append(neg)
+
+    # create question and text data
+    correct_samples_less, num = keep_less_samples(correct_samples, 3)
+    data_correct, questions_corr_ans, relations_corr_ans, labels_corr_ans = words_to_ids(correct_samples_less,
+                                                                                         word_to_ix, questions_ex_answ_,
+                                                                                         realtions, labels)
+
+    wrong_samples_less = keep_less_negative_samples(wrong_samples, num)
+    data_wrong, questions_wrong_ans, relations_wrong_ans, labels_wrong_ans = words_to_ids(correct_samples_less,
+                                                                                          word_to_ix,
+                                                                                          questions_ex_answ_,
+                                                                                          negative_relations,
+                                                                                          negative_labels)
+
+    data_correct = keras.preprocessing.sequence.pad_sequences(data_correct, maxlen=100, dtype='int32', padding='post',
+                                                              truncating='post', value=0.0)
+    data_wrong = keras.preprocessing.sequence.pad_sequences(data_wrong, maxlen=100, dtype='int32', padding='post',
+                                                            truncating='post', value=0.0)
+
+    relations_corr_ans = keras.preprocessing.sequence.pad_sequences(relations_corr_ans, maxlen=17, dtype='int32',
+                                                                    padding='post', truncating='post', value=0.0)
+    relations_wrong_ans = keras.preprocessing.sequence.pad_sequences(relations_wrong_ans, maxlen=17, dtype='int32',
+                                                                     padding='post', truncating='post', value=0.0)
+
+    questions_corr_ans = keras.preprocessing.sequence.pad_sequences(questions_corr_ans, maxlen=36, dtype='int32',
+                                                                    padding='post', truncating='post', value=0.0)
+    questions_wrong_ans = keras.preprocessing.sequence.pad_sequences(questions_wrong_ans, maxlen=36, dtype='int32',
+                                                                     padding='post', truncating='post', value=0.0)
+
+    print('Data correct: ', data_correct.shape)
+    print('Data wrong: ', data_wrong.shape)
+    
+    data = np.concatenate((data_correct, data_wrong), axis=0)
+    data_questions = np.concatenate((questions_corr_ans, questions_wrong_ans), axis=0)
+    data_relations = np.concatenate((relations_corr_ans, relations_wrong_ans), axis=0)
+    data_labels = np.concatenate((labels_corr_ans, labels_wrong_ans), axis=0)
+
+    # create targets
+    targets = []
+    for i in range(len(data_correct)):
+        targets.append(np.array([0, 1]))
+
+    for i in range(len(data_wrong)):
+        targets.append(np.array([1, 0]))
+
+    targets = np.array(targets)
+
+    return data, data_questions, targets, data_relations, data_labels
+
+
+def get_spo_question(annotated_fb_data_path="", file_name=""):
+    """
+    :param annotated_fb_data_path: path leading to the original SimpleQuestions dataset
+    :param file_name: name of the data file e.g annotated_fb_data_test.txt
+    :return: 4 lists -> subject, predicate, object and question(as text)
+    """
+
+    df = pd.read_csv(annotated_fb_data_path + file_name, sep="\t", usecols=[0, 1, 2, 3],
+                     names=["sbj", "relation", "obj", "question"])
+    sbj_mid = df["sbj"].str.replace("www.freebase.com/m/", "").to_list()
+    predicate = df["relation"].str.replace("www.freebase.com/", "").to_list()
+    obj_mid = df["obj"].str.replace("www.freebase.com/m/", "").to_list()
+    questions = df["question"].to_list()
+
+    return sbj_mid, predicate, obj_mid, questions
+
+path_pickle = '../data/DAWT/train/'
+with open(path_pickle + 'total_correct_samples' + '.pickle', 'rb') as f:
+    correct_samples_train = pickle.load(f)
+    
+with open(path_pickle + 'total_wrong_samples' + '.pickle', 'rb') as f:
+    wrong_samples_train = pickle.load(f)
+    
+with open(path_pickle + 'samples_with_answer_existing' + '.pickle', 'rb') as f:
+    samples_with_answer_existing_train = pickle.load(f)
+
+train_sbj, _train_rel, train_obj, question_train = get_spo_question('../data/SimpleQuestions_v2/annotated_fb_data_train.txt')
+
+# word to index, index to word
+word2ix, ix2word = create_dict(question_train, correct_samples_train, wrong_samples_train)
+
+# relation to index, index to relation
+pred2ix, ix2pred, label_text = load_labels('../data/SimpleQuestions_v2/')
+
+# relation text to list of index 
+relation = word_to_id(label_text, word2ix)
+
+labels_train = create_targets('../data/SimpleQuestions_v2/annotated_fb_data_train.txt',pred2ix)
+labels_train_sub = [labels_train[s] for s in samples_with_answer_existing_train]
+relation_train_sub = [relation[labels_train[s]] for s in samples_with_answer_existing_train]
+
+path_pickle = '../data/DAWT/valid/'
+
+with open(path_pickle + 'total_correct_samples' + '.pickle', 'rb') as f:
+    correct_samples_valid = pickle.load(f)
+    
+with open(path_pickle + 'total_wrong_samples' + '.pickle', 'rb') as f:
+    wrong_samples_valid = pickle.load(f)
+    
+with open(path_pickle + 'samples_with_answer_existing' + '.pickle', 'rb') as f:
+    samples_with_answer_existing_valid = pickle.load(f)
+
+labels_valid = create_targets('../data/SimpleQuestions_v2/annotated_fb_data_valid.txt',pred2ix)
+
+labels_valid_sub = [labels_valid[s] for s in samples_with_answer_existing_valid]
+relation_valid_sub = [relation[labels_valid[s]] for s in samples_with_answer_existing_valid]
+
+path_pickle = '../data/DAWT/test/'
+
+with open(path_pickle + 'total_correct_samples' + '.pickle', 'rb') as f:
+    correct_samples_test = pickle.load(f)
+    
+with open(path_pickle + 'total_wrong_samples' + '.pickle', 'rb') as f:
+    wrong_samples_test = pickle.load(f)
+    
+with open(path_pickle + 'samples_with_answer_existing' + '.pickle', 'rb') as f:
+    samples_with_answer_existing_test = pickle.load(f)
+
+labels_test = create_targets('../data/SimpleQuestions_v2/annotated_fb_data_test.txt',pred2ix)
+
+labels_test_sub = [labels_test[s] for s in samples_with_answer_existing_test]
+relation_test_sub = [relation[labels_test[s]] for s in samples_with_answer_existing_test]
+
+# load the original vocabs zero shot QG work of Elsahar @NAACL2018
+# we need to make mappings between ours and the original
+
+classes=[]
+with open('../data/zero_qg/property.vocab','r') as handle:
+    rel = handle.readlines()
+
+for r in rel:
+    classes.append(r.replace("\n",""))
+    
+
+with open('../data/zero_qg/word.vocab','r') as f:
+    vocab = f.readlines()
+vocab_original = []
+for i in vocab:
+    vocab_original.append(i.replace("\n",""))    
+
+predicate2sentences = dict()
+# init
+for i in (set(labels_train_sub).union(set(labels_valid_sub))).union(set(labels_test_sub)):
+    predicate2sentences[i]=''
+    
+for i,s in enumerate(correct_samples_train):
+    if len(s) !=0:
+        predicate_id = labels_train_sub[i]
+        predicate2sentences[predicate_id] = predicate2sentences[predicate_id]+' '.join(s[0])+'. '
+        
+
+for i,s in enumerate(correct_samples_valid):
+    if len(s) !=0:
+        predicate_id = labels_valid_sub[i]
+        predicate2sentences[predicate_id] = predicate2sentences[predicate_id]+' '.join(s[0])+'. '
+        
+for i,s in enumerate(correct_samples_test):
+    if len(s) !=0:
+        predicate_id = labels_test_sub[i]
+        predicate2sentences[predicate_id] = predicate2sentences[predicate_id]+' '.join(s[0])+'. '
+        
+        
+corpus = []
+preds = []
+for k,v in predicate2sentences.items():
+    corpus.append(v)
+    preds.append(k)
+
+# update the stopwords set
+l=['organization_','location_','misc_','person_','film_','book_','event_','category','s']
+listoffrozensets = [frozenset(l),text.ENGLISH_STOP_WORDS]
+stop_w = frozenset().union(*listoffrozensets)
+    
+vectorizer = TfidfVectorizer(ngram_range=(1,1),stop_words=stop_w,token_pattern='(?u)\\b\\w*[a-zA-Z]\\w*\\b')
+
+X = vectorizer.fit_transform(corpus)
+features = vectorizer.get_feature_names()
+
+#print(vectorizer.get_feature_names())
+print(X.shape)
+id2key = dict()
+X_array = X.toarray()
+top_k = 10
+predicate2keywords = dict()
+for doc in range(X.shape[0]):
+    doc_sorted = np.argsort(X_array[doc])[::-1]
+    print(preds[doc], ix2pred[preds[doc]],classes.index(ix2pred[preds[doc]]))
+    keywords = [features[f] for f in doc_sorted[:top_k]]
+    print(keywords)
+    print()
+    
+    predicate2keywords[preds[doc]] =  keywords
+    id2key[classes.index(ix2pred[preds[doc]])]=keywords
+
+id2keypos = defaultdict(list)
+for k,v in id2key.items():
+    c=1
+    for i in v:
+        doc = nlp(i)
+        for token in doc:
+            pos = token.pos_
+            pos = '_DEP_'+pos+'_'
+            if pos in [p[1] for p in id2keypos[k]]: 
+                pos = pos +str(c)+'_'
+                c +=1
+            id2keypos[k].append((str(token), str(pos)))
+
+vocab_ = set()
+for k,v in id2keypos.items():
+    for token_,pos_tag_ in v:
+        
+        if str(token_) not in vocab_original:
+            vocab_.add(str(token_))
+        if str(pos_tag_) not in vocab_original:            
+            vocab_.add(str(pos_tag_))
+
+print(len(vocab_original))
+vocab_original.extend(vocab_)
+print(len(vocab_original))
+
+def directory_exists(directory):
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+        
+def save_pickle(path, name, python_object):
+    directory_exists(path)
+    
+    with open(path+name,"wb") as handle:
+        pickle.dump(python_object, handle)
+        
+def save_txt(path, name, python_object):
+    directory_exists(path)
+    
+    with open(path+name,"w") as handle:
+        for item in python_object:
+            handle.write("%s\n" % item)
+
+save_pickle("../data/DAWT/keywords/", "pred2key.pkl", predicate2keywords)
+save_pickle("../data/DAWT/keywords/", "id2keypos.pkl", id2keypos)
+save_txt("../data/DAWT/keywords/", "word.vocab", vocab_original)

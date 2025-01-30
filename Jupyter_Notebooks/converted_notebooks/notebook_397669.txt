@@ -1,0 +1,293 @@
+# Standard python helper libraries.
+import os, sys, re, json, time, wget, csv, string, time, random
+import itertools, collections
+
+# NumPy
+import numpy as np
+
+# NLTK for NLP utils
+import nltk
+nltk.download('punkt')
+nltk.download('stopwords')
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.stem.porter import PorterStemmer
+
+from keras import backend as K
+from keras.models import Sequential
+from keras.layers import GaussianNoise, Dropout, Dense, Embedding, MaxPool1D, GlobalMaxPool1D, Conv1D, LSTM, Bidirectional
+from keras.optimizers import Adam
+from keras.callbacks import Callback
+
+from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score
+
+from pymagnitude import *
+
+ehr_notes = []
+with open('data/ehr_samples.csv', newline='') as csvfile:
+    reader = csv.DictReader(csvfile)
+    for row in reader:     
+        if int(row['SpecialtyID']) in [39, 6, 16, 37, 11, 12, 29, 26, 7, 21, 19, 10, 2, 18]:
+            continue
+        else:
+            ehr_notes.append([row['Specialty'], row['Note']])
+
+print(ehr_notes[0])
+print(ehr_notes[2])
+
+ehr_notes_clean = []
+for record in ehr_notes:
+    sentences = []
+    
+    sent_text = nltk.sent_tokenize(record[1])
+    for sent in sent_text:
+        tokens = word_tokenize(sent)
+
+        # convert to lower case
+        tokens = [w.lower() for w in tokens]
+
+        # remove punctuation from each word
+        table = str.maketrans('', '', string.punctuation)
+        tokens = [w.translate(table) for w in tokens]
+
+        # filter out stop words
+        stop_words = set(stopwords.words('english'))
+        tokens = [w for w in tokens if not w in stop_words]
+
+#         # stem words
+#         porter = PorterStemmer()
+#         tokens = [porter.stem(word) for word in tokens]
+
+        # remove blanks
+        tokens = [w for w in tokens if w != '']
+        
+        clean_sentence = '<s> <s> ' + ' '.join(tokens) + ' </s> </s>'
+        sentences.append(clean_sentence)
+        
+    ehr_notes_clean.append([record[0], ' '.join(sentences)])
+
+random.Random(4).shuffle(ehr_notes_clean)
+
+print(ehr_notes_clean[0])
+print(ehr_notes_clean[1])
+
+notes = list(np.array(ehr_notes_clean)[:,1])
+lengths = [len(note.split(' ')) for note in notes]
+MAX_WORDS = max(lengths) # The maximum number of words the sequence model will consider
+med_vectors = Magnitude("data/wikipedia-pubmed-and-PMC-w2v.magnitude", pad_to_length=MAX_WORDS)
+
+len(ehr_notes_clean)
+
+add_intent, intent_to_int, int_to_intent = MagnitudeUtils.class_encoding()
+
+x_train = [ehr_note[1].split(' ') for ehr_note in ehr_notes_clean[:2200]]
+x_test = [ehr_note[1].split(' ') for ehr_note in ehr_notes_clean[2201:]]
+
+y_train = [add_intent(ehr_note[0]) for ehr_note in ehr_notes_clean[:2200]]
+y_test = [add_intent(ehr_note[0]) for ehr_note in ehr_notes_clean[2201:]]
+
+y_train = list(np.array(y_train).reshape(len(y_train)))
+y_test = list(np.array(y_test).reshape(len(y_test)))
+
+num_training = len(x_train)
+num_test = len(x_test)
+num_outputs = int(max(max(y_train), max(y_test))) + 1
+
+print(int_to_intent(0))
+
+print("First line of train/test data:")
+print("\t", x_train[0])
+print("\t", y_train[0], int_to_intent(y_train[0]))
+print("\t", x_test[0])
+print("\t", y_test[0], int_to_intent(y_test[0]))
+print("Second line of train/test data:")
+print("\t", x_train[1])
+print("\t", y_train[1], int_to_intent(y_train[1]))
+print("\t", x_test[1])
+print("\t", y_test[1], int_to_intent(y_test[1]))
+
+def f1(y_true, y_pred):
+    def recall(y_true, y_pred):
+        """Recall metric.
+
+        Only computes a batch-wise average of recall.
+
+        Computes the recall, a metric for multi-label classification of
+        how many relevant items are selected.
+        """
+        true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
+        possible_positives = K.sum(K.round(K.clip(y_true, 0, 1)))
+        recall = true_positives / (possible_positives + K.epsilon())
+        return recall
+
+    def precision(y_true, y_pred):
+        """Precision metric.
+
+        Only computes a batch-wise average of precision.
+
+        Computes the precision, a metric for multi-label classification of
+        how many selected items are relevant.
+        """
+        true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
+        predicted_positives = K.sum(K.round(K.clip(y_pred, 0, 1)))
+        precision = true_positives / (predicted_positives + K.epsilon())
+        return precision
+    
+    precision = precision(y_true, y_pred)
+    recall = recall(y_true, y_pred)
+    return 2*((precision*recall)/(precision+recall+K.epsilon()))
+
+STD_DEV = 0.01 # Deviation of noise for Gaussian Noise applied to the embeddings
+DROPOUT_RATIO = .5 # The ratio to dropout
+BATCH_SIZE = 100 # The number of examples per train/validation step
+EPOCHS = 100 # The number of times to repeat through all of the training data
+LEARNING_RATE = .01 # The learning rate for the optimizer
+HIDDEN_UNITS = 100
+
+model = Sequential()
+model.add(GaussianNoise(STD_DEV, input_shape=(MAX_WORDS, med_vectors.dim)))
+model.add(Bidirectional(LSTM(HIDDEN_UNITS, activation='tanh'), merge_mode='concat'))
+model.add(Dropout(DROPOUT_RATIO))
+model.add(Dense(num_outputs, activation='softmax'))
+model.compile(optimizer='adam',
+              loss='binary_crossentropy',
+              metrics=['accuracy', f1])
+model.summary()
+
+training_batches = MagnitudeUtils.batchify(x_train, y_train, BATCH_SIZE) # Split the training data into batches
+num_batches_per_epoch_train = int(np.ceil(num_training/float(BATCH_SIZE)))
+test_batches = MagnitudeUtils.batchify(x_test, y_test, BATCH_SIZE)  # Split the test data into batches
+num_batches_per_epoch_test = int(np.ceil(num_test/float(BATCH_SIZE)))
+
+
+# Generates batches of the transformed training data
+train_batch_generator = (
+  (
+    med_vectors.query(x_train_batch), # Magnitude will handle converting the 2D array of text into the 3D word vector representations!
+    MagnitudeUtils.to_categorical(y_train_batch, num_outputs) # Magnitude will handle converting the class labels into one-hot encodings!
+  ) for x_train_batch, y_train_batch in training_batches
+)
+
+# Generates batches of the transformed test data
+test_batch_generator = (
+  (
+    med_vectors.query(x_test_batch), # Magnitude will handle converting the 2D array of text into the 3D word vector representations!
+    MagnitudeUtils.to_categorical(y_test_batch, num_outputs) # Magnitude will handle converting the class labels into one-hot encodings!
+  ) for x_test_batch, y_test_batch in test_batches
+)
+
+# Start training
+model.fit_generator(
+    generator = train_batch_generator,
+    steps_per_epoch = num_batches_per_epoch_train,
+    validation_data = test_batch_generator,
+    validation_steps = num_batches_per_epoch_test,
+    epochs = EPOCHS,
+)
+
+print("Results after training for %d epochs:" % (EPOCHS,))
+
+train_metrics = model.evaluate_generator(
+    generator = train_batch_generator,
+    steps = num_batches_per_epoch_train,
+)
+
+print("loss: %.4f - categorical_accuracy: %.4f - f1: %.4f" % tuple(train_metrics))
+
+val_metrics = model.evaluate_generator(
+    generator = test_batch_generator,
+    steps = num_batches_per_epoch_test,
+)
+
+print("val_loss: %.4f - val_categorical_accuracy: %.4f - f1: %.4f" % tuple(val_metrics))
+
+import matplotlib.pyplot as plt
+
+# Plot training & validation accuracy values
+plt.plot(model.history.history['acc'])
+plt.plot(model.history.history['val_acc'])
+plt.title('Model accuracy')
+plt.ylabel('Accuracy')
+plt.xlabel('Epoch')
+plt.legend(['Train', 'Test'], loc='upper left')
+plt.show()
+
+# Plot training & validation loss values
+plt.plot(model.history.history['loss'])
+plt.plot(model.history.history['val_loss'])
+plt.title('Model loss')
+plt.ylabel('Loss')
+plt.xlabel('Epoch')
+plt.legend(['Train', 'Test'], loc='upper left')
+plt.show()
+
+from sklearn.metrics import confusion_matrix, classification_report
+
+y_pred = np.argmax(model.predict(med_vectors.query(x_test)), axis=1)
+class_labels = [int_to_intent(y) for y in set(y_test)] 
+report = classification_report(y_test, y_pred, target_names=class_labels)
+print(class_labels)
+print(confusion_matrix(y_test, y_pred))
+print(report)
+
+from sklearn.utils.multiclass import unique_labels
+
+def plot_confusion_matrix(y_true, y_pred, classes,
+                          title=None,
+                          cmap=plt.cm.Blues):
+    """
+    This function prints and plots the confusion matrix.
+    Normalization can be applied by setting `normalize=True`.
+    """
+    if not title:
+        if normalize:
+            title = 'Normalized confusion matrix'
+        else:
+            title = 'Confusion matrix, without normalization'
+
+    # Compute confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+    # Only use the labels that appear in the data
+    classes = [int_to_intent(y_class) for y_class in unique_labels(y_test, y_pred)]
+
+    fig, ax = plt.subplots()
+    fig.set_figheight(15)
+    fig.set_figwidth(15)
+    im = ax.imshow(cm, interpolation='nearest', cmap=cmap)
+    ax.figure.colorbar(im, ax=ax)
+    # We want to show all ticks...
+    ax.set(xticks=np.arange(cm.shape[1]),
+           yticks=np.arange(cm.shape[0]),
+           # ... and label them with the respective list entries
+           xticklabels=classes, yticklabels=classes,
+           title=title,
+           ylabel='True label',
+           xlabel='Predicted label')
+
+    # Rotate the tick labels and set their alignment.
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
+             rotation_mode="anchor")
+
+    # Loop over data dimensions and create text annotations.
+    fmt = 'd'
+    thresh = cm.max() / 2.
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            ax.text(j, i, format(cm[i, j], fmt),
+                    ha="center", va="center",
+                    color="white" if cm[i, j] > thresh else "black")
+    fig.tight_layout()
+    return ax
+
+
+np.set_printoptions(precision=2)
+
+plot_confusion_matrix(y_test, y_pred, classes=class_labels
+                      , title='Confusion Matrix for Phenotype LSTM Classifier')
+
+correct = 0
+for i, y in enumerate(y_pred):
+    if y == y_test[i]:
+        correct += 1
+
+correct / len(y_pred)

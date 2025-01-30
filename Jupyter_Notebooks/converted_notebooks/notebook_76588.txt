@@ -1,0 +1,363 @@
+# Imports here
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.optim import lr_scheduler
+import numpy as np
+import time
+import os
+import argparse
+from torchvision import datasets, models, transforms, utils
+from torch.autograd import Variable
+import torch.nn.functional as F
+import copy
+from PIL import Image
+import matplotlib.pyplot as plt
+import json
+from collections import OrderedDict
+
+data_dir = 'flowers'
+train_dir = data_dir + '/train'
+valid_dir = data_dir + '/valid'
+test_dir = data_dir + '/test'
+batch_size = 8
+nThreads = 4
+use_gpu = torch.cuda.is_available()
+
+# TODO: Define your transforms for the training, validation, and testing sets
+train_transforms = transforms.Compose([transforms.RandomRotation(30),
+                                       transforms.Resize(224),
+                                       transforms.CenterCrop(224),
+                                       transforms.ToTensor(),
+                                       transforms.Normalize([0.485, 0.456, 0.406],
+                                                            [0.229, 0.224, 0.225])])
+
+valid_transforms = transforms.Compose([transforms.Resize(256),
+                                      transforms.CenterCrop(224),
+                                      transforms.ToTensor(),
+                                      transforms.Normalize([0.485, 0.456, 0.406],
+                                                           [0.229, 0.224, 0.225])])
+
+test_transforms = transforms.Compose([transforms.Resize(256),
+                                      transforms.CenterCrop(224),
+                                      transforms.ToTensor(),
+                                      transforms.Normalize([0.485, 0.456, 0.406],
+                                                           [0.229, 0.224, 0.225])])
+
+# TODO: Load the datasets with ImageFolder
+image_datasets = dict()
+image_datasets['train'] = datasets.ImageFolder(train_dir, transform=train_transforms)
+image_datasets['valid'] = datasets.ImageFolder(valid_dir, transform=valid_transforms)
+image_datasets['test'] = datasets.ImageFolder(test_dir, transform=test_transforms)
+
+
+# TODO: Using the image datasets and the trainforms, define the dataloaders
+
+dataloaders = dict()
+dataloaders['train'] = torch.utils.data.DataLoader(image_datasets['train'], batch_size=batch_size, shuffle=True)
+dataloaders['valid'] = torch.utils.data.DataLoader(image_datasets['valid'], batch_size=batch_size)
+dataloaders['test']  = torch.utils.data.DataLoader(image_datasets['test'], batch_size=batch_size)
+
+#TODO: Know your data
+dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'valid', 'test']}
+class_names = image_datasets['train'].classes
+
+print ("Dasaset Size: "+ str(dataset_sizes) + "\n")
+n_class = len(class_names)
+print ("Number of classes: "+ str(n_class) + "\n")
+print ("Classes: "+ str(class_names) + "\n")
+
+print (len(dataloaders))
+
+
+
+import json
+
+with open('cat_to_name.json', 'r') as f:
+    cat_to_name = json.load(f)
+
+#Helper Functions
+
+# Function for training the model
+'''Credit : Inspired from pytoch doc tutorial (https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html)'''
+
+def train_model(model, criterion, optimizer, scheduler, num_epochs=10):
+    since = time.time()
+
+    best_model_wts = copy.deepcopy(model.state_dict())
+    best_acc = 0.0
+
+    for epoch in range(num_epochs):
+        print('Epoch {}/{}'.format(epoch, num_epochs - 1))
+        print('-' * 10)
+
+        # Each epoch has a training and validation phase
+        for phase in ['train', 'valid']:
+            if phase == 'train':
+                scheduler.step()
+                model.train(True)  # Set model to training mode
+            else:
+                model.train(False)  # Set model to evaluate mode
+
+            running_loss = 0.0
+            running_corrects = 0
+
+            # Iterate over data.
+            for data in dataloaders[phase]:
+                # get the inputs
+                inputs, labels = data
+
+                # wrap them in Variable
+                if use_gpu:
+                    inputs = Variable(inputs.cuda())
+                    labels = Variable(labels.cuda())
+                else:
+                    inputs, labels = Variable(inputs), Variable(labels)
+
+                # zero the parameter gradients
+                optimizer.zero_grad()
+
+                # forward
+                outputs = model(inputs)
+                _, preds = torch.max(outputs.data, 1)
+                loss = criterion(outputs, labels)
+
+                # backward + optimize only if in training phase
+                if phase == 'train':
+                    loss.backward()
+                    optimizer.step()
+
+                # statistics
+                running_loss += loss.data * inputs.size(0)
+                running_corrects += torch.sum(preds == labels.data)
+
+            epoch_loss = running_loss / dataset_sizes[phase]
+            epoch_acc = running_corrects.double() / dataset_sizes[phase]
+
+            print('{} Loss: {:.4f} Acc: {:.4f}'.format(
+                phase, epoch_loss, epoch_acc))
+
+            # deep copy the model
+            if phase == 'valid' and epoch_acc > best_acc:
+                best_acc = epoch_acc
+                best_model_wts = copy.deepcopy(model.state_dict())
+
+        print()
+
+    time_elapsed = time.time() - since
+    print('Training complete in {:.0f}m {:.0f}s'.format(
+        time_elapsed // 60, time_elapsed % 60))
+    print('Best val Acc: {:4f}'.format(best_acc))
+
+    # load best model weights
+    model.load_state_dict(best_model_wts)
+    return model
+
+# TODO: Build and train your network
+
+# 1. Load a pre-trained network
+model = models.vgg16(pretrained=True)
+
+# Freeze parameters so we don't backprop through them
+for param in model.parameters():
+    param.requires_grad = False
+
+# 2. Define a new, untrained feed-forward network as a classifier, using ReLU activations and dropout
+
+num_features = model.classifier[0].in_features
+
+classifier = nn.Sequential(OrderedDict([
+                              ('fc1', nn.Linear(num_features, 512)),
+                              ('relu', nn.ReLU()),
+                              ('drpot', nn.Dropout(p=0.5)),
+                              ('hidden', nn.Linear(512, 100)),
+                              ('fc2', nn.Linear(100, 102)),
+                              ('output', nn.LogSoftmax(dim=1)),
+                              ]))
+
+model.classifier = classifier
+
+num_epochs = 20
+if use_gpu:
+    print ("Using GPU: "+ str(use_gpu))
+    model = model.cuda()
+criterion = nn.CrossEntropyLoss()
+
+# Observe that only parameters of final layer are being optimized as
+# opoosed to before.
+optimizer = optim.Adam(model.classifier.parameters(), lr=0.001)
+
+# Decay LR by a factor of 0.1 every 7 epochs
+exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
+model = train_model(model, criterion, optimizer, exp_lr_scheduler,num_epochs=num_epochs)
+
+# TODO: Do validation on the test set
+def perform_testing():
+    loss_fn = nn.NLLLoss()
+    model.eval()
+
+    accuracy = 0
+    test_loss = 0
+    for ii, (images, labels) in enumerate(dataloaders['test']):
+
+        # Set volatile to True so we don't save the history
+        if use_gpu:
+            inputs = Variable(images.cuda(), volatile=True)
+            labels = Variable(labels.cuda(), volatile=True)
+        else:
+            inputs = Variable(images, volatile=True)
+            labels = Variable(labels, volatile=True)
+
+        output = model.forward(inputs)
+        test_loss += loss_fn(output, labels).data
+
+        ## Calculating the accuracy
+        # Model's output is log-softmax, take exponential to get the probabilities
+        ps = torch.exp(output).data
+        # Class with highest probability is our predicted class, compare with true label
+        equality = (labels.data == ps.max(1)[1])
+        # Accuracy is number of correct predictions divided by all predictions, just take the mean
+        accuracy += equality.type_as(torch.FloatTensor()).mean()
+
+    print("Batch: {} ".format(ii+1),
+          "Test Loss: {:.3f}.. ".format(test_loss/len(dataloaders['test'])),
+          "Test Accuracy: {:.3f}".format(accuracy/len(dataloaders['test'])))
+
+perform_testing()
+
+# TODO: Save the checkpoint
+model.class_to_idx = dataloaders['train'].dataset.class_to_idx
+model.epochs = num_epochs
+checkpoint = {'input_size': [3, 224, 224],
+                 'batch_size': dataloaders['train'].batch_size,
+                  'output_size': 102,
+                  'state_dict': model.state_dict(),
+                  'optimizer_dict':optimizer.state_dict(),
+                  'class_to_idx': model.class_to_idx,
+                  'epoch': model.epochs}
+torch.save(checkpoint, 'my_checkpoint.pth')
+
+# TODO: Write a function that loads a checkpoint and rebuilds the model
+def load_checkpoint(filepath):
+    checkpoint = torch.load(filepath)
+    model = models.vgg16()
+
+    classifier = nn.Sequential(OrderedDict([
+                              ('fc1', nn.Linear(num_features, 512)),
+                              ('relu', nn.ReLU()),
+                              ('drpot', nn.Dropout(p=0.5)),
+                              ('hidden', nn.Linear(512, 100)),
+                              ('fc2', nn.Linear(100, 102)),
+                              ('output', nn.LogSoftmax(dim=1)),
+                              ]))
+
+    model.classifier = classifier
+    model.load_state_dict(checkpoint['state_dict'])
+
+    return model, checkpoint['class_to_idx']
+
+# get index to class mapping
+loaded_model, class_to_idx = load_checkpoint('my_checkpoint.pth')
+idx_to_class = { v : k for k,v in class_to_idx.items()}
+
+# Testing checkpoint
+
+loaded_model.eval()
+images, labels = next(iter(dataloaders['test']))
+output = loaded_model.forward(Variable(images[:2]))
+ps = torch.exp(output).data
+print(ps.max(1)[1])
+
+def process_image(image):
+    ''' Scales, crops, and normalizes a PIL image for a PyTorch model,
+        returns an Numpy array
+    '''
+    # TODO: Process a PIL image for use in a PyTorch model
+
+    size = 256, 256
+    image.thumbnail(size, Image.ANTIALIAS)
+    image = image.crop((128 - 112, 128 - 112, 128 + 112, 128 + 112))
+    npImage = np.array(image)
+    npImage = npImage/255.
+
+    imgA = npImage[:,:,0]
+    imgB = npImage[:,:,1]
+    imgC = npImage[:,:,2]
+
+    imgA = (imgA - 0.485)/(0.229)
+    imgB = (imgB - 0.456)/(0.224)
+    imgC = (imgC - 0.406)/(0.225)
+
+    npImage[:,:,0] = imgA
+    npImage[:,:,1] = imgB
+    npImage[:,:,2] = imgC
+
+    npImage = np.transpose(npImage, (2,0,1))
+
+    return npImage
+
+
+def imshow(image, ax=None, title=None):
+    if ax is None:
+        fig, ax = plt.subplots()
+
+    # PyTorch tensors assume the color channel is the first dimension
+    # but matplotlib assumes is the third dimension
+    image = image.transpose((1, 2, 0))
+
+    # Undo preprocessing
+    mean = np.array([0.485, 0.456, 0.406])
+    std = np.array([0.229, 0.224, 0.225])
+    image = std * image + mean
+
+    # Image needs to be clipped between 0 and 1 or it looks like noise when displayed
+    image = np.clip(image, 0, 1)
+
+    ax.imshow(image)
+
+    return ax
+
+def predict(image_path, model, topk=5):
+    ''' Predict the class (or classes) of an image using a trained deep learning model.
+    '''
+
+    # TODO: Implement the code to predict the class from an image file
+
+    image = torch.FloatTensor([process_image(Image.open(image_path))])
+    model.eval()
+    output = model.forward(Variable(image))
+    pobabilities = torch.exp(output).data.numpy()[0]
+
+
+    top_idx = np.argsort(pobabilities)[-topk:][::-1]
+    top_class = [idx_to_class[x] for x in top_idx]
+    top_probability = pobabilities[top_idx]
+
+    return top_probability, top_class
+
+print (predict('flowers/test/2/image_05100.jpg', loaded_model))
+
+
+# TODO: Display an image along with the top 5 classes
+def view_classify(img, probabilities, classes, mapper):
+    ''' Function for viewing an image and it's predicted classes.
+    '''
+    img_filename = img.split('/')[-2]
+    img = Image.open(img)
+
+    fig, (ax1, ax2) = plt.subplots(figsize=(6,10), ncols=1, nrows=2)
+    flower_name = mapper[img_filename]
+
+    ax1.set_title(flower_name)
+    ax1.imshow(img)
+    ax1.axis('off')
+
+    y_pos = np.arange(len(probabilities))
+    ax2.barh(y_pos, probabilities)
+    ax2.set_yticks(y_pos)
+    ax2.set_yticklabels([mapper[x] for x in classes])
+    ax2.invert_yaxis()
+
+img = 'flowers/test/5/image_05159.jpg'
+p, c = predict(img, loaded_model)
+view_classify(img, p, c, cat_to_name)

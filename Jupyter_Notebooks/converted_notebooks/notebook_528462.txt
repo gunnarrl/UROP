@@ -1,0 +1,132 @@
+%%bash
+# create output dataset
+bq mk advdata
+
+%%bigquery
+CREATE OR REPLACE MODEL advdata.ulb_fraud_detection 
+TRANSFORM(
+    * EXCEPT(Amount),
+    SAFE.LOG(Amount) AS log_amount
+)
+OPTIONS(
+    INPUT_LABEL_COLS=['class'],
+    AUTO_CLASS_WEIGHTS = TRUE,
+    DATA_SPLIT_METHOD='seq',
+    DATA_SPLIT_COL='Time',
+    MODEL_TYPE='logistic_reg'
+) AS
+
+SELECT 
+ *
+FROM `bigquery-public-data.ml_datasets.ulb_fraud_detection`
+
+%%bigquery
+SELECT * FROM ML.EVALUATE(MODEL advdata.ulb_fraud_detection)
+
+%%bigquery
+SELECT predicted_class_probs, Class
+FROM ML.PREDICT( MODEL advdata.ulb_fraud_detection,
+  (SELECT * FROM `bigquery-public-data.ml_datasets.ulb_fraud_detection` WHERE Time = 85285.0)
+)
+
+%%bigquery
+WITH counts AS (
+SELECT
+    APPROX_QUANTILES(Time, 5)[OFFSET(4)] AS train_cutoff
+    , COUNTIF(CLASS > 0) AS pos
+    , COUNTIF(CLASS = 0) AS neg
+FROM `bigquery-public-data`.ml_datasets.ulb_fraud_detection
+)
+
+SELECT
+   train_cutoff
+    , SAFE.LOG(SAFE_DIVIDE(pos,neg)) AS output_bias
+    , 0.5*SAFE_DIVIDE(pos + neg, pos) AS weight_pos
+    , 0.5*SAFE_DIVIDE(pos + neg, neg) AS weight_neg
+FROM counts
+
+import tensorflow as tf
+from tensorflow.python.framework import dtypes
+from tensorflow_io.bigquery import BigQueryClient
+from tensorflow_io.bigquery import BigQueryReadSession
+
+def features_and_labels(features):
+  label = features.pop('Class') # this is what we will train for
+  return features, label
+
+def read_dataset(client, row_restriction, batch_size=2048):
+    GCP_PROJECT_ID='ai-analytics-solutions'  # CHANGE
+    COL_NAMES = ['Time', 'Amount', 'Class'] + ['V{}'.format(i) for i in range(1,29)]
+    COL_TYPES = [dtypes.float64, dtypes.float64, dtypes.int64] + [dtypes.float64 for i in range(1,29)]
+    DATASET_GCP_PROJECT_ID, DATASET_ID, TABLE_ID,  = 'bigquery-public-data.ml_datasets.ulb_fraud_detection'.split('.')
+    bqsession = client.read_session(
+        "projects/" + GCP_PROJECT_ID,
+        DATASET_GCP_PROJECT_ID, TABLE_ID, DATASET_ID,
+        COL_NAMES, COL_TYPES,
+        requested_streams=2,
+        row_restriction=row_restriction)
+    dataset = bqsession.parallel_read_rows()
+    return dataset.prefetch(1).map(features_and_labels).shuffle(batch_size*10).batch(batch_size)
+
+client = BigQueryClient()
+
+temp_df = read_dataset(client, 'Time <= 144803', 2)
+for row in temp_df:
+    print(row)
+    break
+
+train_df = read_dataset(client, 'Time <= 144803', 2048)
+eval_df = read_dataset(client, 'Time > 144803', 2048)
+
+metrics = [
+      tf.keras.metrics.BinaryAccuracy(name='accuracy'),
+      tf.keras.metrics.Precision(name='precision'),
+      tf.keras.metrics.Recall(name='recall'),
+      tf.keras.metrics.AUC(name='roc_auc'),
+]
+
+# create inputs, and pass them into appropriate types of feature columns (here, everything is numeric)
+inputs = {
+    'V{}'.format(i) : tf.keras.layers.Input(name='V{}'.format(i), shape=(), dtype='float64') for i in range(1, 29)
+}
+inputs['Amount'] = tf.keras.layers.Input(name='Amount', shape=(), dtype='float64')
+input_fc = [tf.feature_column.numeric_column(colname) for colname in inputs.keys()]
+
+# transformations. only the Amount is transformed
+transformed = inputs.copy()
+transformed['Amount'] = tf.keras.layers.Lambda(
+    lambda x: tf.math.log(tf.math.maximum(x, 0.01)), name='log_amount')(inputs['Amount'])
+input_layer = tf.keras.layers.DenseFeatures(input_fc, name='inputs')(transformed)
+
+# Deep learning model
+d1 = tf.keras.layers.Dense(16, activation='relu', name='d1')(input_layer)
+d2 = tf.keras.layers.Dropout(0.25, name='d2')(d1)
+d3 = tf.keras.layers.Dense(16, activation='relu', name='d3')(d2)
+output = tf.keras.layers.Dense(1, activation='sigmoid', name='d4', bias_initializer=tf.keras.initializers.Constant())(d3)
+
+model = tf.keras.Model(inputs, output)
+model.compile(optimizer='adam',
+              loss='binary_crossentropy',
+              metrics=metrics)
+tf.keras.utils.plot_model(model, rankdir='LR')
+
+class_weight = {0: 0.5, 1: 289.4}
+history = model.fit(train_df, validation_data=eval_df, epochs=20, class_weight=class_weight)
+
+import matplotlib.pyplot as plt
+plt.plot(history.history['val_roc_auc']);
+plt.xlabel('Epoch');
+plt.ylabel('AUC');
+
+BUCKET='ai-analytics-solutions-kfpdemo'  # CHANGE TO SOMETHING THAT YOU OWN
+model.save('gs://{}/bqexample/export'.format(BUCKET))
+
+%%bigquery
+CREATE OR REPLACE MODEL advdata.keras_fraud_detection 
+OPTIONS(model_type='tensorflow', model_path='gs://ai-analytics-solutions-kfpdemo/bqexample/export/*')
+
+%%bigquery
+SELECT d4, Class
+FROM ML.PREDICT( MODEL advdata.keras_fraud_detection,
+  (SELECT * FROM `bigquery-public-data.ml_datasets.ulb_fraud_detection` WHERE Time = 85285.0)
+)

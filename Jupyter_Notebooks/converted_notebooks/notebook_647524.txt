@@ -1,0 +1,303 @@
+from transformers import pipeline, set_seed
+import pandas as pd
+import requests, sys, webbrowser,xml
+import numpy as np
+import bs4
+import re
+import random
+from urllib.error import HTTPError
+
+# Starting up pipeline
+def start_pipeline():
+    generator = pipeline('fill-mask', model='bert-base-uncased')
+    return generator
+
+nlp = start_pipeline()
+
+# Given a number letters and some sequence, returns the sequence with generated attached words
+def generate_text(generator,intro_sequence:str, num_words = 5)->str:
+    # Imported random text generation
+    text = generator(intro_sequence, max_length=len(intro_sequence) + num_words, num_return_sequences=1)[0].get("generated_text")
+    return text
+
+def get_text(url = "https://www.keepinspiring.me/famous-quotes/" ):
+    # Requesting data from url, finding specialized tags for this particular website
+    res = requests.get(url)
+    res.raise_for_status()
+    soup = bs4.BeautifulSoup(res.text, "html.parser")
+    text  = soup.find_all("div", class_ = 'author-quotes')  
+    return text
+
+text = get_text()
+
+# Obtainin author from quote
+def authors(quote):
+    return quote.split("”")[1]
+
+#Removing author and adding lost smartquote
+def remove_authors(quote):
+    return (quote.split("”")[0] + ("”"))
+
+#Tag processing functions to clean up nasty html formatting, replaces div tags
+def processing_div(tag):
+    return tag.replace('<div class="author-quotes">', "").replace("</div>", "")
+
+#span processing, replaces span tag
+def processing_span(tag):
+    return tag.replace("<span class=\"quote-author-name\">", "").replace("</span>", "")
+
+# Checks for tags that have yet to be removed, not given standard format. Reasoning - we don't know when ads will pop up
+def cleaner(table):
+    arr = np.array([])
+    for i in table.get("quote"):
+        arr = np.append(arr,("<" in i))
+    clean = table[(arr != 1)]
+    return clean
+
+table = pd.DataFrame().assign(quote = text)
+
+#Formatting, processing, and splitting quotes and authors
+def table_process(table):
+    table = table.assign(quote = table.get("quote").apply(str))
+    table = table.assign(quote = table.get("quote").apply(processing_div).apply(processing_span))
+    table = cleaner(table)
+    table = table.assign(author  = table.get("quote").apply(authors), quote = table.get("quote").apply(remove_authors))
+    return table
+table = table_process(table)
+table
+
+def replace_words_at_random(generator, word_arr: [str], difficulty = 1) -> ([str],[int]):
+    num_words  = int(np.ceil((len(word_arr) * (1/(2*difficulty)))))
+    #  Generate num_words random indices
+    indices = random_generation(num_words, 0, len(word_arr))
+    print(indices)
+    
+    # Place word masks at each of the randomly chosen indices
+    # Fill in each mask with the language model
+    for i in indices:
+        #Ensuring array is not overaccessed
+        if(i < len(word_arr)):
+            word_arr[i] = '[MASK]'
+        
+        #Adding together everything leading up to string so as to add some context into the model
+        join  = " ".join(word_arr)
+
+        # Generate the next word
+        text = (generator(join)[5-difficulty].get('sequence').replace("[CLS]", '').replace('[SEP]', '')).strip()
+        word_arr = text.split(" ")
+
+    return text, indices 
+
+# Generates a desired number of unique random digits in a certain range
+def random_generation(num_words, lowNum, highNum):
+    random_digits = np.unique(np.random.randint(low = lowNum, high  = highNum, size = num_words))
+    while(len(random_digits) < num_words):
+        random_digits = np.append(random_digits, np.random.randint(low = lowNum, high = highNum, size = num_words-len(random_digits)))
+        random_digits = np.unique(random_digits)
+    return random_digits
+
+# Obtains text from a wikipedia url
+def get_wiki_text(url):
+    # Requesting data from url, finding specialized tags for this particular website
+    res = requests.get(url)
+    res.raise_for_status()
+    
+    #Attaching soup object to page text, obtaining text in paragraphs
+    soup = bs4.BeautifulSoup(res.text, "lxml")
+    text = ""
+    
+    # Problematic structure: fails to look for list items which make up substantial amount of wikipedia pages
+    for paragraph in soup.find_all('p'):
+        text+= paragraph.text
+        
+    # Formatting the string so that it looks normal
+    text = re.sub(r'\[.*\]', '', text)
+    text= re.sub(r'\s+', ' ', text)
+    text = text.lower()
+    text = re.sub(r'\d', ' ', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text
+
+# Iterates through wikipedia pages
+def wiki_search(topic, pages):
+    textSoup, title = looping_wiki_search(topic, int(pages))
+    return textSoup, title 
+
+# Randomly selecting the next topic to be searched for
+def select_next_topic(text: [str])-> str:
+    random_number = np.random.randint(1,len(text))
+    return text[random_number]
+
+# Replaces hyphens with an underscore for url purposes, removes all punctuation that could break url
+def replace_punctuation(text):
+    specific_case = text.strip()
+    specific_case = specific_case.replace('-',' ')
+    specific_case = specific_case.replace(' ', '_')
+    
+    # Remove all punctuation
+    pattern = re.compile(r'\W')
+    specific_case = re.sub(pattern, '', specific_case)
+    
+    return specific_case
+    
+    
+# Loop through connected topics on wikipedia to find a "landing page", then return the text of that landing page. By default, returns the page of 'topic'
+def looping_wiki_search(topic: str, neighbor_pages = 0):
+    searchText = ""
+    url = construct_wiki_url(topic)
+    original = construct_wiki_url(topic)
+    for i in np.arange(neighbor_pages+1):
+        print(i)
+        
+        #Putting in a try-catch in the case that we have reached a nonexistent page, taking back to original which we
+        # Know actually exists
+        try:
+            searchText = get_wiki_text(url).split(" ")
+        except requests.HTTPError:
+            searchText = get_wiki_text(original).split(" ")
+        
+        
+        #So long as there are still pages left to proccess
+        if(i < neighbor_pages):
+            
+            # Selecting next topic
+            topic = select_next_topic(searchText)
+
+            # Replacing the punctuation of the next topic
+            topic = replace_punctuation(topic)
+
+            # Moving to next URL
+            url = construct_wiki_url(topic)
+        
+    return searchText, topic
+
+
+# Takes a given user topic and constructs a valid wikipedia url
+def construct_wiki_url(url_topic : str):
+    return ('https://en.wikipedia.org/wiki/' + url_topic.lower().strip().replace(" ","_"))
+
+import lyricsgenius
+
+# Takes artist and song name in terms of string and obtains lyrics
+def obtain_lyrics(artist: str, song: str) -> [str]:
+    genius = lyricsgenius.Genius("NDltUrlbSis8n9o1FEyGUE_ruIlngdDmXwoQdvrkX0hh3le3LKF8XalcHXOetm3x")
+    artist = genius.search_artist(artist, max_songs=3, sort="title")
+    song = genius.search_song(song, artist.name)
+    song_lyrics =  song.lyrics
+    
+    #String proccessing
+    song_lyrics = re.sub(r'\[.*\]', '', song_lyrics)
+    song_lyrics  = re.sub(r'\n+', ' ', song_lyrics)
+    song_lyrics = song_lyrics.split(" ")
+    
+    #Making sure songs do not exceed maximum threshold
+    if(len(song_lyrics) > 510):
+        song_lyrics = song_lyrics[:350]
+    return song_lyrics
+
+# Master Controls obtaining and proccessing lyrics
+# To do: preserve tags, ie [verse 1], and keep word replacement model from touching it 
+def lyrics(artistName, songName):
+    lyrics = obtain_lyrics(artistName, songName) 
+    return lyrics
+
+# Runs the madlibs game, song edition and returns the resulting text (replace words and return funny texts)
+def madlibs_song_gameplay(artist_name: str, song_name: str, level: int, nlp) -> str:
+    # Some songs are too long, so expect this and auto replace with Africa by Toto
+    lyrics = obtain_lyrics(artist_name, song_name)
+    # We only need to return modifications 
+    try:
+        text, indices = replace_words_at_random(nlp, lyrics, level)
+    except RuntimeError:
+        print(len(lyrics))
+        lyrics = obtain_lyrics("Toto", "Africa")
+        text, indices = replace_words_at_random(nlp, lyrics, level)    
+    return text.replace("\'", "")
+
+# Runs the madlibs wikipedia version (returns messed up text)
+def madlibs_wiki_gameplay(topic: str, pages: int, level: int, nlp) -> str:
+    text, title = wiki_search(topic, pages)
+    
+    # Insurance against text too big for language model
+    if(len(text) > 350):
+        text = text[:350]
+    new_text, indices = replace_words_at_random(nlp, text, level)
+    return new_text
+
+# Runs the madlibs famous quotes version (returns messed up text)
+def madlibs_quotes_gameplay(nlp, level: int) -> str:
+    # Scraping quotes website to obtain our text
+    text = get_text()
+    table = pd.DataFrame().assign(quote = text)
+    table = table_process(table)
+    
+    #Selecting a random quote
+    quotenum = np.random.randint(table.shape[0])
+    row  = table.iloc[quotenum]
+    quote = row.get("quote").split(" ")
+    author = row.get("author")
+    # Randomly replacing words
+    new_quote, indices = replace_words_at_random(nlp, quote, level)
+    return new_quote + " " +  author
+
+# Runs the madlibs game, song edition and returns the resulting text (replace words and return funny texts)
+def guessText_song_gameplay(artist_name: str, song_name: str, level: int, nlp) -> str:
+    # Some songs are too long, so expect this and auto replace with Africa by Toto
+    lyrics = obtain_lyrics(artist_name, song_name)
+    ret = " ".join(lyrics)
+    # We only need to return modifications 
+    try:
+        text, indices = replace_words_at_random(nlp, lyrics, level)
+    except RuntimeError:
+        print(len(lyrics))
+        lyrics = obtain_lyrics("Toto", "Africa")
+        text, indices = replace_words_at_random(nlp, lyrics, level)    
+    return text.replace("\'", ""), ret
+
+# Runs the madlibs famous quotes version (returns messed up text)
+def guessText_quotes_gameplay(nlp, level: int) -> str:
+    # Scraping quotes website to obtain our text
+    text = get_text()
+    table = pd.DataFrame().assign(quote = text)
+    table = table_process(table)
+    
+    #Selecting a random quote
+    quotenum = np.random.randint(table.shape[0])
+    row  = table.iloc[quotenum]
+    quote = row.get("quote").split(" ")
+    author = row.get("author")
+    # Randomly replacing words
+    new_quote, indices = replace_words_at_random(nlp, quote, level)
+    return new_quote + " " +  author
+
+# Runs the madlibs wikipedia version (returns messed up text)
+def guessText_wiki_gameplay(topic: str, pages: int, level: int, nlp) -> str:
+    text, title = wiki_search(topic, pages)
+    ret = " ".join(text)
+    # Insurance against text too big for language model
+    if(len(text) > 350):
+        text = text[:350]
+    new_text, indices = replace_words_at_random(nlp, text, level)
+    return new_text, ret
+
+
+# Runs the madlibs wikipedia version (returns messed up text)
+def guess_original_wiki_gameplay(topic: str, pages: int, level: int, nlp) -> str:
+    text, title = wiki_search(topic, pages)
+    # Insurance against text too big for language model
+    if(len(text) > 350):
+        text = text[:350]
+    new_text, indices = replace_words_at_random(nlp, text, level)
+    return new_text, title
+
+# Runs the madlibs game, song edition and returns the resulting text (replace words and return funny texts)
+def favorite_song_gameplay(artist_name: str, song_name: str, level: int, nlp) -> str:
+    # Some songs are too long, so expect this and auto replace with Africa by Toto
+    lyrics = obtain_lyrics(artist_name, song_name)
+    # We only need to return modifications 
+    try:
+        text, indices = replace_words_at_random(nlp, lyrics, level)
+    except RuntimeError:
+        lyrics = obtain_lyrics("Toto", "Africa")
+        text, indices = replace_words_at_random(nlp, lyrics, level)    
+    return text.replace("\'", ""), indices

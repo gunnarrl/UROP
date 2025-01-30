@@ -1,0 +1,418 @@
+import anndata as ad
+import altair as alt
+
+# increase row limit for altair
+alt.data_transformers.enable("default", max_rows=None)
+
+# render to png directly to save memory
+alt.renderers.enable("png")
+
+import numpy as np
+import pandas as pd
+import scipy.stats as st
+
+# read in FACS data
+facs_metadata = pd.read_csv("../../data/TM_facs_metadata.csv", index_col=0, dtype=str)
+facs_data = ad.read_h5ad("../../data/TM_facs_mat.h5ad")
+
+# read in droplet data
+droplet_metadata = pd.read_csv("../../data/TM_droplet_metadata.csv", index_col=0, dtype=str)
+droplet_data = ad.read_h5ad("../../data/TM_droplet_mat.h5ad")
+
+# subset to thymus
+facs_thymus = facs_data[facs_metadata["tissue"] == "Thymus", :]
+droplet_thymus = droplet_data[droplet_metadata["tissue"] == "Thymus", :]
+
+# convert to dense arrays to reduce boilerplate later
+facs_thymus.X = np.asarray(facs_thymus.X.todense())
+droplet_thymus.X = np.asarray(droplet_thymus.X.todense())
+
+thymus_dataframe = pd.DataFrame(
+    {
+        "FACS_frac": (facs_thymus.X.sum(0) + 1) / facs_thymus.X.sum(),
+        "Droplet_frac": (droplet_thymus.X.sum(0) + 1) / droplet_thymus.X.sum(),
+        "FACS_pct": (1 + (facs_thymus.X > 0).sum(0)).T / facs_thymus.X.shape[0],
+        "Droplet_pct": (1 + (droplet_thymus.X > 0).sum(0)).T / droplet_thymus.X.shape[0],
+    }
+)
+
+xy_line = (
+    alt.Chart(pd.DataFrame({"x": [1e-8, 1], "y": [1e-8, 1]}))
+    .mark_line(opacity=0.3, color="black", strokeDash=[4])
+    .encode(x="x", y="y")
+)
+
+alt.hconcat(
+    alt.Chart(
+        thymus_dataframe, title="Fraction of total reads", width=400, height=400
+    )
+    .mark_point(opacity=0.3)
+    .encode(
+        x=alt.X(
+            "FACS_frac",
+            type="quantitative",
+            scale=alt.Scale(type="log", domain=(1e-10, 1)),
+            axis=alt.Axis(title="Fraction of total reads (FACS)"),
+        ),
+        y=alt.Y(
+            "Droplet_frac",
+            type="quantitative",
+            scale=alt.Scale(type="log", domain=(1e-8, 1)),
+            axis=alt.Axis(title="Fraction of total UMIs (droplet)"),
+        ),
+    ) + xy_line,
+    alt.Chart(
+        thymus_dataframe, title="Percent of cells with ≥ 1 read", width=400, height=400
+    )
+    .mark_point(opacity=0.3)
+    .encode(
+        x=alt.X(
+            "FACS_pct",
+            type="quantitative",
+            axis=alt.Axis(format="%", title="Percent of cells with ≥1 read (FACS)"),
+            scale=alt.Scale(domain=(0, 1)),
+        ),
+        y=alt.Y(
+            "Droplet_pct",
+            type="quantitative",
+            axis=alt.Axis(format="%", title="Percent of cells with ≥1 UMI (droplet)"),
+            scale=alt.Scale(domain=(0, 1)),
+        ),
+    ) + xy_line,
+)
+
+
+# reusable plotting function
+def plot_expression_v_percent(cell_gene_reads: np.ndarray, *, title: str, **kwargs):
+    cell_gene_nonzero = (cell_gene_reads.sum(0) > 0)
+    x = cell_gene_reads[:, cell_gene_nonzero].sum(0) / cell_gene_reads.sum()
+    y = (cell_gene_reads[:, cell_gene_nonzero] > 0).sum(0) / cell_gene_reads.shape[0]
+
+    return (
+        alt.Chart(pd.DataFrame({"x": x, "y": y}), title=title)
+        .mark_point(opacity=0.1)
+        .encode(
+            alt.X(
+                "x",
+                type="quantitative",
+                scale=alt.Scale(
+                    type="log", domain=kwargs.get("x_domain", alt.Undefined)
+                ),
+                axis=alt.Axis(title="Fraction of total reads"),
+            ),
+            alt.Y(
+                "y",
+                type="quantitative",
+                scale=alt.Scale(
+                    type="log", domain=kwargs.get("y_domain", alt.Undefined)
+                ),
+                axis=alt.Axis(title="Percent of cells with ≥1 read"),
+            ),
+        )
+    )
+
+
+alt.hconcat(
+    plot_expression_v_percent(droplet_thymus.X, title="Droplet data"),
+    plot_expression_v_percent(facs_thymus.X, title="FACS data"),
+)
+
+n_genes = 20000
+n_cells = 2000
+n_umis = 5500 * np.ones(shape=n_cells)
+
+# log-gamma distribution of gene expression
+gene_levels = np.exp(np.random.gamma(4, 1, size=n_genes))
+
+# every cell has the same expression distribution
+cell_gene_levels = gene_levels[None,:] * np.ones((n_cells, 1))
+
+# per-cell proportions for each gene, for sampling
+gene_p = cell_gene_levels / cell_gene_levels.sum(1)[:, None]
+
+# gene capture: for each cell, select n_reads out of the gene pool as a multinomial process
+cell_gene_umis = np.vstack(
+    [np.random.multinomial(n_umis[i], gene_p[i,:]) for i in range(n_cells)]
+)
+
+plot_expression_v_percent(cell_gene_umis, title="Basic model")
+
+
+cs = []
+# increasing noise levels
+for s in np.linspace(0, 4.5, 4):
+    # log-normal noise for the number of reads (with a lower bound to represent minimum depth)
+    noisy_library = np.exp(
+        st.truncnorm.rvs(-1, 2, loc=8.5, scale=s, size=n_cells)
+    ).astype(int)
+
+    # gene capture: select a random n_reads out of the gene pool for each cell
+    noisy_library_umis = np.vstack(
+        [np.random.multinomial(noisy_library[i], gene_p[i,:]) for i in range(n_cells)]
+    )
+
+    # add log-normal noise to the gene expression of individual cells
+    noisy_genes = gene_levels[None,:] * np.exp(
+        np.random.normal(loc=0, scale=s, size=(n_cells, n_genes))
+    )
+    noisy_gene_p = noisy_genes / noisy_genes.sum(1)[:, None]
+
+    noisy_gene_umis = np.vstack(
+        [np.random.multinomial(n_umis[i], noisy_gene_p[i,:]) for i in range(n_cells)]
+    )
+
+    cs.append(
+        alt.vconcat(
+            plot_expression_v_percent(
+                noisy_library_umis,
+                title=f"Library Noise: {s}",
+                x_domain=(1e-9, 1),
+                y_domain=(1e-4, 1),
+            ).properties(width=200, height=200),
+            plot_expression_v_percent(
+                noisy_gene_umis,
+                title=f"Expression Noise: {s}",
+                x_domain=(1e-9, 1),
+                y_domain=(1e-4, 1),
+            ).properties(width=200, height=200),
+        )
+    )
+
+alt.hconcat(*cs)
+
+noisy_library = np.exp(
+    st.truncnorm.rvs(-1, 2, loc=8.5, scale=1.5, size=n_cells)
+).astype(int)
+
+# add log-normal noise to the gene expression of individual cells
+noisy_genes = gene_levels[None,:] * np.exp(
+    np.random.normal(loc=0, scale=1.5, size=(n_cells, n_genes))
+)
+
+noisy_gene_p = noisy_genes / noisy_genes.sum(1)[:, None]
+
+noisy_umis = np.vstack(
+    [
+        np.random.multinomial(noisy_library[i], noisy_gene_p[i, :])
+        for i in range(n_cells)
+    ]
+)
+
+plot_expression_v_percent(noisy_umis, title=f"Library, Expression Noise: 1.5")
+
+# PCR noise model: every fragment has an affinity for PCR, and every round we do a ~binomial doubling
+def pcr_noise(read_counts: np.ndarray, pcr_betas: np.ndarray, n: int):
+    read_counts = read_counts.copy()
+    # for each round of pcr, each gene increases according to its affinity factor
+    for i in range(n):
+        read_counts += np.random.binomial(
+            read_counts, pcr_betas[None, :], size=read_counts.shape
+        )
+
+    return read_counts
+
+def plot_pcr_betas(pcr_betas: np.ndarray):
+    return (
+        alt.Chart(pd.DataFrame({"x": pcr_betas}), title="PCR Efficiency")
+        .mark_bar()
+        .encode(alt.X("x:Q", bin=True), y="count(*):Q")
+    )
+
+
+# gene pcr: each read has a particular affinity for PCR
+pcr_betas = np.random.beta(6, 5, size=n_genes)
+
+# thirteen rounds of PCR, as described in the methods
+noisy_reads = pcr_noise(noisy_umis, pcr_betas, n=13)
+
+alt.hconcat(
+    plot_pcr_betas(pcr_betas),
+    plot_expression_v_percent(noisy_reads, title="UMIs + PCR"),
+    plot_expression_v_percent(facs_thymus.X, title="FACS data"),
+)
+
+# a bimodal distribution for PCR efficiency: most fragments around 0.5-0.6 but with a spike near 0
+pcr_betas = np.vstack(
+    (np.random.beta(1, 20, size=n_genes), np.random.beta(6, 5, size=n_genes))
+)[(np.random.random(size=n_genes) > 0.1).astype(int), np.arange(n_genes)]
+
+noisy_reads = pcr_noise(noisy_umis, pcr_betas, n=13)
+
+alt.hconcat(
+    plot_pcr_betas(pcr_betas),
+    plot_expression_v_percent(noisy_reads, title="Reads from bimodal PCR"),
+    plot_expression_v_percent(facs_thymus.X, title="FACS data"),
+)
+
+
+# random number of possible fragments per gene, poisson distributed
+# add one to ensure ≥1 fragment per gene
+fragments_per_gene = 1 + np.random.poisson(1, size=n_genes)
+fragment_i = np.repeat(np.arange(n_genes), fragments_per_gene) # index for fragments
+n_fragments = fragments_per_gene.sum() # total number of fragments
+
+# each fragment is at the level of the gene it comes from
+noisy_fragments = np.repeat(noisy_genes, fragments_per_gene, axis=1)
+noisy_fragment_p = noisy_fragments / noisy_fragments.sum(1)[:, None]
+
+# randomly sample fragments, rather than genes, according the per-cell library size
+fragment_umis = np.vstack(
+    [
+        np.random.multinomial(noisy_library[i], noisy_fragment_p[i, :])
+        for i in range(n_cells)
+    ]
+)
+
+# sum up all the fragment reads for a gene to get per-gene UMI counts
+gene_umis = np.hstack(
+    [fragment_umis[:, fragment_i == i].sum(1)[:, None] for i in range(n_genes)]
+)
+
+# generate a per-fragment PCR efficiency
+pcr_betas = np.vstack(
+    (np.random.beta(1, 20, size=n_fragments), np.random.beta(6, 5, size=n_fragments))
+)[(np.random.random(size=n_fragments) > 0.1).astype(int), np.arange(n_fragments)]
+
+# amplify the fragments with PCR
+fragment_reads = pcr_noise(fragment_umis, pcr_betas, n=13)
+
+# sum up all the fragment reads to get per-gene read counts
+gene_reads = np.hstack(
+    [fragment_reads[:, fragment_i == i].sum(1)[:, None] for i in range(n_genes)]
+)
+
+alt.hconcat(
+    plot_expression_v_percent(gene_umis, title="UMIs from gene fragments"),
+    plot_expression_v_percent(gene_reads, title="Reads from gene fragments"),
+    plot_expression_v_percent(facs_thymus.X, title="FACS data"),
+)
+
+# we'll need the pysam library to read the bam file
+# import pysam
+
+# dictionaries that let us index into the read matrix by barcode and gene
+bc_i = {
+    bc: i
+    for i, bc in enumerate(
+        droplet_thymus.obs.index.map(lambda v: v.rsplit("_")[-1] + "-1")
+    )
+
+}
+g_i = {g:i for i,g in enumerate(droplet_thymus.var.index)}
+
+#########################
+# code for loading the read objects, which otherwise take a long time to create
+import pickle
+with open('../../thymus_10x.pickle', 'rb') as f:
+    gene_counts = pickle.load(f)
+
+with open('../../thymus_10x_umi.pickle', 'rb') as f:
+    umi_counts = pickle.load(f)
+
+umi_matrix = np.zeros_like(droplet_thymus.X)
+for bc in umi_counts:
+    for g in umi_counts[bc]:
+        if g in g_i:
+            umi_matrix[bc_i[bc], g_i[g]] = umi_counts[bc][g]
+
+read_matrix = np.zeros_like(droplet_thymus.X)
+for bc in gene_counts:
+    for g in gene_counts[bc]:
+        if g in g_i:
+            read_matrix[bc_i[bc], g_i[g]] = gene_counts[bc][g]
+            
+########################            
+
+# # our matrix of values
+# read_matrix = np.zeros_like(droplet_thymus.X)
+# # as a sanity check, we'll show that we can reconstruct the UMI data
+# umi_matrix = np.zeros_like(droplet_thymus.X)
+
+# bam_file = pysam.AlignmentFile("10X_P7_11_possorted_genome_bam.bam", mode="rb")
+# for a in bam_file:
+#     if (a.mapq == 255                                    # high quality mapping
+#         and a.has_tag("CB") and a.get_tag("CB") in bc_i  # in our set of barcodes,
+#         and a.has_tag("GN") and a.get_tag["GN"] in g_i   # that maps to a single gene,
+#         and a.has_tag("RE") and a.get_tag("RE") == "E"   # specifically to an exon,
+#         and a.has_tag("UB")):                            # and has a good UMI
+
+#         # then we add it to the count matrix
+#         read_matrix[bc_i[a.get_tag("CB")], g_i[a.get_tag("GN")]] += 1
+#         # if this isn't marked a duplicate, count it as a UMI
+#         if not a.is_duplicate:
+#             umi_matrix[bc_i[a.get_tag("CB")], g_i[a.get_tag("GN")]] += 1
+
+# umi data is identical to what we had before
+assert np.array_equal(umi_matrix, droplet_thymus.X)
+
+# cells have all the same genes, just the counts are different
+assert np.array_equal((read_matrix > 0), (droplet_thymus.X > 0))
+
+alt.hconcat(
+    plot_expression_v_percent(droplet_thymus.X, title="Droplet data"),
+    plot_expression_v_percent(read_matrix, title="Droplet data without using UMIs")
+)
+
+def low_efficiency_genes(cell_gene_reads: np.ndarray):
+    x = cell_gene_reads.sum(0) / cell_gene_reads.sum()
+    y = (cell_gene_reads > 0).sum(0) / cell_gene_reads.shape[0]
+
+    # bin values by y on a log scale
+    idx = np.digitize(y, 10**np.linspace(-4, 0, 21))
+
+    low_g = np.zeros(cell_gene_reads.shape[1], dtype=bool)
+    for i in np.unique(idx):
+        low_g[idx == i] = (x[idx == i] < np.min(x[idx == i]) * 2)
+
+    return low_g
+
+def plot_low_efficiency_genes(
+    cell_gene_reads: np.ndarray, low_g: np.ndarray, title: str
+):
+    nz = (cell_gene_reads.sum(0) > 0)
+    x = cell_gene_reads.sum(0) / cell_gene_reads.sum()
+    y = (cell_gene_reads > 0).sum(0) / cell_gene_reads.shape[0]
+
+    return (
+        alt.Chart(
+            pd.DataFrame({"x": x[nz], "y": y[nz], "low_g": low_g[nz]}), title=title
+        )
+        .mark_point(opacity=0.1)
+        .encode(
+            alt.X(
+                "x",
+                type="quantitative",
+                scale=alt.Scale(type="log"),
+                axis=alt.Axis(title="Fraction of total reads"),
+            ),
+            alt.Y(
+                "y",
+                type="quantitative",
+                scale=alt.Scale(type="log"),
+                axis=alt.Axis(title="Percent of cells with ≥1 read"),
+            ),
+            color="low_g",
+        )
+    )
+
+
+droplet_low_g = low_efficiency_genes(read_matrix)
+facs_low_g = low_efficiency_genes(facs_thymus.X)
+
+alt.hconcat(
+    plot_low_efficiency_genes(read_matrix, droplet_low_g, title="Droplet data"),
+    plot_low_efficiency_genes(facs_thymus.X, facs_low_g, title="FACS data"),
+)
+
+
+# this won't actually print a nice markdown table but it's a start
+n_genes = facs_low_g.shape[0]
+low_in_facs = facs_low_g.sum()
+low_in_droplets = droplet_low_g.sum()
+intersection = (facs_low_g & droplet_low_g).sum()
+hypergeom_p = st.hypergeom.sf(intersection, n_genes, low_in_facs, low_in_droplets)
+
+print("\t".join(f"{c:>19}" for c in ("n_genes", "low in FACS", "low in droplets",
+                                     "intersection", "hypergeometric test")))
+print("\t".join(f"{c:>19}" for c in (n_genes, low_in_facs, low_in_droplets,
+                                     intersection, f"""{hypergeom_p:.3g}""")))

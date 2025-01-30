@@ -1,0 +1,55 @@
+import findspark
+findspark.init()
+
+from pyspark import SparkContext
+sc=SparkContext(master="local[4]")
+
+import Tester.SparkBasics1 as SparkBasics1
+pickleFile="Tester/SparkBasics1.pkl"
+
+import numpy as np
+
+# Modify this cell
+from math import cos
+
+def mapcos(A):
+    return A.map(lambda x: cos(x));
+
+import Tester.SparkBasics1 as SparkBasics1
+SparkBasics1.exercise1_1(pickleFile, mapcos ,sc)
+
+def mapwords(stringRDD):
+    return stringRDD.map(lambda x: x.split())
+
+import Tester.SparkBasics1 as SparkBasics1
+SparkBasics1.exercise1_2(pickleFile, mapwords, sc)
+
+def getMax(C):
+    return C.reduce(lambda x, y: max(x, y));
+
+import Tester.SparkBasics1 as SparkBasics1
+SparkBasics1.exercise1_3(pickleFile, getMax, sc)
+
+# Modify this cell
+def reducewords(stringRDD):
+    return stringRDD.reduce(lambda x, y: x + " " + y);
+
+import Tester.SparkBasics1 as SparkBasics1
+SparkBasics1.exercise1_4(pickleFile, reducewords, sc)
+
+def maxFunc(x,y):
+    # x,y are lists of numbers
+    # write code here for exercise 5
+    return [max(x)] if max(x) > max(y) else [max(y)];
+
+import Tester.SparkBasics1 as SparkBasics1
+SparkBasics1.exercise1_5(pickleFile, maxFunc, sc)
+
+
+
+
+
+
+
+
+

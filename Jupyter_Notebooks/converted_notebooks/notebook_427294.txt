@@ -1,0 +1,315 @@
+import os
+import random
+import warnings
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.utils import class_weight
+from sklearn.metrics import confusion_matrix, cohen_kappa_score
+from keras import backend as K
+from keras.models import Model
+from keras import optimizers, applications
+from keras.preprocessing.image import ImageDataGenerator
+from keras.callbacks import EarlyStopping, ReduceLROnPlateau
+from keras.layers import Dense, Dropout, GlobalAveragePooling2D, Input
+
+# Set seeds to make the experiment more reproducible.
+from tensorflow import set_random_seed
+def seed_everything(seed=0):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    set_random_seed(0)
+seed_everything()
+
+%matplotlib inline
+sns.set(style="whitegrid")
+warnings.filterwarnings("ignore")
+
+train = pd.read_csv('../input/aptos2019-blindness-detection/train.csv')
+test = pd.read_csv('../input/aptos2019-blindness-detection/test.csv')
+print('Number of train samples: ', train.shape[0])
+print('Number of test samples: ', test.shape[0])
+
+# Preprocecss data
+train["id_code"] = train["id_code"].apply(lambda x: x + ".png")
+test["id_code"] = test["id_code"].apply(lambda x: x + ".png")
+train['diagnosis'] = train['diagnosis'].astype('str')
+display(train.head())
+
+# Model parameters
+BATCH_SIZE = 8
+EPOCHS = 30
+WARMUP_EPOCHS = 2
+LEARNING_RATE = 1e-4
+WARMUP_LEARNING_RATE = 1e-3
+HEIGHT = 512
+WIDTH = 512
+CANAL = 3
+N_CLASSES = train['diagnosis'].nunique()
+ES_PATIENCE = 5
+RLROP_PATIENCE = 3
+DECAY_DROP = 0.5
+
+def kappa(y_true, y_pred, n_classes=5):
+    y_trues = K.cast(K.argmax(y_true), K.floatx())
+    y_preds = K.cast(K.argmax(y_pred), K.floatx())
+    n_samples = K.cast(K.shape(y_true)[0], K.floatx())
+    distance = K.sum(K.abs(y_trues - y_preds))
+    max_distance = n_classes - 1
+    
+    kappa_score = 1 - ((distance**2) / (n_samples * (max_distance**2)))
+
+    return kappa_score
+
+train_datagen=ImageDataGenerator(rescale=1./255, 
+                                 validation_split=0.2,
+                                 horizontal_flip=True,
+                                 vertical_flip=True)
+
+train_generator=train_datagen.flow_from_dataframe(
+    dataframe=train,
+    directory="../input/aptos2019-blindness-detection/train_images/",
+    x_col="id_code",
+    y_col="diagnosis",
+    batch_size=BATCH_SIZE,
+    class_mode="categorical",
+    target_size=(HEIGHT, WIDTH),
+    subset='training')
+
+valid_generator=train_datagen.flow_from_dataframe(
+    dataframe=train,
+    directory="../input/aptos2019-blindness-detection/train_images/",
+    x_col="id_code",
+    y_col="diagnosis",
+    batch_size=BATCH_SIZE,
+    class_mode="categorical",    
+    target_size=(HEIGHT, WIDTH),
+    subset='validation')
+
+test_datagen = ImageDataGenerator(rescale=1./255)
+
+test_generator = test_datagen.flow_from_dataframe(  
+        dataframe=test,
+        directory = "../input/aptos2019-blindness-detection/test_images/",
+        x_col="id_code",
+        target_size=(HEIGHT, WIDTH),
+        batch_size=1,
+        shuffle=False,
+        class_mode=None)
+
+def create_model(input_shape, n_out):
+    input_tensor = Input(shape=input_shape)
+    base_model = applications.ResNet50(weights=None, 
+                                       include_top=False,
+                                       input_tensor=input_tensor)
+    base_model.load_weights('../input/resnet50/resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5')
+
+    x = GlobalAveragePooling2D()(base_model.output)
+    x = Dropout(0.5)(x)
+    x = Dense(2048, activation='relu')(x)
+    x = Dropout(0.5)(x)
+    final_output = Dense(n_out, activation='softmax', name='final_output')(x)
+    model = Model(input_tensor, final_output)
+    
+    return model
+
+model = create_model(input_shape=(HEIGHT, WIDTH, CANAL), n_out=N_CLASSES)
+
+for layer in model.layers:
+    layer.trainable = False
+
+for i in range(-5, 0):
+    model.layers[i].trainable = True
+    
+class_weights = class_weight.compute_class_weight('balanced', np.unique(train['diagnosis'].astype('int').values), train['diagnosis'].astype('int').values)
+
+metric_list = ["accuracy", kappa]
+optimizer = optimizers.Adam(lr=WARMUP_LEARNING_RATE)
+model.compile(optimizer=optimizer, loss="categorical_crossentropy",  metrics=metric_list)
+model.summary()
+
+STEP_SIZE_TRAIN = train_generator.n//train_generator.batch_size
+STEP_SIZE_VALID = valid_generator.n//valid_generator.batch_size
+
+history_warmup = model.fit_generator(generator=train_generator,
+                              steps_per_epoch=STEP_SIZE_TRAIN,
+                              validation_data=valid_generator,
+                              validation_steps=STEP_SIZE_VALID,
+                              epochs=WARMUP_EPOCHS,
+                              class_weight=class_weights,
+                              verbose=1).history
+
+for layer in model.layers:
+    layer.trainable = True
+
+es = EarlyStopping(monitor='val_loss', mode='min', patience=ES_PATIENCE, restore_best_weights=True, verbose=1)
+rlrop = ReduceLROnPlateau(monitor='val_loss', mode='min', patience=RLROP_PATIENCE, factor=DECAY_DROP, min_lr=1e-6, verbose=1)
+
+callback_list = [es, rlrop]
+optimizer = optimizers.Adam(lr=LEARNING_RATE)
+model.compile(optimizer=optimizer, loss="categorical_crossentropy",  metrics=metric_list)
+model.summary()
+
+history_finetunning = model.fit_generator(generator=train_generator,
+                              steps_per_epoch=STEP_SIZE_TRAIN,
+                              validation_data=valid_generator,
+                              validation_steps=STEP_SIZE_VALID,
+                              epochs=EPOCHS,
+                              callbacks=callback_list,
+                              class_weight=class_weights,
+                              verbose=1).history
+
+history = {'loss': history_warmup['loss'] + history_finetunning['loss'], 
+           'val_loss': history_warmup['val_loss'] + history_finetunning['val_loss'], 
+           'acc': history_warmup['acc'] + history_finetunning['acc'], 
+           'val_acc': history_warmup['val_acc'] + history_finetunning['val_acc'], 
+           'kappa': history_warmup['kappa'] + history_finetunning['kappa'], 
+           'val_kappa': history_warmup['val_kappa'] + history_finetunning['val_kappa']}
+
+sns.set_style("whitegrid")
+fig, (ax1, ax2, ax3) = plt.subplots(3, 1, sharex='col', figsize=(20, 18))
+
+ax1.plot(history['loss'], label='Train loss')
+ax1.plot(history['val_loss'], label='Validation loss')
+ax1.legend(loc='best')
+ax1.set_title('Loss')
+
+ax2.plot(history['acc'], label='Train accuracy')
+ax2.plot(history['val_acc'], label='Validation accuracy')
+ax2.legend(loc='best')
+ax2.set_title('Accuracy')
+
+ax3.plot(history['kappa'], label='Train kappa')
+ax3.plot(history['val_kappa'], label='Validation kappa')
+ax3.legend(loc='best')
+ax3.set_title('Kappa')
+
+plt.xlabel('Epochs')
+sns.despine()
+plt.show()
+
+lastFullTrainPred = np.empty((0, N_CLASSES))
+lastFullTrainLabels = np.empty((0, N_CLASSES))
+lastFullValPred = np.empty((0, N_CLASSES))
+lastFullValLabels = np.empty((0, N_CLASSES))
+
+for i in range(STEP_SIZE_TRAIN+1):
+    im, lbl = next(train_generator)
+    scores = model.predict(im, batch_size=train_generator.batch_size)
+    lastFullTrainPred = np.append(lastFullTrainPred, scores, axis=0)
+    lastFullTrainLabels = np.append(lastFullTrainLabels, lbl, axis=0)
+
+for i in range(STEP_SIZE_VALID+1):
+    im, lbl = next(valid_generator)
+    scores = model.predict(im, batch_size=valid_generator.batch_size)
+    lastFullValPred = np.append(lastFullValPred, scores, axis=0)
+    lastFullValLabels = np.append(lastFullValLabels, lbl, axis=0)
+
+train_preds = [np.argmax(pred) for pred in lastFullTrainPred]
+train_labels = [np.argmax(label) for label in lastFullTrainLabels]
+validation_preds = [np.argmax(pred) for pred in lastFullValPred]
+validation_labels = [np.argmax(label) for label in lastFullValLabels]
+
+def find_best_fixed_threshold(preds, targs, do_plot=True):
+    best_thr_list = [0 for i in range(preds.shape[1])]
+    for index in reversed(range(preds.shape[1])):
+        score = []
+        thrs = np.arange(0, 1, 0.01)
+        for thr in thrs:
+            preds_thr = [index if x[index] > thr else np.argmax(x) for x in preds]
+            score.append(cohen_kappa_score(targs, preds_thr))
+        score = np.array(score)
+        pm = score.argmax()
+        best_thr, best_score = thrs[pm], score[pm].item()
+        best_thr_list[index] = best_thr
+        print(f'thr={best_thr:.3f}', f'F2={best_score:.3f}')
+        if do_plot:
+            plt.plot(thrs, score)
+            plt.vlines(x=best_thr, ymin=score.min(), ymax=score.max())
+            plt.text(best_thr+0.03, best_score-0.01, ('Kappa[%s]=%.3f'%(index, best_score)), fontsize=14);
+            plt.show()
+    return best_thr_list
+
+threshold_list = find_best_fixed_threshold(lastFullValPred, validation_labels, do_plot=True)
+threshold_list[0] = 0 # In last instance assign label 0
+
+train_preds_opt = [0 for i in range(lastFullTrainPred.shape[0])]
+for idx, thr in enumerate(threshold_list):
+    for idx2, pred in enumerate(lastFullTrainPred):
+        if pred[idx] > thr:
+            train_preds_opt[idx2] = idx
+
+validation_preds_opt = [0 for i in range(lastFullValPred.shape[0])]
+for idx, thr in enumerate(threshold_list):
+    for idx2, pred in enumerate(lastFullValPred):
+        if pred[idx] > thr:
+            validation_preds_opt[idx2] = idx
+
+fig, (ax1, ax2) = plt.subplots(1, 2, sharex='col', figsize=(24, 7))
+labels = ['0 - No DR', '1 - Mild', '2 - Moderate', '3 - Severe', '4 - Proliferative DR']
+train_cnf_matrix = confusion_matrix(train_labels, train_preds)
+validation_cnf_matrix = confusion_matrix(validation_labels, validation_preds)
+
+train_cnf_matrix_norm = train_cnf_matrix.astype('float') / train_cnf_matrix.sum(axis=1)[:, np.newaxis]
+validation_cnf_matrix_norm = validation_cnf_matrix.astype('float') / validation_cnf_matrix.sum(axis=1)[:, np.newaxis]
+
+train_df_cm = pd.DataFrame(train_cnf_matrix_norm, index=labels, columns=labels)
+validation_df_cm = pd.DataFrame(validation_cnf_matrix_norm, index=labels, columns=labels)
+
+sns.heatmap(train_df_cm, annot=True, fmt='.2f', cmap="Blues",ax=ax1).set_title('Train')
+sns.heatmap(validation_df_cm, annot=True, fmt='.2f', cmap="Blues",ax=ax2).set_title('Validation')
+plt.show()
+
+fig, (ax1, ax2) = plt.subplots(1, 2, sharex='col', figsize=(24, 7))
+labels = ['0 - No DR', '1 - Mild', '2 - Moderate', '3 - Severe', '4 - Proliferative DR']
+train_cnf_matrix = confusion_matrix(train_labels, train_preds_opt)
+validation_cnf_matrix = confusion_matrix(validation_labels, validation_preds_opt)
+
+train_cnf_matrix_norm = train_cnf_matrix.astype('float') / train_cnf_matrix.sum(axis=1)[:, np.newaxis]
+validation_cnf_matrix_norm = validation_cnf_matrix.astype('float') / validation_cnf_matrix.sum(axis=1)[:, np.newaxis]
+
+train_df_cm = pd.DataFrame(train_cnf_matrix_norm, index=labels, columns=labels)
+validation_df_cm = pd.DataFrame(validation_cnf_matrix_norm, index=labels, columns=labels)
+
+sns.heatmap(train_df_cm, annot=True, fmt='.2f', cmap="Blues",ax=ax1).set_title('Train optimized')
+sns.heatmap(validation_df_cm, annot=True, fmt='.2f', cmap="Blues",ax=ax2).set_title('Validation optimized')
+plt.show()
+
+print("Train Cohen Kappa score: %.3f" % cohen_kappa_score(train_preds, train_labels, weights='quadratic'))
+print("Validation Cohen Kappa score: %.3f" % cohen_kappa_score(validation_preds, validation_labels, weights='quadratic'))
+print("Complete set Cohen Kappa score: %.3f" % cohen_kappa_score(train_preds+validation_preds, train_labels+validation_labels, weights='quadratic'))
+print("Train optimized Cohen Kappa score: %.3f" % cohen_kappa_score(train_preds_opt, train_labels, weights='quadratic'))
+print("Validation optimized Cohen Kappa score: %.3f" % cohen_kappa_score(validation_preds_opt, validation_labels, weights='quadratic'))
+print("Complete optimized set Cohen Kappa score: %.3f" % cohen_kappa_score(train_preds_opt+validation_preds_opt, train_labels+validation_labels, weights='quadratic'))
+
+test_generator.reset()
+STEP_SIZE_TEST = test_generator.n//test_generator.batch_size
+preds = model.predict_generator(test_generator, steps=STEP_SIZE_TEST)
+predictions = [np.argmax(pred) for pred in preds]
+
+predictions_opt = [0 for i in range(preds.shape[0])]
+for idx, thr in enumerate(threshold_list):
+    for idx2, pred in enumerate(preds):
+        if pred[idx] > thr:
+            predictions_opt[idx2] = idx
+
+filenames = test_generator.filenames
+results = pd.DataFrame({'id_code':filenames, 'diagnosis':predictions})
+results['id_code'] = results['id_code'].map(lambda x: str(x)[:-4])
+
+results_opt = pd.DataFrame({'id_code':filenames, 'diagnosis':predictions_opt})
+results_opt['id_code'] = results_opt['id_code'].map(lambda x: str(x)[:-4])
+
+fig, (ax1, ax2) = plt.subplots(1, 2, sharex='col', figsize=(24, 8.7))
+sns.countplot(x="diagnosis", data=results, palette="GnBu_d", ax=ax1)
+sns.countplot(x="diagnosis", data=results_opt, palette="GnBu_d", ax=ax2)
+sns.despine()
+plt.show()
+
+results.to_csv('submission.csv',index=False)
+results.head(10)
+
+results_opt.to_csv('submission_opt.csv',index=False)
+results_opt.head(10)

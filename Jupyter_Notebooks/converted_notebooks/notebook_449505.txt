@@ -1,0 +1,120 @@
+# Students don't need to worry about this cell
+# Just make sure that the first thing you do is
+# to run it or the rest of the grading won't work!
+
+import math
+import hashlib
+import inspect
+
+def _hash(s):
+    return hashlib.blake2b(
+        bytes(str(s), encoding='utf8'),
+        digest_size=5
+    ).hexdigest()
+
+def hello_world():
+    a_var = 10
+    return a_var
+
+another_var = 100
+
+# assign the string values of either 'local' or 'global'
+
+# Assign a_var_scope the value of 'local' or 'global'
+a_var_scope = ''
+
+# Assign another_var_scope the value of 'local' or 'global'
+another_var_scope = ''
+
+# YOUR CODE HERE
+raise NotImplementedError()
+
+assert _hash(a_var_scope) == '702153dc06', 'incorrect scope, try again!'
+assert _hash(another_var_scope) == 'ec9f60ee7b', 'incorrect scope, try again!'
+
+outside_var = 100
+
+def hello_world_complicated():
+    print(outside_var)
+    a_var = 10
+    outside_var = 200
+    print(outside_var)
+
+# The print(outside_var) which is the first line in the function is printing
+# the value of a global or locally scoped variable
+# Assign outside_var_first_print_scope the value of 'local' or 'global'
+
+outside_var_first_print_scope = ''
+
+# The print(outside_var) which is the last line in the function is printing
+# the value of a global or locally scoped variable
+# Assign outside_var_second_print_scope the value of 'local' or 'global'
+
+outside_var_second_print_scope = ''
+
+
+# YOUR CODE HERE
+raise NotImplementedError()
+
+assert _hash('a' + outside_var_first_print_scope) == 'fc6003ae12', 'incorrect scope, try again!'
+assert _hash('b' + outside_var_second_print_scope) == '650bfd57ec', 'incorrect scope, try again!'
+
+# Fill in the values by ONLY READING the code.
+# DO NOT RUN THE CELL ABOVE
+
+
+my_value_1 = [] # fill in the values in the list for my_value_1
+my_value_2 = [] # fill in the values in the list for my_value_2
+
+# YOUR CODE HERE
+raise NotImplementedError()
+
+assert _hash(my_value_1) == '90cd62da52', 'not quite, follow the code and the concepts!'
+assert _hash(my_value_2) == '76d2a49034', 'not quite, follow the code and the concepts!'
+
+
+# first define a global variable called a_number
+
+# next define your function use_global_scope that multiplies a_number by multiply_by
+
+
+# YOUR CODE HERE
+raise NotImplementedError()
+
+sig = inspect.signature(use_global_scope)
+source = inspect.getsource(use_global_scope)
+params = sig.parameters
+
+assert len(sig.parameters) == 1, 'your function should take one argument'
+assert 'multiply_by' in params, 'you must have an argument called my_list'
+assert 'a_number' in globals(), 'be sure to define a_number in the global scope'
+assert use_global_scope(10) == 20, 'check the spec and your implementation'
+assert use_global_scope('hello') == None, 'check the spec and your implementation'
+assert 'a_number' in source, 'be sure to use a_number in side of the function'
+assert '=' not in source, 'you do not need to assign any values to any variables inside of this function'
+assert '10' not in source, 'are you cheating by hard-coding?'
+assert '20' not in source, 'no cheating by hard-coding stuff!'
+
+# YOUR CODE HERE
+raise NotImplementedError()
+
+assert 'mult_by' in globals(), 'did you name the function correctly?'
+
+sig = inspect.signature(mult_by)
+source = inspect.getsource(mult_by)
+params = sig.parameters
+
+assert len(sig.parameters) == 2, 'your function should define two arguments'
+assert 'my_list' in params, 'you must have an argument called my_list'
+assert 'multiply_by' in params, 'you must have an argument called multiply_by'
+assert sig.parameters['my_list'].default == inspect._empty, 'my_list should be a positional arg'
+assert sig.parameters['multiply_by'].default == 2, 'multiply_by should be position and default to 2'
+assert (
+    '8' not in source
+    and
+    '10' not in source
+), 'are you cheeeeeting?'
+
+
+assert mult_by([4, 5]) == [8, 10], 'wrong return value, check spec and implementation!'
+assert mult_by([4, 5], multiply_by=1) == [4, 5], 'wrong return value, check spec and implementation!'

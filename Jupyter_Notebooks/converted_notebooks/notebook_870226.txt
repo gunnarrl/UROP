@@ -1,0 +1,432 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import scipy.stats as sts
+import time
+import math
+from numba import jit
+import scipy.io
+
+%matplotlib inline
+
+light = '#eff3ff'
+light_highlight = '#c6dbef'
+mid = '#9ecae1'
+mid_highlight = '#6baed6'
+dark = '#3182bd'
+dark_highlight = '#08519c'
+
+# Generate data from a block design (see paper)
+# Build the true reward rate
+true_prob = [0.75] * 120 + [0.2] * 40 + [0.8] * 40 + [0.2] * 30 + [0.8] * 30 + [0.2] * 40
+plt.figure(figsize=(10,5))
+#plt.subplot(121)
+plt.xlabel('Time step')
+plt.ylabel('Probability')
+#plt.ylim([0, 1])
+plt.plot(true_prob, color=dark)
+
+# Generate data from bernoulli
+randvars = np.random.random(len(true_prob))
+outcomes = randvars < true_prob
+#plt.subplot(122)
+plt.xlabel('Time step')
+plt.ylabel('$r_i$ and $y_i$')
+plt.plot(outcomes, '.', color=dark)
+
+# Load a previously generated set of data to be used for the simulations
+data = scipy.io.loadmat('outcomes.mat')
+outcomes = data['outcomes'][0]
+plt.figure()
+plt.plot(outcomes, '.')
+plt.xlabel('Time step')
+plt.ylabel('$y_i$')
+
+#@jit(nopython=True)
+def pr_next(rnext, rprev, v, method):
+    '''Find p(r_{i+1} = rnext | r_i = rprev, v)'''
+    if method=='beta':
+        # Take care of boundaries:
+        rval = np.maximum(rnext, 1e-10)
+        rval = np.minimum(rval, (1 - 1e-10))
+
+        s = rprev * np.exp(-v)
+        n = (1 - rprev) * np.exp(-v)
+
+        s = np.maximum(s, 1e-10)
+        n = np.maximum(n, 1e-10)
+
+        # Math range error if use my_beta
+        #print(s, n)
+        return sts.beta.pdf(rval, s, n)
+    elif method=='gaussian':
+        return pr_next_gaussian(rnext, rprev, v)
+    elif method=='step':
+        return pr_next_step(rnext, rprev, v)
+    else:
+        raise ValueError('Invalid method')
+        
+def pr_next_step(rnext, rprev, v):
+    '''Find p(r_{i+1} = rnext | r_i = rprev, v),
+    with a switching model'''
+    delta = (rnext == rprev).astype('float')
+    V = np.exp(v)
+    return (1 - V) * delta + V / len(rprev)
+    
+
+@jit(nopython=True)
+def pr_next_gaussian(rnext, rprev, v):
+    '''Find p(r_{i+1} = rnext | r_i = rprev, v),
+    with a Gaussian distribution'''
+    #print('here')
+    V = np.exp(v)
+    mu = rprev
+    sigma = V
+    x = rnext
+    constant = 1 / np.sqrt(2 * np.pi * sigma**2)
+    #normalizing = sts.norm.cdf(1, mu, sigma) - sts.norm.cdf(0, mu, sigma)
+    
+    result = np.exp(-(x - mu)**2 / 2 / sigma**2) * constant 
+    return result
+    
+@jit(nopython=True)
+def pv_next(vnext, vprev, k):
+    '''Find p(v_{i+1} = vnext | v_i = vprev, k)'''
+    K = np.exp(k)
+    mu = vprev
+    sigma = K
+    x = vnext
+    constant = 1 / np.sqrt(2 * np.pi * sigma**2)
+    return np.exp(-(x - mu)**2 / 2 / sigma**2) * constant
+    #return my_normal(vnext, vprev, K) #sts.norm.pdf(vnext, vprev, K)
+
+@jit(nopython=True)
+def py_given_r(y, r):
+    '''p(y = y| r), which is bernoulli'''
+    assert(r <= 1 and r >= 0)
+    assert(y == 1 or y == 0)
+    if y == 1:
+        return r
+    else:
+        return 1 - r
+
+def find_posterior_tv(nr, nv, y, prev_res, method):
+    '''Inputs:
+    - nr, nv, nk: indices of the r, v, k desired
+    - prev_res: Nr x Nv x Nk array encoding posterior at time t - 1
+    - Returns the posterior at time t corresponding to nr, nv, nk'''
+    r = rvals[nr]
+    v = vvals[nv]
+    
+    p_yr = py_given_r(y, r)
+    # Find p(v_i+1 | v_i, k) array
+    p_rv = pr_next(r, rvals, v, method=method)
+    
+    # Normalize p_rv
+    p_rv = p_rv / (np.sum(p_rv) * dr)
+    
+    # Find posterior_prev matrix
+    posterior_prev = prev_res[:,nv]
+     
+    # Integrate over the grid
+    integral = np.sum(p_rv * posterior_prev * dv * dr)
+    return integral * p_yr
+
+def find_posterior_tv_arr(y, prev_res, method='beta'):
+    '''Inputs: y, the observed y_i
+    - prev_res: the posterior up to time i
+    - Returns the posterior up to time i + 1'''
+    result = np.zeros_like(prev_res)
+    for nr in range(len(rvals)):
+        for nv in range(len(vvals)):
+            result[nr, nv] = find_posterior_tv(nr, nv, y, prev_res, method=method)
+            
+    # Normalize
+    result = result / np.sum(result)
+    return result
+
+# Set up a grid of r, v
+rvals = np.linspace(0, 1, 50)
+vvals = np.linspace(-9, 5, 150)
+dv = vvals[1] - vvals[0]
+dr = rvals[1] - rvals[0]
+
+# Build the 'prior' matrix nr x nv x nk
+prior = np.ones((len(rvals), len(vvals)))
+for nr, rval in enumerate(rvals):
+    for nv, vval in enumerate(vvals):
+        vprob = sts.norm.pdf(vval, -3.5, 1)
+        prior[nr, nv] = vprob
+
+# Normalize
+prior /= np.sum(prior)
+
+begin = time.time()
+#Initialize array for storage
+result_final = np.ones((len(rvals), len(vvals), len(outcomes)))
+result_final = result_final / np.sum(result_final[:,:,0])
+
+# Comment out if we want to incorporate a prior
+#result_final[:,:,0] = prior
+
+nsimulate = len(outcomes) - 1
+
+# Perform the iterative updates
+for t in range(nsimulate):
+    print(t)
+    result = find_posterior_tv_arr(outcomes[t], result_final[:,:,t], method='gaussian')
+    result_final[:,:,t+1] = result
+end = time.time()
+print('Elapsed time is ', end - begin)
+
+# Compute the expected value of each parameter, and the standard deviation
+rprobs = []
+vprobs = []
+rstd = []
+vstd = []
+
+for t in range(nsimulate):
+    endres = result_final[:,:,t]
+    # Marginalize out v and k
+    r_prob = np.sum(endres, axis=1)
+    v_prob = np.sum(endres, axis=0)
+    
+    # Expectations
+    expR = np.sum(r_prob / np.sum(r_prob) * rvals)
+    expV = np.sum(v_prob / np.sum(v_prob) * vvals)
+    
+    # Standard deviations
+    expR2 = np.sum(r_prob / np.sum(r_prob) * (rvals**2))
+    stdR2 = np.sqrt(expR2 - expR**2)
+    
+    expV2 = np.sum(v_prob / np.sum(v_prob) * (vvals**2))
+    stdV2 = np.sqrt(expV2 - expV**2)
+    
+    rprobs.append(expR)
+    vprobs.append(expV)
+    rstd.append(stdR2)
+    vstd.append(stdV2)
+
+# Plot the estimated parameters
+plt.figure(figsize=(10, 5))
+
+plt.subplot(121)
+plt.plot(rprobs, color=dark)
+plt.plot(true_prob, color=mid)
+
+plt.subplot(122)
+plt.plot(vprobs, color=dark)
+plt.plot(true_prob, color=mid)
+
+plt.figure()
+plt.subplot(221)
+plt.imshow(result_final[:,:,50])
+plt.subplot(222)
+plt.imshow(result_final[:,:,100])
+plt.subplot(223)
+plt.imshow(result_final[:,:,150])
+plt.subplot(224)
+plt.imshow(result_final[:,:,200])
+
+def find_posterior_t_vec_fast(nr, nv, nk, y, prev_res, method):
+    '''Inputs:
+    - nr, nv, nk: indices of the r, v, k desired
+    - prev_res: Nr x Nv x Nk array encoding posterior at time t - 1
+    - Returns the posterior at time t corresponding to nr, nv, nk'''
+    r = rvals[nr]
+    k = kvals[nk]
+    v = vvals[nv]
+    
+    p_yr = py_given_r(y, r)
+    # Find the p(v_i+1 | v_i, k) arr
+    p_rv = pr_next(r, rvals, v, method=method)
+    
+    # Normalize
+    p_rv = p_rv / (np.sum(p_rv) * dr)
+    P_rv = np.tile(p_rv, (len(vvals), 1)).T
+    
+    # Find posterior_prev matrix
+    posterior_prev = prev_res[:,:,nk]
+    
+    # Find the p(r_i+1 | r_i, k) arr
+    p_vk = pv_next(v, vvals, k)
+    
+    # Normalize
+    p_vk = p_vk / (np.sum(p_vk) * dv)
+    P_vk = np.tile(p_vk, (len(rvals), 1))
+    
+    # Integrate over the grid
+    integral = np.sum(P_rv * P_vk * posterior_prev * dv * dr)
+    return integral * p_yr
+
+def find_posterior_t_arr(y, prev_res, method='beta'):
+    '''Inputs:
+    - prev_res: Nr x Nv x Nk array encoding posterior at time t - 1
+    - Returns the Nr x Nv x Nk array encoding posterior at time t'''
+    result = np.zeros_like(prev_res)
+    for nr in range(len(rvals)):
+        for nv in range(len(vvals)):
+            for nk in range(len(kvals)):
+                result[nr, nv, nk] = find_posterior_t_vec_fast(nr, nv, nk, y, prev_res, method=method)
+    # Normalize
+    result = result / np.sum(result)
+    return result
+
+# Set up a grid of r, v, k
+rvals = np.linspace(0, 1, 20)
+vvals = np.linspace(-9, 2, 50)
+kvals = np.linspace(-6, 2, 50)
+
+dv = vvals[1] - vvals[0]
+dr = rvals[1] - rvals[0]
+
+# Build the 'prior' matrix nr x nv x nk
+prior = np.ones((len(rvals), len(vvals), len(kvals)))
+
+for nr, rval in enumerate(rvals):
+    for nv, vval in enumerate(vvals):
+        for nk, kval in enumerate(kvals):
+            vprob = sts.norm.pdf(vval, -3.5, 1)
+            kprob = sts.norm.pdf(kval, -3.5, 1)
+            prior[nr, nv, nk] = vprob * kprob
+
+# Normalize
+prior /= np.sum(prior)
+
+
+# Set up a grid of r, v, k
+rvals = np.linspace(0, 1, 20)
+vvals = np.linspace(-9, 2, 50)
+kvals = np.linspace(-6, 2, 50)
+
+dv = vvals[1] - vvals[0]
+dr = rvals[1] - rvals[0]
+
+begin = time.time()
+#Initialize array for storage
+result_final = np.ones((len(rvals), len(vvals), len(kvals), len(outcomes)))
+
+# Comment out if we want to include a prior
+#result_final[:,:,:,0] = prior
+
+nsimulate = len(outcomes) - 1
+
+# Perform the iterative updates
+for t in range(nsimulate):
+    print(t)
+    result = find_posterior_t_arr(outcomes[t], result_final[:,:,:,t], method='beta')
+    result_final[:,:,:,t+1] = result
+end = time.time()
+print('Elapsed time is ', end - begin)
+
+rprobs = []
+vprobs = []
+kprobs = []
+rstd = []
+vstd = []
+
+for t in range(nsimulate):
+    endres = result_final[:,:,:,t]
+    # Marginalize out v and k
+    r_prob = np.sum(endres, axis=(1,2))
+    v_prob = np.sum(endres, axis=(0,2))
+    k_prob = np.sum(endres, axis=(0,1))
+    
+    # Expectations
+    expR = np.sum(r_prob / np.sum(r_prob) * rvals)
+    expV = np.sum(v_prob / np.sum(v_prob) * vvals)
+    expK = np.sum(k_prob / np.sum(k_prob) * kvals)
+    
+    # Standard deviations
+    expR2 = np.sum(r_prob / np.sum(r_prob) * (rvals**2))
+    stdR2 = np.sqrt(expR2 - expR**2)
+    
+    expV2 = np.sum(v_prob / np.sum(v_prob) * (vvals**2))
+    stdV2 = np.sqrt(expV2 - expV**2)
+    
+    rprobs.append(expR)
+    vprobs.append(expV)
+    kprobs.append(expK)
+    rstd.append(stdR2)
+    vstd.append(stdV2)
+    
+
+font = {'weight' : 'normal',
+        'size'   : 14}
+
+plt.rc('font', **font)
+
+# Plot r estimates
+plt.figure(figsize=(10, 8))
+plt.subplot(211)
+plt.plot(rprobs, color=dark)
+plt.plot(true_prob, '--', color=mid)
+plt.legend(['Estimated reward','True reward'], loc='upper right', fontsize=12, ncol=2)
+plt.ylabel(r'$r_i$')
+plt.ylim([0, 1])
+plt.xlim([0, 300])
+
+# Plot v estimates
+plt.subplot(212)
+plt.plot(vprobs, color=dark)
+plt.xlabel('Time step')
+plt.ylabel(r'$v_i$')
+plt.xlim([0, 300])
+plt.ylim([-8, 0])
+
+#plt.savefig('rvprobs_gaussian.pdf')
+
+# Marginalize over k
+marg_k = np.sum(result_final, axis=2)
+
+# Marginalize over r
+marg_r = np.sum(result_final, axis=0)
+
+#scipy.io.savemat('prob_density_fig_beta.mat', {'marg_k': marg_k, 'marg_r': marg_r,
+#                                              'vvals': vvals, 'kvals': kvals, 'rvals': rvals,
+#                                              'method': 'beta'})
+
+plt.figure(figsize=(6,7))
+plt.subplot(321)
+plt.imshow(marg_k[:,:,120], extent=[vvals[0], vvals[-1], rvals[-1], rvals[0]], 
+           aspect='auto', cmap='gray')
+plt.gca().invert_yaxis()
+plt.ylabel('$r$')
+
+plt.subplot(323)
+plt.imshow(marg_k[:,:,135], extent=[vvals[0], vvals[-1], rvals[-1], rvals[0]], 
+           aspect='auto', cmap='gray')
+plt.gca().invert_yaxis()
+plt.ylabel('$r$')
+
+plt.subplot(325)
+plt.imshow(marg_k[:,:,160], extent=[vvals[0], vvals[-1], rvals[-1], rvals[0]], 
+           aspect='auto', cmap='gray')
+
+plt.gca().invert_yaxis()
+plt.xlabel('$v$')
+plt.ylabel('$r$')
+
+
+plt.subplot(322)
+plt.imshow(marg_r[:,:,120], extent=[kvals[0], kvals[-1], vvals[-1], vvals[0]], 
+           aspect='auto', cmap='gray')
+plt.gca().invert_yaxis()
+plt.xlim(-4, 2)
+
+print(plt.gca().get_position())
+
+plt.subplot(324)
+plt.imshow(marg_r[:,:,135], extent=[kvals[0], kvals[-1], vvals[-1], vvals[0]], 
+           aspect='auto', cmap='gray')
+plt.gca().invert_yaxis()
+plt.xlim(-4, 2)
+
+plt.subplot(326)
+plt.imshow(marg_r[:,:,160], extent=[kvals[0], kvals[-1], vvals[-1], vvals[0]], 
+           aspect='auto', cmap='gray')
+plt.gca().invert_yaxis()
+plt.xlim(-4, 2)
+plt.xlabel('$k$')
+plt.ylabel('$v$')
+
+#plt.savefig('prob_densities_rvk.pdf')

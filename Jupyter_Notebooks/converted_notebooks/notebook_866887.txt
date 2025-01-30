@@ -1,0 +1,99 @@
+import torch
+import numpy as np
+from math import exp, log
+
+device = torch.device('cpu')
+
+def _acti(z): 
+    return 1.0 / (1.0 + exp(-z))
+
+def acti(zs):
+    return 1.0/(1.0 + np.exp(-zs))
+
+def acti_old(zs):
+    s = zs.shape
+    dup = zs.reshape(-1)
+    return np.fromiter( (_acti(elem) for elem in dup), zs.dtype ).reshape(s)
+
+def _grad(z):
+    return _acti(z) * (1 - _acti(z))
+
+
+def grad(zs):
+    s = zs.size
+    return np.multiply(acti(zs),(-acti(zs) + 1.0))
+
+def grad_old(zs):
+    return np.fromiter( (_grad(elem) for elem in zs), zs.dtype )
+
+def loss(y, t): 
+    return 0.5*(y-t).T*(y-t)
+
+def p(*vals, prec = 8,):
+    for val in vals:
+        if isinstance(val, str):
+            print(val, end=' ')
+        else: # assume numeric
+            print(val.round(prec))
+
+# test the above functions
+a = np.array([1, 2])
+b = np.array([3, 4])
+print(a * b)
+a = np.matrix([[1, -1], [2, 3]])
+#acti(a)
+grad(a)
+
+# specify the model. We use numpy.matrix as numpy 1d array cannot do transpose()
+A0 = np.matrix([0.35, 0.9])
+W1 = np.matrix([[0.1, 0.4], [0.8, 0.6]])
+W2 = np.array([[0.3], [0.9]])
+t = np.array([0.5])
+
+# forward pass
+Z1 = np.dot(A0, W1)
+A1 = acti(Z1)
+Z2 = np.dot(A1, W2)
+A2 = acti(Z2)
+y = A2
+
+# print
+p('Z1, A1 = ', Z1, A1)
+p('Z2, A2 = ', Z2, A2)
+p('loss=', loss(y, t))
+
+d_Z2 = np.dot(grad(Z2), (y - t))
+p(d_Z2)
+
+d_W2 = np.dot(A1.T, d_Z2)
+p(d_W2)
+
+np.dot(d_Z2, W2.T).A1
+
+d_Z1 = np.multiply(np.dot(d_Z2, W2.T), grad(Z1))
+d_Z1
+
+d_W1 = np.dot(A0.T, d_Z1)
+p(d_W1, prec = 6)
+
+p(W1 - d_W1, prec = 6)
+
+tT = torch.tensor(t, requires_grad=False) # ground truth
+tx = torch.tensor(A0, requires_grad=False) # input x
+tW1= torch.tensor(W1, requires_grad=True) 
+tW2 = torch.tensor(W2, requires_grad=True)
+
+igma = torch.sigmoid
+# our network (and its output Y for input X)
+Z1 = tx.mm(tW1)
+A1 = sigma(Z1)
+Z2 = A1.mm(tW2)
+A2 = sigma(Z2)
+Y = A2
+loss2 = (Y-tT).pow(2).sum()/2.0 # just sum all
+print(loss2.data)
+
+loss2.backward()
+print(tW1.grad)
+print(tW2.grad)
+

@@ -1,0 +1,90 @@
+import os
+import json
+import plistlib
+
+import numpy as np
+import pandas as pd
+
+from PIL import Image, ImageDraw
+
+trues = pd.read_csv("./AnnotationExample.csv")
+
+trues.head()
+
+trues["x1_true"] = trues["x_1"]
+trues["y1_true"] = trues["y_1"]
+trues["x2_true"] = trues["x_1"] + trues["width"]
+trues["y2_true"] = trues["y_1"] + trues["height"]
+trues = trues[["image_id", "x1_true", "x2_true", "y1_true", "y2_true"]]
+
+trues.head()
+
+trues.groupby("image_id").count()["x1_true"].unique()
+
+with open("./PredictionExample.plist", "rb") as f:
+    preds_coreml = pd.DataFrame(plistlib.load(f))
+
+preds_coreml.head()
+
+(preds_coreml["confidences"].apply(len) == 1).mean()
+
+preds_coreml["file"] = preds_coreml["file"].str[7:]
+preds_coreml["image_id"] = preds_coreml["file"].str.split("/").str[-1]
+preds_coreml["x1_coreml"] = preds_coreml["bboxes"].str[0].str[0]
+preds_coreml["x2_coreml"] = preds_coreml["bboxes"].str[0].str[1]
+preds_coreml["y1_coreml"] = 1 - preds_coreml["bboxes"].str[0].str[3]
+preds_coreml["y2_coreml"] = 1 - preds_coreml["bboxes"].str[0].str[2]
+preds_coreml["image_id"] = preds_coreml["file"].str.split("/").str[-1]
+preds_coreml = preds_coreml[["image_id", "x1_coreml", "x2_coreml", "y1_coreml", "y2_coreml"]]
+
+preds_coreml.head()
+
+merged = pd.merge(preds_coreml, trues, on="image_id", how="inner", suffixes=("_coreml", "_true"))
+merged = merged.sort_values("image_id")
+
+merged.head()
+
+base_path = "/Users/vovacher/Downloads/CelebA/images/img_celeba.7z/img_celeba/"
+
+i = 5
+
+img = Image.open(os.path.join(base_path, merged.iloc[i]["image_id"]))
+draw = ImageDraw.Draw(img)
+draw.rectangle(((merged.iloc[i]["x1_true"], merged.iloc[i]["y1_true"]), 
+                (merged.iloc[i]["x2_true"], merged.iloc[i]["y2_true"])), 
+               outline="green", width=3)
+draw.rectangle(((merged.iloc[i]["x1_coreml"] * img.size[0], merged.iloc[i]["y1_coreml"] * img.size[1]),
+                (merged.iloc[i]["x2_coreml"] * img.size[0], merged.iloc[i]["y2_coreml"] * img.size[1])),
+               outline="red", width=3)
+print("Green = GT\nRed   = CoreML")
+img
+
+def get_iou(boxes1, boxes2):
+
+    x11, y11, x12, y12 = np.split(boxes1, 4, axis=1)
+    x21, y21, x22, y22 = np.split(boxes2, 4, axis=1)
+
+    xa = np.maximum(x11, np.transpose(x21))
+    ya = np.maximum(y11, np.transpose(y21))
+    xb = np.minimum(x12, np.transpose(x22))
+    yb = np.minimum(y12, np.transpose(y22))
+
+    inter_area = np.maximum((xb - xa + 1), 0) * np.maximum((yb - ya + 1), 0)
+
+    box_a_area = (x12 - x11 + 1) * (y12 - y11 + 1)
+    box_b_area = (x22 - x21 + 1) * (y22 - y21 + 1)
+
+    iou = inter_area / (box_a_area + np.transpose(box_b_area) - inter_area)
+    return iou
+
+def foo(x):
+    img = Image.open(os.path.join(base_path, x["image_id"]))
+    iou_coreml = get_iou(np.array([[x["x1_true"], x["y1_true"], 
+                                    x["x2_true"], x["y2_true"]]]), 
+                         np.array([[x["x1_coreml"] * img.size[0], x["y1_coreml"] * img.size[1], 
+                                    x["x2_coreml"] * img.size[0], x["y2_coreml"] * img.size[1]]]))[0][0]
+    return iou_coreml
+
+merged["iou_coreml"] = merged.apply(foo, axis=1)
+
+merged["iou_coreml"].mean()

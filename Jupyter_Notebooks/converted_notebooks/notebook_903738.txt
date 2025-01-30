@@ -1,0 +1,197 @@
+import keras
+from keras.models import Model
+from keras.layers import Input,Dense
+from keras.callbacks import TensorBoard
+
+import numpy as np
+import matplotlib.pyplot as plt
+from miniBatch import random_mini_batche  
+from data_utils import get_CIFAR10_data
+
+# Load the (preprocessed) CIFAR10 data.
+data = get_CIFAR10_data()
+for k, v in data.items():
+    print('%s: ' % k, v.shape)
+
+def load_data(index_train,index_val,index_test):
+    """
+    Load data set
+    
+    Parameters:
+    ----------
+       index_train: training set index range.
+       index_val: val data set index range.
+       index_test : test data set index range.
+    
+    Returns:
+    -------
+       train_x: train set data
+       train_y train set labels
+       val_x: val set data
+       val_y: val set labels
+       test_x: test set data
+       test_y: test set labels.
+    """
+    train_x = data['X_train'][:index_train].reshape(index_train,-1)
+    train_y = data['y_train'][:index_train]
+    
+    val_x = data['X_val'][:index_val].reshape(index_val,-1)
+    val_y = data['y_val'][:index_val]
+    
+    test_x = data['X_test'][:index_test].reshape(index_test,-1)
+    test_y = data['y_test'][:index_test]
+    
+    return train_x,train_y,val_x,val_y,test_x,test_y
+
+train_x,train_y,val_x,val_y,test_x,test_y = load_data(2000,100,100)
+
+class BN_BL:
+    """
+    Build Batch Normalization and Base Lines.
+    """
+    def __init__(self,layers,mode,epochs,lr,batch_size,fielname):
+        """
+        Parameters:
+        ----------
+            layers: hidden layers. this sample [100,80,50,30,10]
+            mode: choose BN or BL.
+            epochs: #Iter.
+            lr: learning rate.
+            batch_size: batch size.
+            fielname: save tensorborder path.
+        """
+        self.layers = layers
+        self.mode = mode
+        self.epochs = epochs
+        self.lr = lr
+        self.batch_size = batch_size
+        self.fielname = fielname
+        
+    def fit_BN(self,Z):
+        """
+        Parameters:
+        ----------
+            Z: first hidden layer input value.
+        Return:
+        ------
+            outputs: last layer output value.
+        """
+        for l in range(self.L):
+            Z = Dense(self.layers[l],activation='relu',use_bias=False)(Z)
+            Z = keras.layers.BatchNormalization(axis=0)(Z) # using BN layer
+            if l == self.L -1:
+                Z = Dense(self.layers[-1],activation='softmax',use_bias=False)(Z)
+                outputs = Z
+        return outputs
+    
+    def fit_BL(self,Z):
+        """
+        Parameters:
+        ----------
+            Z: first hidden layer input value.
+        Return:
+        ------
+            outputs: last layer output value.
+        """
+        for l in range(self.L):
+            Z = Dense(self.layers[l],activation='relu')(Z)
+            if l == self.L -1:
+                Z = Dense(self.layers[-1],activation='softmax')(Z)
+                outputs = Z
+        return outputs
+        
+    def fit(self,x,y,val_x,val_y):
+        """
+        Fitting Model.
+        
+        Parameters:
+        ----------
+            x: training date set.
+            y: training labels.
+            val_x: validation date.
+            val_y: validation labels.
+        
+        Return:
+        ------
+            self.model: Kreas BN_Bl model.
+            
+        """
+        
+        m,n = x.shape
+        self.n_classes = len(np.unique(y))
+        
+        # change hot labels from labels..
+        y_hot = keras.utils.to_categorical(y,self.n_classes)
+        val_y_hot = keras.utils.to_categorical(val_y,self.n_classes)
+        self.L = len(self.layers)
+        
+        inputs = Input((n,)) # create input layers
+        Z = inputs 
+        
+        # choose running mode.
+        if self.mode == "BN":
+            outputs = self.fit_BN(Z)
+        elif self.mode == "BL":
+            outputs = self.fit_BL(Z)
+        else:
+            print('Valide mode %s'%self.mode)
+            
+        # create Model
+        self.model = Model(inputs=inputs, outputs=outputs)
+        # create optimizer
+        optimizer = keras.optimizers.SGD(lr=self.lr)
+        # create loss function
+        Loss_func = keras.losses.categorical_crossentropy
+        # compile model
+        self.model.compile(optimizer=optimizer,loss=Loss_func,metrics=['accuracy'])
+        # fitting model.
+        self.model.fit(x=x,y=y_hot,batch_size=self.batch_size,epochs=self.epochs,
+                  validation_data=(val_x,val_y_hot),verbose=0,callbacks=[TensorBoard(log_dir=self.fielname)])
+        
+        return self.model
+        
+    def score(self,x,y):
+        """
+        Score model.
+        Parameters:
+        ----------
+            x: score data.
+            y: score labels.
+        """
+        y = keras.utils.to_categorical(y,self.n_classes)
+        loss,acc = self.model.evaluate(x,y)
+        print('The loss {} acc {}'.format(loss,acc))
+    
+
+keras.backend.clear_session()
+
+layers = [100,80,50,30,10]
+clf = BN_BL(layers=layers,mode="BN",epochs=1000,lr=0.001,batch_size=60,fielname="small_weights_small_lr_BN")
+
+clf.fit(train_x,train_y,val_x,val_y)
+
+clf.score(test_x,test_y)
+
+keras.backend.clear_session()
+
+layers = [100,80,50,30,10]
+clf = BN_BL(layers=layers,mode="BL",epochs=1000,lr=0.001,batch_size=60,fielname="small_weights_small_lr_BL")
+clf.fit(train_x,train_y,val_x,val_y)
+
+clf.score(test_x,test_y)
+
+keras.backend.clear_session()
+
+layers = [100,80,50,30,10]
+clf = BN_BL(layers=layers,mode="BN",epochs=1000,lr=0.1,batch_size=60,fielname="small_weights_big_lr_BN")
+clf.fit(train_x,train_y,val_x,val_y)
+
+clf.score(test_x,test_y)
+
+keras.backend.clear_session()
+
+layers = [100,80,50,30,10]
+clf = BN_BL(layers=layers,mode="BL",epochs=1000,lr=0.1,batch_size=60,fielname="small_weights_big_lr_BL")
+clf.fit(train_x,train_y,val_x,val_y)
+
+clf.score(test_x,test_y)

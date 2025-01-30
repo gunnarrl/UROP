@@ -1,0 +1,74 @@
+from __future__ import print_function
+
+import pandas as pd
+import numpy as np
+import os
+import os.path
+import requests
+import socket
+
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import ElasticNet
+
+import mlflow
+import mlflow.tracking
+import mlflow.sklearn
+
+# Assumes MFLOW_TRACKING_URI is set
+
+REST_API_URL = os.environ['MLFLOW_TRACKING_URI'] + '/api/2.0/preview/mlflow'
+
+print(REST_API_URL)
+
+r = requests.get(REST_API_URL + '/experiments/list')
+experiment_list = r.json()
+experiment_list
+
+r = requests.get(REST_API_URL + '/experiments/get',
+                 json={'experiment_id':'1'})
+experiment_data = r.json()
+
+
+experiment_data['experiment']
+
+experiment_metadata = {'experiment_name':experiment_data['experiment']['name'],
+                       'experiment_id' : experiment_data['experiment']['experiment_id']}
+
+df1 = pd.DataFrame([{k:experiment_data['experiment'][k] for k in ['name','experiment_id']}])
+df1
+
+def extract_run_data(r):
+    # seed dataframe row with experiment attributes
+    ans = experiment_metadata.copy()
+    
+    # add run uuid
+    ans.update({'run_uuid': r['run_uuid']})
+    
+    # retrieve metrics, params and tags from the run
+    r1 = requests.get(REST_API_URL + '/runs/get',
+                      json={'run_uuid': r['run_uuid']})
+    run_data = r1.json()['run']['data']
+    
+    # populate dataframe row with metrics, params and tags 
+    for k in run_data.keys():    
+        try:
+            data = {k+'_'+x['key']:x['value'] for x in run_data[k]}
+        except:
+            data = {}
+
+        ans.update(data)
+        
+    # return the dataframe row
+    return ans
+
+df = pd.DataFrame([extract_run_data(r) for r in experiment_data['runs']])
+df
+
+df[['params_alpha','params_l1_ratio','params_learning_rate','params_max_depth']] = \
+    df[['params_alpha','params_l1_ratio','params_learning_rate','params_max_depth']].apply(pd.to_numeric)
+
+df.dtypes
+
+df.sort_values('metrics_r2',ascending=False)
+
+df.shape

@@ -1,0 +1,330 @@
+import copy
+
+#new functions are created for this script
+#including vertex degree, adjacency matrix and remove vertex
+class graph:
+    def __init__(self):
+        self.graph={}
+        self.visited={}        
+
+    def append(self,vertexid,edge,weight):
+        if vertexid not in self.graph.keys():          
+            self.graph[vertexid]={}
+            self.visited[vertexid]=0
+        self.graph[vertexid][edge]=weight
+
+    def reveal(self):
+        return self.graph
+    
+    def vertex(self):
+        return list(self.graph.keys())
+
+    def edge(self,vertexid):
+        return list(self.graph[vertexid].keys())
+    
+    def weight(self,vertexid,edge):
+        
+        return (self.graph[vertexid][edge])
+    
+    def size(self):
+        return len(self.graph)
+    
+    def visit(self,vertexid):
+        self.visited[vertexid]=1
+    
+    def go(self,vertexid):
+        return self.visited[vertexid]
+    
+    def route(self):
+        return self.visited
+    
+    #compute the degree of a given vertex
+    def degree(self,vertexid):
+        return len(self.graph[vertexid])
+    
+    #convert to adjacency matrix
+    def mat(self):
+        
+        self.matrix=[]
+        
+        for i in self.graph:
+
+            self.matrix.append([0 for k in range(len(self.graph))])
+            
+            #when two vertices are connected
+            #we set the value to 1
+            for j in self.graph[i].keys():        
+                self.matrix[i-1][j-1]=1
+        
+        return self.matrix
+    
+    #remove one vertex and its edges
+    def remove(self,node):
+        
+        for i in self.graph[node].keys():
+            self.graph[i].pop(node)
+        self.graph.pop(node)
+
+#to get k core/degenerate
+#we need an undirected graph
+#in another word, vertices with edge connections 
+#are mutually connected to each other
+df=graph()
+df.append(1,2,0)
+df.append(1,3,0)
+df.append(1,4,0)
+df.append(1,6,0)
+df.append(2,1,0)
+df.append(3,1,0)
+df.append(4,1,0)
+df.append(6,1,0)
+
+df.append(2,3,0)
+df.append(2,4,0)
+df.append(2,6,0)
+df.append(3,2,0)
+df.append(4,2,0)
+df.append(6,2,0)
+
+df.append(3,4,0)
+df.append(3,7,0)
+df.append(4,3,0)
+df.append(7,3,0)
+
+df.append(4,5,0)
+df.append(5,4,0)
+
+df.append(5,6,0)
+df.append(6,5,0)
+
+df.reveal()
+
+#sort the vertices by their degree in descending order
+def sort_by_degree(df):
+    
+    dic={}
+    for i in df.vertex():
+        dic[i]=df.degree(i)
+    
+    #the dictionary is sorted by value and exported as a list in descending order
+    output=[i[0] for i in sorted(dic.items(), key=lambda x:x[1])]
+    
+    return output[::-1]
+
+#unlike other problems in graph theory
+#i struggle to find a popular algorithm for degeneracy ordering
+#hence, i implement my own algorithm to find a k core graph
+#basically i am using priority queue to find k core by brute force
+#the priority queue is solved by two lists
+#one as a queue, the other as a priority list
+def find_kcore(core,df):
+    
+    #make a subset of the original graph
+    subset=copy.deepcopy(df)
+    
+    #fill the queue with all the vertices in the graph
+    #we sort the queue by the degree of each vertex
+    #so we can remove the node with the minimum degree first
+    queue=sort_by_degree(subset)
+    
+    #pop a random vertex from the queue
+    node=queue.pop()
+    
+    #initialize the priority list
+    priority=set([])
+    
+    #queue contains all the vertices pending for check
+    #when the queue is empty, we finish the traversal
+    while queue:
+        
+        #to create k edges for each vertex in the graph
+        #you need at least k+1 vertices
+        #as the number of vertices drops below k+1
+        #for the sake of efficiency
+        #there is no point of going further
+        if len(subset.vertex())<core+1:
+            return {}
+        
+        #check the degree of a given node
+        #if the degree is smaller than our target core number
+        #we will remove the node
+        if subset.degree(node)<core:
+            
+            #if the neighbors of a given node exist in the priority list
+            #we will check these adjacent vertices first
+            #these vertices are top priority
+            #because the vertex adjacent to the deleted node suffers from degree loss
+            #if we cannot find any top priority
+            #we take a union and settle with lower priority
+            if priority.intersection(set(subset.edge(node))):
+                priority=priority.intersection(set(subset.edge(node)))
+            else:
+                priority=priority.union(set(subset.edge(node)))
+            
+            #sort priority list by the degree of each vertex
+            #so we can remove the vertex with the minimum degree first
+            priority=set([i for i in sort_by_degree(subset) if i in priority])
+            
+            subset.remove(node)
+
+        #when we have something in the priority list
+        #we always examine those vertices first
+        #and these vertices should be removed from the queue as well
+        #when we have an empty priority list
+        #we get a random node from the queue
+        if priority:
+            node=priority.pop()
+            try:
+                queue.remove(node)
+            except ValueError:
+                pass
+        else:
+            node=queue.pop()       
+        
+    return subset.reveal()
+
+find_kcore(1,df)
+
+find_kcore(2,df)
+
+find_kcore(3,df)
+
+find_kcore(4,df)
+
+#the function sort_by_degree is to create a dictionary
+#where the key is the node and the value is the degree
+#in this function, we create a dictionary
+#where the key is the degree and the value is the nodes
+def get_degree_list(df):
+
+    D={}
+    
+    #if the current degree hasnt been checked
+    #we create a new key under the current degree
+    #otherwise we append the new node into the list
+    for i in df.vertex():
+        try:
+            D[df.degree(i)].append(i)
+
+        except KeyError:
+            D[df.degree(i)]=[i]
+    
+    #dictionary is sorted by key instead of value in ascending order
+    D=dict(sorted(D.items()))
+    
+    return D
+
+#the algorithm is supposed to use a bucket queue (in our case just list and dict)
+#to repeatedly remove the vertices with the smallest degree
+#and update its adjacent vertices until it wipes out the whole graph
+#the highest degree it removes becomes the degeneracy
+def matula_beck(df):
+    
+    subset=copy.deepcopy(df)
+    
+    #k is the ultimate degeneracy
+    k=0
+    
+    #denote L as the checked list
+    L=[]
+    
+    #denote output as the storage of vertices in 1-core to k-core
+    output={}
+    output[1]=df.vertex()
+
+    D=get_degree_list(subset)
+    
+    #we initialize the current degree i to 0
+    #because we want to keep track of 1-core to k-core
+    i=0
+
+    while D:
+        
+        #denote j as the degree in the previous loop
+        j=i
+        
+        #denote i as the minimum degree in the current graph
+        i=list(D.keys())[0]
+        
+        #k core graph is the remaining vertices in the current graph
+        #when the minimum degree in the current loop 
+        #is larger than the minimum degree in the previous loop
+        if j<i:
+            output[i]=[j for i in D.values() for j in i ]
+        
+        
+        #in our case, we only want the graph instead of the degeneracy
+        #hence, we dont return k
+        k=max(k,i)
+        
+        #pick a random vertex with the minimum degree
+        v=D[i].pop(0)
+        
+        #checked and removed
+        L.append(v)
+        subset.remove(v)
+        
+        #update the degree list
+        D=get_degree_list(subset)   
+    
+    #in some cases, we may not capture 2-core or 3-core
+    #if the minimum degree in the original graph is 4
+    #we need to add the missing ones
+    missing=[i for i in range(1,max(output.keys())) if i not in output.keys()]
+    for i in missing:
+        output[i]=output[i-1]
+    
+    return output
+
+matula_beck(df)
+
+#the implementation is based upon the pseudo code in the paper
+#instead of the detailed algorithm section in pascal (cuz i cant read pascal)
+def batagelj_zaveršnik(k,df):   
+
+    subset=copy.deepcopy(df)
+    
+    #denote D as a dictionary
+    #where the key is the vertex
+    #the value is its degree
+    D={}
+    for i in subset.vertex():
+        D[i]=subset.degree(i)
+    
+    #denote queue as a sorted list of vertices by descending degree
+    queue=sort_by_degree(subset)
+    
+    #according to the paper
+    #the time complexity of the following part is O(max(m,n))
+    while queue:
+        
+        #each iteration, we extract the vertex with the minimum degree from the queue
+        #we mark each vertex we examine in the graph structure
+        i=queue.pop()
+        subset.visit(i)
+        
+        #if the current degree is smaller than our target k
+        #we introduce penalty to its adjacent vertices
+        if D[i]<k:
+            for j in subset.edge(i):
+                D[j]-=1
+        
+        #update the queue with the latest degree
+        #exclude all the marked vertices
+        #the queue should always be in descending order
+        queue=[]
+        for key,_ in sorted(D.items(),reverse=True,key=lambda x:x[1]):
+            if subset.go(key)==0:
+                queue.append(key)
+    
+    #after the size of the queue shrinks to zero
+    #any vertex with degree not smaller than k will go into k core
+    return [i for i in D if D[i]>=k]
+
+batagelj_zaveršnik(1,df)
+
+batagelj_zaveršnik(2,df)
+
+batagelj_zaveršnik(3,df)
+
+batagelj_zaveršnik(4,df)

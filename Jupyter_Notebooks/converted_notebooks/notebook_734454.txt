@@ -1,0 +1,292 @@
+# Pandas DataFrames for reading and manipulating data.
+# Think of it as in-memory Excel sheets, but more practical and powerful!
+import pandas as pd
+
+import numpy as np
+
+# Matplotlib & PyPlot for visualization.
+import matplotlib.pyplot as plt
+
+# Tell Matplotlib to use Ggplot-style charts as in R.
+#plt.style.use('ggplot')
+
+# Seaborn is a helper library makeing Matplotlib easier to use.
+import seaborn as sns
+
+# Stats tools
+from scipy import stats
+
+from statistics import median
+
+df = pd.read_csv("diabetes.csv")
+df.describe()
+
+box = sns.boxplot(x=df['SerumInsulin'])
+box.set_title = "SerumInsulin Boxplot"
+
+mapped = map(lambda n: "Diabetic" if n == 1 else "Non-Diabetic", df['Diabetic'])
+
+# Convert the map object into a list.
+dx = list(mapped)
+
+# Display the first 5 labels for our new column.
+dx[0:5]
+
+# Add the new column to the dataframe.
+df['Dx'] = dx # Where "Dx" is short for "Diagnosis"
+df.head()
+
+# Running code inside this "if" statement keeps variables out of the global scope
+# so you can reuse variable names without affecting local variable scopes.
+# '__main__' is the "entry point" for every cell in Jupyter Notebooks. 
+if __name__ == '__main__':
+    label = 'Pregnancies'
+    
+    # Declare a boxplot
+    box = plt.figure(num=None, figsize=(10, 8), dpi=96, facecolor='w', edgecolor='k')
+    axes1 = box.add_subplot(1,1,1) # Create an empty grid. '1,1,1' are position params.
+
+    # Group data by Diagnosis with a "list comprehension filter" method.
+    nondiabetic = df[df['Dx'] == 'Non-Diabetic'][label]
+    diabetic = df[df['Dx'] == 'Diabetic'][label]
+    dx_groups = [diabetic, nondiabetic]
+
+    axes1.boxplot(dx_groups, labels=['Diabetic', 'Non-Diabetic'])
+
+    axes1.set_xlabel('Dx')
+    axes1.set_ylabel(label)
+    axes1.set_title('Boxplot of ' + label + ' by Diagnosis')
+
+if __name__ == '__main__':
+    label = 'PlasmaGlucose'
+    
+    # Declare a boxplot
+    box = plt.figure(num=None, figsize=(10, 8), dpi=96, facecolor='w', edgecolor='k')
+    axes1 = box.add_subplot(1,1,1) # Create an empty grid. '1,1,1' are position params.
+
+    # Group data by Diagnosis with a "list comprehension" method.
+    nondiabetic = df[df['Dx'] == 'Non-Diabetic'][label]
+    diabetic = df[df['Dx'] == 'Diabetic'][label]
+    dx_groups = [diabetic, nondiabetic]
+
+    axes1.boxplot(dx_groups, labels=['Diabetic', 'Non-Diabetic'])
+
+    axes1.set_xlabel('Dx')
+    axes1.set_ylabel(label)
+    axes1.set_title('Boxplot of ' + label + ' by Diagnosis')
+
+if __name__ == '__main__':
+    # Declare a boxplot
+    box = plt.figure(num=None, figsize=(10, 8), dpi=96, facecolor='w', edgecolor='k')
+    axes1 = box.add_subplot(1,1,1) # Create an empty grid. '1,1,1' are position params.
+
+    # Group data by Diagnosis with a "list comprehension" method.
+    nondiabetic = df[df['Dx'] == 'Non-Diabetic']['PlasmaGlucose']
+    diabetic = df[df['Dx'] == 'Diabetic']['PlasmaGlucose']
+    dx_groups = [diabetic, nondiabetic]
+
+    axes1.boxplot(dx_groups, labels=['Diabetic', 'Non-Diabetic'])
+
+    axes1.set_xlabel('Dx')
+    axes1.set_ylabel('PlasmaGlucose')
+    axes1.set_title('Boxplot of PlasmaGlucose by Diagnosis')
+
+if __name__ == '__main__':
+    label = 'DiastolicBloodPressure'
+    
+    # Declare a boxplot
+    box = plt.figure(num=None, figsize=(10, 8), dpi=96, facecolor='w', edgecolor='k')
+    axes1 = box.add_subplot(1,1,1) # Create an empty grid. '1,1,1' are position params.
+
+    # Group data by Diagnosis with a "list comprehension" method.
+    nondiabetic = df[df['Dx'] == 'Non-Diabetic'][label]
+    diabetic = df[df['Dx'] == 'Diabetic'][label]
+    dx_groups = [diabetic, nondiabetic]
+
+    axes1.boxplot(dx_groups, labels=['Diabetic', 'Non-Diabetic'])
+
+    axes1.set_xlabel('Dx')
+    axes1.set_ylabel(label)
+    axes1.set_title('Boxplot of ' + label + ' by Diagnosis')
+
+if __name__ == '__main__':
+    label = 'TricepsThickness'
+    
+    # Declare a boxplot
+    box = plt.figure(num=None, figsize=(10, 8), dpi=96, facecolor='w', edgecolor='k')
+    axes1 = box.add_subplot(1,1,1) # Create an empty grid. '1,1,1' are position params.
+
+    # Group data by Diagnosis with a "list comprehension" method.
+    nondiabetic = df[df['Dx'] == 'Non-Diabetic'][label]
+    diabetic = df[df['Dx'] == 'Diabetic'][label]
+    dx_groups = [diabetic, nondiabetic]
+
+    axes1.boxplot(dx_groups, labels=['Diabetic', 'Non-Diabetic'])
+
+    axes1.set_xlabel('Dx')
+    axes1.set_ylabel(label)
+    axes1.set_title('Boxplot of ' + label + ' by Diagnosis')
+
+if __name__ == '__main__':
+    label = 'SerumInsulin'
+    
+    # Declare a boxplot
+    box = plt.figure(num=None, figsize=(10, 8), dpi=96, facecolor='w', edgecolor='k')
+    axes1 = box.add_subplot(1,1,1) # Create an empty grid. '1,1,1' are position params.
+
+    # Group data by Diagnosis with a "list comprehension" method.
+    nondiabetic = df[df['Dx'] == 'Non-Diabetic'][label]
+    diabetic = df[df['Dx'] == 'Diabetic'][label]
+    dx_groups = [diabetic, nondiabetic]
+
+    axes1.boxplot(dx_groups, labels=['Diabetic', 'Non-Diabetic'])
+
+    axes1.set_xlabel('Dx')
+    axes1.set_ylabel(label)
+    axes1.set_title('Boxplot of ' + label + ' by Diagnosis')
+
+if __name__ == '__main__':
+    label = 'BMI'
+    
+    # Declare a boxplot
+    box = plt.figure(num=None, figsize=(10, 8), dpi=96, facecolor='w', edgecolor='k')
+    axes1 = box.add_subplot(1,1,1) # Create an empty grid. '1,1,1' are position params.
+
+    # Group data by Diagnosis with a "list comprehension" method.
+    nondiabetic = df[df['Dx'] == 'Non-Diabetic'][label]
+    diabetic = df[df['Dx'] == 'Diabetic'][label]
+    dx_groups = [diabetic, nondiabetic]
+
+    axes1.boxplot(dx_groups, labels=['Diabetic', 'Non-Diabetic'])
+
+    axes1.set_xlabel('Dx')
+    axes1.set_ylabel(label)
+    axes1.set_title('Boxplot of ' + label + ' by Diagnosis')
+
+if __name__ == '__main__':
+    label = 'DiabetesPedigree'
+    
+    # Declare a boxplot
+    box = plt.figure(num=None, figsize=(10, 8), dpi=96, facecolor='w', edgecolor='k')
+    axes1 = box.add_subplot(1,1,1) # Create an empty grid. '1,1,1' are position params.
+
+    # Group data by Diagnosis with a "list comprehension" method.
+    nondiabetic = df[df['Dx'] == 'Non-Diabetic'][label]
+    diabetic = df[df['Dx'] == 'Diabetic'][label]
+    dx_groups = [diabetic, nondiabetic]
+
+    axes1.boxplot(dx_groups, labels=['Diabetic', 'Non-Diabetic'])
+
+    axes1.set_xlabel('Dx')
+    axes1.set_ylabel(label)
+    axes1.set_title('Boxplot of ' + label + ' by Diagnosis')
+
+if __name__ == '__main__':
+    label = 'Age'
+    
+    # Declare a boxplot
+    box = plt.figure(num=None, figsize=(10, 8), dpi=96, facecolor='w', edgecolor='k')
+    axes1 = box.add_subplot(1,1,1) # Create an empty grid. '1,1,1' are position params.
+
+    # Group data by Diagnosis with a "list comprehension" method.
+    nondiabetic = df[df['Dx'] == 'Non-Diabetic'][label]
+    diabetic = df[df['Dx'] == 'Diabetic'][label]
+    dx_groups = [diabetic, nondiabetic]
+
+    axes1.boxplot(dx_groups, labels=['Diabetic', 'Non-Diabetic'])
+
+    axes1.set_xlabel('Dx')
+    axes1.set_ylabel(label)
+    axes1.set_title('Boxplot of ' + label + ' by Diagnosis')
+
+def show_boxplots(df, columns):
+    """
+    Show a boxplot for each numerical column, grouped by diagnosis, in the Diabetes dataset.
+    """
+    def get_plot(label):
+        # Declare a boxplot
+        box = plt.figure(num=None, figsize=(10, 8), dpi=96, facecolor='w', edgecolor='k')
+        axes1 = box.add_subplot(1,1,1) # Create an empty grid. '1,1,1' are position params.
+
+        # Group data by Diagnosis with a "list comprehension" method.
+        nondiabetic = df[df['Dx'] == 'Non-Diabetic'][label]
+        diabetic = df[df['Dx'] == 'Diabetic'][label]
+        dx_groups = [diabetic, nondiabetic]
+
+        axes1.boxplot(dx_groups, labels=['Diabetic', 'Non-Diabetic'])
+        axes1.set_xlabel('Dx')
+        axes1.set_ylabel(label)
+        axes1.set_title('Boxplot of ' + label + ' by Diagnosis')
+        
+    for label in columns:
+        get_plot(label)
+  
+
+if __name__ == '__main__':
+    columns = df.columns.values.tolist()
+    columns.remove('PatientID')
+    columns.remove('Diabetic')
+    columns.remove('Dx')
+    show_boxplots(df, columns)
+
+def quartiles(values):
+    """
+    Find Q1 and Q3 for a range of numerical values.
+    """
+    srt = sorted(values) # sort values ascending
+    mid = len(srt) // 2 # determine middle value of array
+    # find Q1 with the median function of lower half of data
+    q1 = median(srt[:mid]) 
+    q3 = 0  
+    # find Q3 with the median function of upper half of data
+    if(mid % 2 == 0):
+        q3 = median(srt[mid:])
+    else:
+        q3 = median(srt[mid+1:])
+
+    return q1, q3
+
+def get_outliers(df, columns):
+    """
+    IQR = Q3-Q1
+    Upper limit = Q3 + 1.5(IQR)
+    Lower limit = Q1 - 1.5(IQR)
+    """
+    cols = []
+    data = []
+    outliers = None
+    outliers = pd.DataFrame()
+    
+    for col in columns:
+        q1, q3 = quartiles(df[col])
+        iqr = q3-q1
+        uppr = q3 + 1.5*iqr
+        lowr = q1 - 1.5*iqr
+        mn = min(df[col].values)
+        mx = max(df[col].values)
+        has_lower = mn < lowr
+        has_upper = mx > uppr
+        data.append((col, mn, lowr, uppr, mx))
+        
+        # Create dummy column for outliers.
+        if mn < lowr or mx > uppr:
+            outliers[col+'_outlier'] = \
+            list(map(lambda n: 1 if (n < lowr or n > uppr) else 0, df[col].values))
+        
+    return outliers, pd.DataFrame(columns=['Xi', 'Min(Xi)', 'Lower Limit', 'Upper Limit', 'Max(Xi)'], \
+                        data=data)
+        
+
+columns = df.columns.values.tolist()
+columns.remove('PatientID')
+columns.remove('Diabetic')
+columns.remove('Dx')
+
+outliers, desc = get_outliers(df, columns)
+
+display(desc)
+
+outliers.head()
+
+df = pd.concat([df, outliers], 1)
+df.tail()

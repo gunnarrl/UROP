@@ -1,0 +1,59 @@
+# COM-Server
+import win32com.client as com
+import igraph
+import matplotlib.pyplot as plt
+import qgrid
+from VISSIM_helpers import VissimRoadNet
+from os.path import abspath
+import pandas as pd
+
+from IPython.utils.generics import complete_object
+
+@complete_object.register(com.DispatchBaseClass)
+def complete_dispatch_base_class(obj, prev_completions):
+    try:
+        ole_props = set(obj._prop_map_get_).union(set(obj._prop_map_put_))
+        return list(ole_props) + prev_completions
+    except AttributeError:
+        pass
+
+Vissim = com.gencache.EnsureDispatch("Vissim.Vissim")
+from win32com.client import constants as c
+
+FileName = abspath(r"C:\Users\Public\Documents\PTV Vision\PTV Vissim 9\Examples Demo\Urban Freeway Dyn Assign Redmond.US\I405 OD.inpx")
+Vissim.LoadNet(FileName)
+
+vis_net = Vissim.Net
+assert vis_net.DynamicAssignment.CreateGraph(c.CGEdgeTypeDynamicAssignment)
+
+network_graph = VissimRoadNet(vis_net)
+
+parking_lots = network_graph.read_parking_lot(vis_net)
+
+type(parking_lots)
+
+igraph.plot(network_graph, bbox=(0, 0, 600, 600))
+
+network_graph.visedges.to_pickle("edges_attr.pkl.gz", compression="gzip")
+edges_widget = qgrid.show_grid(network_graph.visedges, show_toolbar=False)
+edges_widget
+
+# Save graph and like attributes
+
+link_attrs = [attr.Code for attr in Vissim.Net.Links.Attributes.GetAll()]
+link_attr_names = [attr.Name for attr in Vissim.Net.Links.Attributes.GetAll()]
+links = [list(link) for link in Vissim.Net.Links.GetMultipleAttributes(link_attrs)]
+
+import pandas as pd
+
+links = pd.DataFrame(links, columns=link_attrs)
+links = links.set_index(['No'], drop=True)
+
+qgrid.show_grid(links)
+
+network_graph.net = None
+network_graph.save("network_graph.pkl.gz", format="picklez")
+links.to_pickle("network_links.pkl.gz", compression="gzip")
+
+Vissim.Exit()
+del Vissim

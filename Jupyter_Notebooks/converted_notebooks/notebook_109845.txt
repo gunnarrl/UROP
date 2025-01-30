@@ -1,0 +1,218 @@
+from datetime import datetime, timedelta
+
+# Region: West coast.
+min_lon, max_lon = -123, -121
+min_lat, max_lat = 36, 40
+
+bbox = [min_lon, min_lat, max_lon, max_lat]
+crs = "urn:ogc:def:crs:OGC:1.3:CRS84"
+
+# Temporal range: past week.
+now = datetime.utcnow()
+start, stop = now - timedelta(days=(14)), now - timedelta(days=(7))
+
+# Surface velocity CF names.
+cf_names = [
+    "surface_northward_sea_water_velocity",
+    "surface_eastward_sea_water_velocity",
+]
+
+msg = """
+*standard_names*: {cf_names}
+*start and stop dates*: {start} to {stop}
+*bounding box*:{bbox}
+*crs*: {crs}""".format
+
+print(
+    msg(
+        **{
+            "cf_names": ", ".join(cf_names),
+            "start": start,
+            "stop": stop,
+            "bbox": bbox,
+            "crs": crs,
+        }
+    )
+)
+
+from owslib import fes
+
+
+def fes_date_filter(start, stop, constraint="overlaps"):
+    start = start.strftime("%Y-%m-%d %H:00")
+    stop = stop.strftime("%Y-%m-%d %H:00")
+    if constraint == "overlaps":
+        propertyname = "apiso:TempExtent_begin"
+        begin = fes.PropertyIsLessThanOrEqualTo(propertyname=propertyname, literal=stop)
+        propertyname = "apiso:TempExtent_end"
+        end = fes.PropertyIsGreaterThanOrEqualTo(
+            propertyname=propertyname, literal=start
+        )
+    elif constraint == "within":
+        propertyname = "apiso:TempExtent_begin"
+        begin = fes.PropertyIsGreaterThanOrEqualTo(
+            propertyname=propertyname, literal=start
+        )
+        propertyname = "apiso:TempExtent_end"
+        end = fes.PropertyIsLessThanOrEqualTo(propertyname=propertyname, literal=stop)
+    else:
+        raise NameError("Unrecognized constraint {}".format(constraint))
+    return begin, end
+
+kw = dict(wildCard="*", escapeChar="\\", singleChar="?", propertyname="apiso:AnyText")
+
+or_filt = fes.Or([fes.PropertyIsLike(literal=("*%s*" % val), **kw) for val in cf_names])
+
+# Exclude GNOME returns.
+not_filt = fes.Not([fes.PropertyIsLike(literal="*GNOME*", **kw)])
+
+begin, end = fes_date_filter(start, stop)
+bbox_crs = fes.BBox(bbox, crs=crs)
+filter_list = [fes.And([bbox_crs, begin, end, or_filt, not_filt])]
+
+def get_csw_records(csw, filter_list, pagesize=10, maxrecords=1000):
+    """Iterate `maxrecords`/`pagesize` times until the requested value in
+    `maxrecords` is reached.
+    """
+    from owslib.fes import SortBy, SortProperty
+
+    # Iterate over sorted results.
+    sortby = SortBy([SortProperty("dc:title", "ASC")])
+    csw_records = {}
+    startposition = 0
+    nextrecord = getattr(csw, "results", 1)
+    while nextrecord != 0:
+        csw.getrecords2(
+            constraints=filter_list,
+            startposition=startposition,
+            maxrecords=pagesize,
+            sortby=sortby,
+        )
+        csw_records.update(csw.records)
+        if csw.results["nextrecord"] == 0:
+            break
+        startposition += pagesize + 1  # Last one is included.
+        if startposition >= maxrecords:
+            break
+    csw.records.update(csw_records)
+
+from owslib.csw import CatalogueServiceWeb
+
+endpoint = "https://data.ioos.us/csw"
+
+csw = CatalogueServiceWeb(endpoint, timeout=60)
+get_csw_records(csw, filter_list, pagesize=10, maxrecords=1000)
+
+records = "\n".join(csw.records.keys())
+print("Found {} records.\n".format(len(csw.records.keys())))
+for key, value in list(csw.records.items()):
+    print("[{}]: {}".format(value.title, key))
+
+value = csw.records[
+    "HFR/USWC/6km/hourly/RTV/HFRADAR_US_West_Coast_6km_Resolution_Hourly_RTV_best.ncd"
+]
+
+print(value.abstract)
+
+attrs = [attr for attr in dir(value) if not attr.startswith("_")]
+nonzero = [attr for attr in attrs if getattr(value, attr)]
+nonzero
+
+value.subjects  # What is in there?
+
+value.modified  # Is it up-to-date?
+
+bbox = value.bbox.minx, value.bbox.miny, value.bbox.maxx, value.bbox.maxy
+bbox  # The actual bounding box of the data.
+
+from geolinks import sniff_link
+
+msg = "geolink: {geolink}\nscheme: {scheme}\nURL: {url}\n".format
+for ref in value.references:
+    if ref["scheme"] == "OPeNDAP:OPeNDAP":
+        url = ref["url"]
+    print(msg(geolink=sniff_link(ref["url"]), **ref))
+
+import xarray as xr
+
+ds = xr.open_dataset(url)
+ds
+
+from datetime import date, timedelta
+
+yesterday = date.today() - timedelta(days=1)
+
+ds = ds.sel(time=yesterday)
+
+import numpy.ma as ma
+
+u = ds["u"].data
+v = ds["v"].data
+
+lon = ds.coords["lon"].data
+lat = ds.coords["lat"].data
+time = ds.coords["time"].data
+
+u = ma.masked_invalid(u)
+v = ma.masked_invalid(v)
+
+import numpy as np
+from oceans.ocfis import spdir2uv, uv2spdir
+
+angle, speed = uv2spdir(u, v)
+us, vs = spdir2uv(np.ones_like(speed), angle, deg=True)
+
+%matplotlib inline
+
+import cartopy.crs as ccrs
+import matplotlib.pyplot as plt
+from cartopy import feature
+from cartopy.mpl.gridliner import LATITUDE_FORMATTER, LONGITUDE_FORMATTER
+
+LAND = feature.NaturalEarthFeature(
+    "physical", "land", "10m", edgecolor="face", facecolor="lightgray"
+)
+
+sub = 2
+dx = dy = 0.5
+center = -122.416667, 37.783333  # San Francisco.
+bbox = lon.min(), lon.max(), lat.min(), lat.max()
+
+fig, (ax0, ax1) = plt.subplots(
+    ncols=2, figsize=(20, 20), subplot_kw=dict(projection=ccrs.PlateCarree())
+)
+
+
+ax0.set_extent(bbox)
+cs = ax0.pcolormesh(lon, lat, ma.masked_invalid(speed))
+gl = ax0.gridlines(draw_labels=True)
+gl.xlabels_top = gl.ylabels_right = False
+gl.xformatter = LONGITUDE_FORMATTER
+gl.yformatter = LATITUDE_FORMATTER
+
+cbar = fig.colorbar(cs, ax=ax0, shrink=0.45, extend="both")
+cbar.ax.set_title(r"speed m s$^{-1}$", loc="left")
+
+ax0.add_feature(LAND, zorder=0, edgecolor="black")
+ax0.set_title("{}\n{}".format(value.title, ds["time"].values))
+
+ax1.set_extent([center[0] - dx - dx, center[0] + dx, center[1] - dy, center[1] + dy])
+q = ax1.quiver(
+    lon[::sub],
+    lat[::sub],
+    us[::sub, ::sub],
+    vs[::sub, ::sub],
+    speed[::sub, ::sub],
+    scale=30,
+)
+ax1.quiverkey(q, 0.5, 0.85, 1, r"1 m s$^{-1}$", coordinates="axes")
+gl = ax1.gridlines(draw_labels=True)
+gl.xlabels_top = gl.ylabels_right = False
+gl.xformatter = LONGITUDE_FORMATTER
+gl.yformatter = LATITUDE_FORMATTER
+
+ax1.add_feature(LAND, zorder=0, edgecolor="black")
+ax1.plot(
+    ds["site_lon"], ds["site_lat"], marker="o", linestyle="none", color="darkorange"
+)
+ax1.set_title("San Francisco Bay area")

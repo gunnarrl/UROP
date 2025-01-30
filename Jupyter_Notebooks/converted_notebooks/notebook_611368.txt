@@ -1,0 +1,463 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from gensim.models import Word2Vec
+from nltk.corpus import stopwords
+import collections
+import datetime as dt
+import os
+import itertools
+import warnings
+import time
+
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score, StratifiedKFold
+from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.metrics import classification_report, confusion_matrix
+
+import keras.backend as K
+from keras.models import Sequential
+from keras.layers import Conv1D, Dropout, Dense, Flatten, LSTM, MaxPooling1D, Bidirectional
+from keras.layers import Input, concatenate, Activation, GlobalMaxPooling1D
+from keras.layers.embeddings import Embedding
+from keras.optimizers import Adam
+from keras.callbacks import EarlyStopping, TensorBoard
+from tensorflow.metrics import average_precision_at_k
+import keras_metrics as km
+
+pd.options.display.max_colwidth = 200
+
+def make_xy(df_train, df_test, vectorizer=None):
+    ''' 
+    This function makes training and testing data from Term Frequency-Inverse Document Frequency (TFIDF)
+    vectors based on how often words appears in any given document and accross all documents.
+    '''
+    if vectorizer is None:
+        # make vectorizer to transform text documents to TFIDF vectors
+        vectorizer = TfidfVectorizer(ngram_range=(1, 2), token_pattern=r'\b\w+\b')
+    
+    # fit vectorizer to training Tweets and transform training and testing Tweets to vectors
+    x_train = vectorizer.fit_transform(df_train.tweet.values.astype(str))
+    y_train = (df_train.sentiment == 'negative').values.astype(np.int)
+    x_test = vectorizer.transform(df_test.tweet.values.astype(str))
+    y_test = (df_test.sentiment == 'negative').values.astype(np.int)
+    
+    return x_train, y_train, x_test, y_test
+
+
+def return_time(seconds):
+    '''
+    This function returns 'seconds' in "h hours, m minutes, s seconds" format.
+    '''
+    # create timedelta object (in HH:MM:SS format) from seconds and convert to string
+    d = str(dt.timedelta(seconds=round(seconds)))
+    
+    # slice timedelta string to select corresponding hours, minutes, and seconds
+    hours = d[:len(d)-6]
+    minutes = d[-5:-3]
+    seconds_left = d[-2:]
+    
+    # set and join time variables and corresponding time unit strings
+    periods = [('hours', hours), ('minutes', minutes), ('seconds', seconds_left)]
+    time_string = ' '.join('{} {}'.format(value, name)
+                        for name, value in periods
+                        if int(value) != 0)
+    
+    return time_string
+
+
+def plot_confusion_matrix(cm, classes, title='Confusion matrix', cmap=plt.cm.Blues):
+    """
+    This function plots the confusion matrix (cm) and normalized confusion matrix (in parentheses)
+    as calculated from sklearn.metrics.confusion_matrix().
+    """
+    # normalize confusion matix
+    cm_norm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+    
+    # create figure
+    plt.figure(figsize=(7, 7))
+    plt.imshow(cm, interpolation='nearest', cmap=cmap)
+    plt.title(title)
+    plt.colorbar()
+    tick_marks = np.arange(len(classes))
+    plt.xticks(tick_marks, classes, rotation=45)
+    plt.yticks(tick_marks, classes)
+    
+    # plot confusion matrix values
+    thresh = cm.max() / 2.
+    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+        plt.text(j, i, format(cm[i, j], 'd'),
+                 horizontalalignment="center",
+                 color="white" if cm[i, j] > thresh else "black")
+    
+    # plot normalized confusion matrix values
+    for i, j in itertools.product(range(cm_norm.shape[0]), range(cm_norm.shape[1])):
+        plt.text(j, i+.07, '(' + format(cm_norm[i, j], '.2f') + ')',
+                 horizontalalignment="center",
+                 color="white" if cm[i, j] > thresh else "black")
+    
+    plt.grid(False)
+    plt.tight_layout()
+    plt.ylabel('True label')
+    plt.xlabel('Predicted label')
+    
+    
+def get_best_model(min_dfs, model_cv):
+    '''
+    This function finds the best min_df and max_df parameters used in TfidfVectorizer for GridSearchCV models,
+    fits model with best parameters on training data, and prints the sklearn.metrics.classification_report and 
+    plots the confusion matrix of model results on test data.
+    '''
+    print('Finding best min_df...')
+    prev_score = 0
+    
+    def get_best_max_df(min_df, model_cv):
+        '''
+        This helper function finds the best max_df parameter and then fits model with best parameters on 
+        training data, and prints the sklearn.metrics.classification_report and plots the confusion matrix 
+        of model results on test data.
+        '''
+        print('Finding best max_df...')
+        prev_score = 0
+        
+        for max_df in np.arange(.1, 1.1, .1)[::-1]: # range of values to look for best max_df: [1, .9, .8, ... .1]
+            start = time.time()
+            
+            # make training and testing data for each max_df in range of values
+            x_train, y_train, x_test, y_test = make_xy(df_tweets_train, 
+                                                       df_tweets_test,
+                                                       vectorizer=TfidfVectorizer(ngram_range=(1,2), 
+                                                                                  token_pattern=r'\b\w+\b',
+                                                                                  min_df=min_df,
+                                                                                  max_df=max_df))
+            
+            # fit model and compare to previous model to see if it's scoring metric is higher or lower
+            model_cv.fit(x_train, y_train)
+            curr_score = np.mean(model_cv.cv_results_['mean_test_score'])
+            
+            # print results and continue if current scoring metric is higher than previous
+            if round(curr_score, 3) > round(prev_score, 3):
+                print('max_df: {}, Mean CV {}: {:.3f}'.format(max_df, model_cv.scoring, curr_score))
+                
+            # if scoring metric lower than previous, stop, refit previous model and print results
+            else:
+                print('Best max_df: {}, Best mean CV {} {:.3f}'.format(max_df + 0.1, model_cv.scoring, prev_score))
+                print()
+                print('Fitting best model...')
+                print()
+                start = time.time()
+                x_train, y_train, x_test, y_test = make_xy(df_tweets_train, 
+                                                           df_tweets_test,
+                                                           vectorizer=TfidfVectorizer(ngram_range=(1,2), 
+                                                                                      token_pattern=r'\b\w+\b',
+                                                                                      min_df=min_df,
+                                                                                      max_df=max_df + 0.1))
+                # fit best model, predict on test data, and print results
+                best_cv_model = model_cv.fit(x_train, y_train)
+                Y_pred = best_cv_model.predict(x_test)
+                y_pred = np.rint(Y_pred).flatten()
+                
+                print()
+                print(str(model_cv.estimator).split('(')[0] + ' Classification Report (Test Data)')
+                print('--------------------------------------------------------')
+                target_names = ['Positive', 'Negative']
+                print(classification_report(y_test, y_pred, target_names=target_names))
+
+                cnf_matrix = confusion_matrix(y_test, y_pred, labels=[0,1])
+                plot_confusion_matrix(cnf_matrix, classes=target_names,
+                                      title=str(model_cv.estimator).split('(')[0] 
+                                            + ' Confusion Matrix \n (Test Data)')
+                return
+            
+            prev_score = curr_score
+        
+    # find best min_df parameter in the same way as get_best_max_df above 
+    for min_df in min_dfs:
+        start = time.time()
+        x_train, y_train, x_test, y_test = make_xy(df_tweets_train, 
+                                                   df_tweets_test,
+                                                   vectorizer=TfidfVectorizer(ngram_range=(1,2), 
+                                                                              token_pattern=r'\b\w+\b',
+                                                                              min_df=min_df))
+        model_cv.fit(x_train, y_train)
+        curr_score = np.mean(model_cv.cv_results_['mean_test_score'])
+            
+        if round(curr_score, 3) > round(prev_score, 3):
+            print('min_df: {}, Mean CV {}: {:.3f}'.format(min_df, 
+                                                          model_cv.scoring, 
+                                                          curr_score))
+        else:
+            print('Best min_df: {}, Best mean CV {}: {:.3f}'.format(min_df - 1, 
+                                                                    model_cv.scoring, 
+                                                                    prev_score))
+            print()
+            return get_best_max_df(min_df-1, model_cv)
+        prev_score = curr_score
+        
+        
+def count_tokens(tweet):
+    '''
+    This function counts the number of tokens (words for which an Word2Vec vector exists) in a Tweet.
+    '''
+    count = 0
+    for word in tweet:
+        if word in x_vectors:
+            count += 1
+    return count
+
+df_labeled_tweets = pd.read_csv('../data/processed/labeled_tweets.csv')
+df_tweets_train, df_tweets_test = train_test_split(df_labeled_tweets, test_size=0.2, random_state=7)
+
+df_labeled_tweets['sentiment'].value_counts()
+
+df_tweets_train.head()
+
+nltk_stopwords = set(stopwords.words('spanish'))
+print('Length of nltk stopwords: {}'.format(len(nltk_stopwords)))
+
+# make testing and traning data with nltk stopwords removed
+x_train, y_train, x_test, y_test = make_xy(df_tweets_train, 
+                                           df_tweets_test, 
+                                           vectorizer=TfidfVectorizer(ngram_range=(1, 2), 
+                                                                      token_pattern=r'\b\w+\b',
+                                                                      stop_words=nltk_stopwords))
+
+
+
+
+# create parameter grid of alphas to search through
+alphas = [.00001, .0001, .001, .01, .1, .5, .75, 1, 1.25, 5, 10, 50]
+mnb_param_grid = {'alpha': alphas}
+
+# build multinomial Naive Bayes model and cross validate using GridSearchCV
+mnb = MultinomialNB(fit_prior=False)
+mnb_cv = GridSearchCV(mnb, mnb_param_grid, scoring='f1', cv=10, n_jobs=-1)
+
+start = time.time()
+print()
+print("Cross validating model (with stopwords removed)...")
+print()
+mnb_cv.fit(x_train, y_train)
+
+print("10 fold CV results")
+print("------------------")
+print("Multinomial Naive Bayes took {} to fit.".format(return_time(time.time() - start)))
+print("Mean CV f1-score: {:.3f}".format(np.mean(mnb_cv.cv_results_['mean_test_score'])))
+print("Standard deviation: {:.3f}".format(np.mean(mnb_cv.cv_results_['std_test_score'])))
+
+
+# repeat without removing stopwords
+x_train, y_train, x_test, y_test = make_xy(df_tweets_train, df_tweets_test)
+
+start = time.time()
+print()
+print("Cross validating model (without removing stopwords)...")
+print()
+mnb_cv.fit(x_train, y_train)
+
+print("10 fold CV results")
+print("------------------")
+print("Multinomial Naive Bayes took {} to fit.".format(return_time(time.time() - start)))
+print("Mean CV f1-score: {:.3f}".format(np.mean(mnb_cv.cv_results_['mean_test_score'])))
+print("Standard deviation: {:.3f}".format(np.mean(mnb_cv.cv_results_['std_test_score'])))
+
+# find and fit best mulitnomial Naive Bayes model (without removing stopwords) and evaluate on test data
+min_dfs = range(1,10)
+get_best_model(min_dfs, mnb_cv)
+
+# make testing and traning data with nltk stopwords removed
+x_train, y_train, x_test, y_test = make_xy(df_tweets_train, 
+                                           df_tweets_test, 
+                                           vectorizer=TfidfVectorizer(ngram_range=(1, 2), 
+                                                                      token_pattern=r'\b\w+\b',
+                                                                      stop_words=nltk_stopwords))
+
+# create parameter grid of regularization constants to search through
+c_space = np.logspace(-4,4,10)
+lr_param_grid = {'C': c_space}
+
+# build logistic regression model and cross validate using GridSearchCV
+logreg = LogisticRegression(solver='lbfgs', max_iter=5000, random_state=7)
+logreg_cv = GridSearchCV(logreg, lr_param_grid, scoring='f1', cv=10, n_jobs=-1)
+
+start = time.time()
+print()
+print("Cross validating model (with stopwords removed)...")
+print()
+logreg_cv.fit(x_train, y_train)
+
+print("10 fold CV results")
+print("------------------")
+print("Logistic Regression took {} to fit.".format(return_time(time.time() - start)))
+print("Mean CV f1-score: {:.3f}".format(np.mean(logreg_cv.cv_results_['mean_test_score'])))
+print("Standard deviation: {:.3f}".format(np.mean(logreg_cv.cv_results_['std_test_score'])))
+
+# repeat without removing stopwords
+x_train, y_train, x_test, y_test = make_xy(df_tweets_train, df_tweets_test)
+
+start = time.time()
+print()
+print("Cross validating model (without removing stopwords)...")
+print()
+logreg_cv.fit(x_train, y_train)
+
+print("10 fold CV results")
+print("---------------------------------------------------------------------")
+print("Logistic Regression took {} to fit.".format(return_time(time.time() - start)))
+print("Mean CV f1-score: {:.3f}".format(np.mean(logreg_cv.cv_results_['mean_test_score'])))
+print("Standard deviation: {:.3f}".format(np.mean(logreg_cv.cv_results_['std_test_score'])))
+
+# find and fit best Logistic Regression model (without removing stopwords) and evaluate on test data
+get_best_model(min_dfs, logreg_cv)
+
+# clear memory for Word2Vec model
+del mnb, mnb_cv, logreg, logreg_cv
+
+# create list of Tweets from 'word2vec_tweets.txt' file to create word2vec vectors
+tweets_list = []
+with open('../data/processed/word2vec_tweets.txt', 'r', buffering=1000) as f:
+    for line in f:
+        tweets_list.append(line.strip().split())
+
+# set dimension of vectors and 'window' (number of words to consider to the left and right of center word)
+vector_size = 300
+window = 2
+
+word2vec_model = 'word2vec.model'
+
+print('Generating Word2Vec Vectors ..')
+
+start = time.time()
+
+# create word2vec model / vectors
+model = Word2Vec(sentences=tweets_list, size=vector_size, window=window, negative=20, iter=50, workers=4)
+
+print('Word2Vec Created in {}.'.format(return_time(time.time() - start)))
+
+# save model
+save_path = os.path.join('../models/', word2vec_model)
+model.save(save_path)
+print('Word2Vec Model saved at {}'.format(save_path))
+
+# load model if not already loaded and extract x_vectors to train CNN+LSTM model on
+model = Word2Vec.load('../models/word2vec.model')
+x_vectors = model.wv
+
+# clear memory for CNN+LSTM Network
+del model
+
+# count number of tokens in tweets
+token_counts = [count_tokens(tweet) for tweet in tweets_list]
+
+# plot histogram of number of tokens in Tweets
+bins = np.arange(0,max(token_counts)) - 0.5
+plt.figure(figsize=(16, 8))
+sns.distplot(token_counts, kde=False, bins=bins, hist_kws=dict(edgecolor="k", linewidth=2))
+plt.xlim(left=-0.5,right=max(token_counts))
+plt.xticks(np.array(range(0,max(token_counts))))
+plt.xlabel('Number of Tokens')
+plt.ylabel('Number of Tweets')
+plt.title('Histogram of Number of Tokens in Tweets')
+plt.show()
+
+pct_tweets_lt31_tokens = len([num_tokens for num_tokens in token_counts if num_tokens < 31])/len(token_counts)
+print('Fraction of Tweets that contain 30 or less tokens: {:.4f}'.format(pct_tweets_lt31_tokens))
+
+# create rank 3 tensor from x_train and x_test data from labeled tweets and Word2Vec vectors for CNN+LSTM Network
+# y_test and y_train is the same as used in the previous models
+
+# set dimensions of tensor for x_train and x_test
+num_of_train_docs = len(df_tweets_train)
+num_of_test_docs = len(df_tweets_test)
+vector_size = 300
+max_no_tokens = 30
+
+# create rank 3 zero tensor for x_train and x_test
+x_train = np.zeros((num_of_train_docs, max_no_tokens, vector_size), dtype=K.floatx())
+x_test = np.zeros((num_of_test_docs, max_no_tokens, vector_size), dtype=K.floatx())
+y_train = (df_tweets_train.sentiment == 'negative').values.astype(np.int)
+y_test = (df_tweets_test.sentiment == 'negative').values.astype(np.int)
+# create tensors for x_train and x_test
+
+# loop over training Tweets (indices) and x_vectors and place Wvector in tensor where 'token' word is in Tweet
+train_indices = df_tweets_train.index
+for i, index in enumerate(train_indices):
+    for t, token in enumerate(tweets_list[index]):
+        if t >= max_no_tokens:
+            break
+      
+        if token not in x_vectors: 
+            continue
+    
+        x_train[i, t, :] = x_vectors[token]
+
+# repeat above with x_test
+test_indices = df_tweets_test.index
+for i, index in enumerate(test_indices):
+    for t, token in enumerate(tweets_list[index]):
+        if t >= max_no_tokens:
+            break
+      
+        if token not in x_vectors:
+            continue
+    
+        x_test[i, t, :] = x_vectors[token]
+
+# clear memory
+del tweets_list
+
+batch_size = 500
+no_epochs = 100
+
+model = Sequential()
+
+model.add(Conv1D(100, kernel_size=3, activation='relu', padding='same',
+                 input_shape=(max_no_tokens, vector_size), strides=1))
+model.add(MaxPooling1D(pool_size=3))
+model.add(Conv1D(100, kernel_size=3, activation='relu', padding='same'))
+model.add(MaxPooling1D(pool_size=3))
+model.add(Conv1D(100, kernel_size=3, activation='relu', padding='same'))
+model.add(MaxPooling1D(pool_size=3))
+
+model.add(Bidirectional(LSTM(512, dropout=0.2, recurrent_dropout=0.3)))
+
+model.add(Dense(256, activation='relu'))
+model.add(Dropout(0.2))
+
+
+model.add(Dense(1, activation='sigmoid'))
+
+
+model.compile(loss='binary_crossentropy',
+                  optimizer='adam',
+                  metrics=[km.f1_score()])
+
+tensorboard = TensorBoard(log_dir='logs/', histogram_freq=0, write_graph=True, write_images=True)
+
+print('Network Architecture')
+print('--------------------')
+model.summary()
+
+start = time.time()
+
+print("CNN-LSTM results")
+print("----------------")
+
+# fit model, predict on test data, and print results
+model.fit(x_train, y_train, batch_size=batch_size, validation_split=0.2, shuffle=True, epochs=no_epochs, 
+          callbacks=[tensorboard, EarlyStopping(monitor='val_loss', min_delta=0.0001, patience=3)])
+
+print("CNN-LSTM took {} to fit.".format(return_time(time.time() - start)))
+print()
+Y_pred = model.predict(x_test)
+y_pred = np.rint(Y_pred).flatten()
+
+print('Classification Report')
+target_names = ['Positive', 'Negative']
+print(classification_report(y_test, y_pred, target_names=target_names))
+
+cnf_matrix = confusion_matrix(y_test, y_pred, labels=[0,1])
+plot_confusion_matrix(cnf_matrix, classes=target_names, title='CNN-LSTM Confusion Matrix \n (Test Data)')

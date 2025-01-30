@@ -1,0 +1,206 @@
+import pandas as pd
+import numpy as np
+
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
+import warnings
+warnings.filterwarnings("ignore")
+
+republished_df = pd.read_csv("../data/visualize-customer-behavior/republished_sample.csv")
+login_df = pd.read_csv("../data/visualize-customer-behavior/login_sample.csv")
+subscription_info_df = pd.read_csv("../data/visualize-customer-behavior/subscription_info.csv")
+
+republished_df.head()
+
+login_df.head()
+
+subscription_info_df.head()
+
+republished_df['action_date'] = pd.to_datetime(republished_df['action_date'])
+login_df['action_date'] = pd.to_datetime(login_df['action_date'])
+subscription_info_df['subscription_starts_at'] = pd.to_datetime(subscription_info_df['subscription_starts_at'])
+subscription_info_df['subscription_ends_at'] = pd.to_datetime(subscription_info_df['subscription_ends_at'])
+
+sample_subscription = subscription_info_df[subscription_info_df['AccountCode'] == 'a']
+sample_republished = republished_df[republished_df['AccountCode'] == 'a']
+sample_login = login_df[login_df['AccountCode'] == 'a']
+
+# this is a constant for visualization purpose
+sample_subscription['vizline'] = 0.5
+sample_republished['vizline'] = 0.5
+sample_login['vizline'] = 0.5
+
+fig, ax = plt.subplots(figsize=(20, 5))
+
+ax.plot(sample_subscription['subscription_starts_at'], sample_subscription['vizline'], 
+        marker='|', linewidth = 0.1,
+        markersize=50, mew=2, alpha=0.5,
+        color='royalblue', label='Subscription Starts')
+
+no_expire_mask = ~sample_subscription['subscription_ends_at'].isnull()
+ax.plot(sample_subscription[no_expire_mask]['subscription_ends_at'], sample_subscription[no_expire_mask]['vizline'],
+        linewidth = 0.1, marker='|',
+        markersize=50, mew=2, alpha=0.5,
+        color='crimson', label='Subscription Ends')
+
+ax.legend(loc='upper left', ncol=2)
+ax.set_title("Customer Behavior")
+
+# Remove y-axis ticks as we don't need it
+ax.get_yaxis().set_visible(False)
+
+fig, ax = plt.subplots(figsize=(20, 5))
+
+# Plot subscription starts and ends
+ax.plot(sample_subscription['subscription_starts_at'], sample_subscription['vizline'], 
+        marker='|', linewidth = 0.1,
+        markersize=50, mew=2, alpha=0.5,
+        color='royalblue', label='Subscription Starts')
+
+no_expire_mask = ~sample_subscription['subscription_ends_at'].isnull()
+ax.plot(sample_subscription[no_expire_mask]['subscription_ends_at'], sample_subscription[no_expire_mask]['vizline'],
+        linewidth = 0.1, marker='|',
+        markersize=50, mew=2, alpha=0.5,
+        color='crimson', label='Subscription Ends')
+
+# Plot login and republish events
+ax.plot(sample_login['action_date'], sample_login['vizline'],
+        marker='o', markersize=11,
+        alpha=0.3, color='darkseagreen',
+        linewidth=0.1, label='Login')
+
+ax.plot(sample_republished['action_date'], sample_republished['vizline'],
+        marker='^', markersize=8,
+        alpha=0.5, color='teal',
+        linewidth=0.1, label='Republish')
+
+ax.legend(loc='upper left', ncol=4)
+ax.set_title("Customer Behavior")
+
+ax.get_yaxis().set_visible(False)
+
+fig, ax = plt.subplots(figsize=(20, 5))
+
+# Plot subscription starts and ends
+ax.plot(sample_subscription['subscription_starts_at'], sample_subscription['vizline'], 
+        marker='|', linewidth = 0.1,
+        markersize=50, mew=2, alpha=0.5,
+        color='royalblue', label='Subscription Starts')
+
+no_expire_mask = ~sample_subscription['subscription_ends_at'].isnull()
+ax.plot(sample_subscription[no_expire_mask]['subscription_ends_at'], sample_subscription[no_expire_mask]['vizline'],
+        linewidth = 0.1, marker='|',
+        markersize=50, mew=2, alpha=0.5,
+        color='crimson', label='Subscription Ends')
+
+# Plot login and republish events
+ax.plot(sample_login['action_date'], sample_login['vizline'],
+        marker='o', markersize=11,
+        alpha=0.3, color='darkseagreen',
+        linewidth=0.1, label='Login')
+
+ax.plot(sample_republished['action_date'], sample_republished['vizline'],
+        marker='^', markersize=8,
+        alpha=0.5, color='teal',
+        linewidth=0.1, label='Republish')
+
+# Limit date range
+datemin = pd.to_datetime('2019/01/01').date()
+datemax = pd.to_datetime('2019/12/31').date()
+ax.set_xlim(datemin, datemax)
+
+# Format date
+date_form = mdates.DateFormatter("%Y/%m/%d")
+ax.xaxis.set_major_formatter(date_form)
+# Ensure ticks fall once every other week (interval=2) 
+ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=2))
+ax.xaxis.set_tick_params(rotation=40)
+
+ax.legend(loc='upper left', ncol=4)
+ax.set_title("Customer Behavior")
+
+ax.get_yaxis().set_visible(False)
+
+def _get_sample_data(AccountCode):
+    """This function gets subscription info, login events and republish events for the AccountCode input.
+    
+    Args:
+        AccountCode (str): Account unique identification.
+
+    Returns:
+        pandas.core.frame.DataFrame: 3 dataframes with subscription info, login and republish events.
+    """
+    sample_subscription = subscription_info_df[subscription_info_df['AccountCode'] == AccountCode]
+    sample_republished = republished_df[republished_df['AccountCode'] == AccountCode]
+    sample_login = login_df[login_df['AccountCode'] == AccountCode]
+
+    # this is a constant for visualization purpose
+    sample_subscription['vizline'] = 0.5
+    sample_republished['vizline'] = 0.5
+    sample_login['vizline'] = 0.5
+    
+    return sample_subscription, sample_republished, sample_login
+
+def _visualize_customer_behavior(AccountCode):
+    """This function visualizes customer behavior using subscription, login and republish events of a customer.
+    
+    Args: 
+        AccountCode (str): Account unique identification.
+        
+    Returns:
+        matplotlib.figure.Figure: a visualization with subscription, login and republish events of a customer.
+    """
+    sample_subscription, sample_republished, sample_login = _get_sample_data(AccountCode)
+    
+    fig, ax = plt.subplots(figsize=(20, 5))
+
+    # Plot subscription starts and ends
+    ax.plot(sample_subscription['subscription_starts_at'], sample_subscription['vizline'], 
+            marker='|', linewidth = 0.1,
+            markersize=50, mew=2, alpha=0.5,
+            color='royalblue', label='Subscription Starts')
+
+    no_expire_mask = ~sample_subscription['subscription_ends_at'].isnull()
+    ax.plot(sample_subscription[no_expire_mask]['subscription_ends_at'], sample_subscription[no_expire_mask]['vizline'],
+            linewidth = 0.1, marker='|',
+            markersize=50, mew=2, alpha=0.5,
+            color='crimson', label='Subscription Ends')
+
+    # Plot login and republish events
+    ax.plot(sample_login['action_date'], sample_login['vizline'],
+            marker='o', markersize=11,
+            alpha=0.3, color='darkseagreen',
+            linewidth=0.1, label='Login')
+
+    ax.plot(sample_republished['action_date'], sample_republished['vizline'],
+            marker='^', markersize=8,
+            alpha=0.5, color='teal',
+            linewidth=0.1, label='Republish')
+
+    # Limit date range
+    datemin = pd.to_datetime('2019/01/01').date()
+    datemax = pd.to_datetime('2019/12/31').date()
+    ax.set_xlim(datemin, datemax)
+
+    # Show weekly date
+    date_form = mdates.DateFormatter("%Y/%m/%d")
+    ax.xaxis.set_major_formatter(date_form)
+    # Ensure ticks fall once every other week (interval=2) 
+    ax.xaxis.set_major_locator(mdates.WeekdayLocator(interval=2))
+    ax.xaxis.set_tick_params(rotation=40)
+
+    ax.legend(loc='upper left', ncol=4)
+    ax.set_title("Customer Behavior")
+
+    ax.get_yaxis().set_visible(False)
+    
+    return fig
+
+_ = _visualize_customer_behavior('a')
+
+_ = _visualize_customer_behavior('b')
+
+_ = _visualize_customer_behavior('c')
+
+_ = _visualize_customer_behavior('d')

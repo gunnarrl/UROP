@@ -1,0 +1,397 @@
+import numpy as np
+
+%matplotlib notebook
+from IPython.display import display, Audio, HTML
+import matplotlib.pylab as plt
+from ipywidgets import interact, interactive, fixed, interact_manual
+import ipywidgets as widgets
+
+import scipy.signal
+%matplotlib notebook
+from matplotlib import animation, patches
+import soundfile as sf
+from style import *
+
+import pandas as pd
+from pandas import *
+
+NMSE = lambda y, yhat : np.sum((y - yhat)**2)/np.var(y)
+
+
+# número de observaciones (no modificar)
+N = 1000
+# Razón señal a ruido (2., 0.5)
+SNR = 2.
+# constantes de la ecuación diferencial (no modificar)
+a, b = 0.1, 0.2
+# comportamiento dinámico de Mackey-Glass (17, 30)
+tau = 17.
+print(tau)
+# paso de integración (no modificar)
+dt = 0.05
+# condición incial (no modificar)
+y0 = 0.9
+# largo temporal (no modificar)
+tt = 5.
+t = np.linspace(0, tt, num=N)
+
+N_full, tau_full = int(N*tt/dt), int(tau/dt)
+ymg = y0*np.ones(shape=(N_full, ))
+# Runge-Kutta integration
+for n in range(tau_full, N_full-1):
+    byd = b*ymg[n-tau_full]/(1.0 + ymg[n-tau_full]**10.0)
+    yk1 = dt*(-a*ymg[n] + byd)
+    yk2 = dt*(-a*(ymg[n]+yk1/2) + byd)
+    yk3 = dt*(-a*(ymg[n]+yk2/2) + byd)
+    yk4 = dt*(-a*(ymg[n]+yk3) + byd)
+    ymg[n+1] = ymg[n] + yk1/6 + yk2/3 +yk3/3 +yk4/6;
+ymg = ymg[::int(tt/dt)]
+#ymg = ymg - np.mean(ymg) 
+# Contaminación con ruido blanco aditivo
+s_noise = np.sqrt(np.var(ymg)/SNR) 
+np.random.seed(0)
+y_obs = ymg + s_noise*np.random.randn(len(ymg))
+
+# Gráfico
+fig, ax = plt.subplots(1, figsize=(9, 3), tight_layout=True)
+ax.plot(t[:500], y_obs[:500])
+ax.set_title('Serie de tiempo Mackey-Glass (entrenamiento)');
+    
+
+
+class LMS_filter(object):
+    
+    def __init__(self, L=1, mu=0.5, normalized=True):
+        self.L = L
+        self.mu = mu
+        self.w = np.zeros(shape=(L, ))
+        self.normalized = normalized
+    
+    def __len__(self):
+        return self.L
+    
+    def predict(self, u):
+        return np.dot(self.w, u)
+    
+    def update(self, u, d):
+        d_pred = self.predict(u)
+        norm = 1.
+        if self.normalized:
+            norm = np.sum(u**2) + 1e-6
+        self.w = self.w + 2 * self.mu * (d - d_pred) * u / norm
+
+data_NMSE_train = []
+data_NMSE_test = []
+L = [5,10,20,30]
+mu = np.logspace(-2,0,num=20)
+
+def lms_update(L,mu,print_plot):
+    lms = LMS_filter(L, mu, normalized=True)
+
+    # Entrenamiento
+    y_pred = np.zeros(shape=(len(y_obs), ))
+    for k in range(lms.__len__(), 500):
+        y_window = y_obs[k-lms.__len__():k]
+        y_pred[k] = lms.predict(y_window)
+        lms.update(d=y_obs[k], u=y_window)
+    # Prueba
+    for k in range(500, len(y_obs)):
+        y_window = y_obs[k-lms.__len__():k]
+        y_pred[k] = lms.predict(y_window)
+
+    
+    data_NMSE_train.append((NMSE(ymg[lms.__len__():500], y_pred[lms.__len__():500])))
+    data_NMSE_test.append(NMSE(ymg[500:], y_pred[500:]))
+                           
+    if print_plot:
+        print("MSE entrenamiento %0.4f, prueba %0.4f" %(NMSE(ymg[lms.__len__():500], y_pred[lms.__len__():500]), 
+                                                NMSE(ymg[500:], y_pred[500:])))
+    
+        fig, ax = plt.subplots(3, figsize=(9, 6), tight_layout=True)
+        ax[0].plot(t, y_obs, 'k.', alpha=0.5, label='Observado'); ax[0].legend();
+        ax[1].plot(t, ymg, 'g-', alpha=0.5, lw=2, label='Intrínseco'); 
+        ax[1].plot(t[:500], y_pred[:500], alpha=0.75, lw=2, label='Predicho train'); 
+        ax[1].plot(t[500:], y_pred[500:], alpha=0.75, lw=2, label='Predicho test'); ax[1].legend();
+
+        ax[2].plot(t[:500], (ymg[:500] - y_pred[:500])**2, label='Error cuadrático train'); 
+        ax[2].plot(t[500:], (ymg[500:] - y_pred[500:])**2, label='Error cuadrático test'); ax[2].legend();
+
+L = [5,10,20,30]
+mu = np.logspace(-2,0,num=20)
+
+l_opt = mu_opt = test_opt = 100000000
+
+for l_val in L:
+    print("L = %i"%l_val)
+    data_NMSE_train = []
+    data_NMSE_test = []
+    for mu_val in mu:
+        lms_update(l_val,mu_val,print_plot=False)
+    df = DataFrame({"MU":mu, "MSE TRAIN": data_NMSE_train,"MSE TEST": data_NMSE_test})
+    print(df)
+    
+    for opt in data_NMSE_test:
+        if opt < test_opt:
+            test_opt = opt
+            l_opt = l_val
+            mu_opt = mu[data_NMSE_test.index(opt)]
+    
+    if l_val < 30 : print("--------------------------------------------------------------------------")
+    
+print("\n Valores Optimos L = %i, mu = %f, test = %f"%(l_opt,mu_opt,test_opt))
+
+def lms_slider(L,mu):
+    lms_update(L,mu,print_plot=True)
+
+print("Plot for TAU=%f"%tau)
+interact(lms_slider, L=widgets.SelectionSlider(options=L, value=l_opt),mu=np.logspace(-2,0,num=20))
+
+
+# número de observaciones (no modificar)
+N = 1000
+# Razón señal a ruido (2., 0.5)
+SNR = 2.
+# constantes de la ecuación diferencial (no modificar)
+a, b = 0.1, 0.2
+# comportamiento dinámico de Mackey-Glass (17, 30)
+tau = 30.
+print("SERIES RESTARTED WITH TAU=%f"%tau)
+# paso de integración (no modificar)
+dt = 0.05
+# condición incial (no modificar)
+y0 = 0.9
+# largo temporal (no modificar)
+tt = 5.
+t = np.linspace(0, tt, num=N)
+
+N_full, tau_full = int(N*tt/dt), int(tau/dt)
+ymg = y0*np.ones(shape=(N_full, ))
+# Runge-Kutta integration
+for n in range(tau_full, N_full-1):
+    byd = b*ymg[n-tau_full]/(1.0 + ymg[n-tau_full]**10.0)
+    yk1 = dt*(-a*ymg[n] + byd)
+    yk2 = dt*(-a*(ymg[n]+yk1/2) + byd)
+    yk3 = dt*(-a*(ymg[n]+yk2/2) + byd)
+    yk4 = dt*(-a*(ymg[n]+yk3) + byd)
+    ymg[n+1] = ymg[n] + yk1/6 + yk2/3 +yk3/3 +yk4/6;
+ymg = ymg[::int(tt/dt)]
+#ymg = ymg - np.mean(ymg) 
+# Contaminación con ruido blanco aditivo
+s_noise = np.sqrt(np.var(ymg)/SNR) 
+np.random.seed(0)
+y_obs = ymg + s_noise*np.random.randn(len(ymg))
+
+test_opt = 100000000
+
+for l_val in L:
+    print("L = %i"%l_val)
+    data_NMSE_train = []
+    data_NMSE_test = []
+    for mu_val in mu:
+        lms_update(l_val,mu_val,print_plot=False)
+    df = DataFrame({"MU":mu, "MSE TRAIN": data_NMSE_train,"MSE TEST": data_NMSE_test})
+    print(df)
+    
+    for opt in data_NMSE_test:
+        if opt < test_opt:
+            test_opt = opt
+            l_opt = l_val
+            mu_opt = mu[data_NMSE_test.index(opt)]
+    
+    if l_val < 30 : print("--------------------------------------------------------------------------")
+    
+print("\n Valores Optimos L = %i, mu = %f, test = %f"%(l_opt,mu_opt,test_opt))
+
+def lms_slider(L,mu):
+    lms_update(L,mu,print_plot=True)
+
+print("Plot for TAU=%f"%tau)
+interact(lms_slider, L=widgets.SelectionSlider(options=L, value=l_opt),mu=np.logspace(-2,0,num=20))
+
+class RLS_filter(object):
+    
+    def __init__(self, L=1, beta=0.9, delta=10.):
+        self.L = L
+        self.beta = beta
+        self.w = np.zeros(shape=(L, ))
+        self.Phi_inv = delta*np.eye(L)
+    
+    def __len__(self):
+        return self.L
+    
+    def predict(self, u):
+        return np.dot(self.w, u)
+    
+    def update(self, u, d):          
+        invbeta = 1.0/self.beta
+        d_pred = self.predict(u)
+        e = d - d_pred
+        r = 1. + invbeta*np.dot(np.dot(u, self.Phi_inv), u.T)
+        k = invbeta*np.dot(self.Phi_inv, u)/r
+        self.Phi_inv = invbeta* self.Phi_inv - invbeta * self.Phi_inv *np.sum(k*u)
+        self.w = self.w + np.dot(k,e)
+       
+        
+
+# número de observaciones (no modificar)
+N = 1000
+# Razón señal a ruido (2., 0.5)
+SNR = 2.
+# constantes de la ecuación diferencial (no modificar)
+a, b = 0.1, 0.2
+# comportamiento dinámico de Mackey-Glass (17, 30)
+tau = 17.
+print("SERIES RESTARTED WITH TAU=%f"%tau)
+# paso de integración (no modificar)
+dt = 0.05
+# condición incial (no modificar)
+y0 = 0.9
+# largo temporal (no modificar)
+tt = 5.
+t = np.linspace(0, tt, num=N)
+
+N_full, tau_full = int(N*tt/dt), int(tau/dt)
+ymg = y0*np.ones(shape=(N_full, ))
+# Runge-Kutta integration
+for n in range(tau_full, N_full-1):
+    byd = b*ymg[n-tau_full]/(1.0 + ymg[n-tau_full]**10.0)
+    yk1 = dt*(-a*ymg[n] + byd)
+    yk2 = dt*(-a*(ymg[n]+yk1/2) + byd)
+    yk3 = dt*(-a*(ymg[n]+yk2/2) + byd)
+    yk4 = dt*(-a*(ymg[n]+yk3) + byd)
+    ymg[n+1] = ymg[n] + yk1/6 + yk2/3 +yk3/3 +yk4/6;
+ymg = ymg[::int(tt/dt)]
+#ymg = ymg - np.mean(ymg) 
+# Contaminación con ruido blanco aditivo
+s_noise = np.sqrt(np.var(ymg)/SNR) 
+np.random.seed(0)
+y_obs = ymg + s_noise*np.random.randn(len(ymg))
+
+beta = np.linspace(0.8, 1.0, num=20)
+
+data_NMSE_train = []
+data_NMSE_test = []
+
+beta = np.linspace(0.8, 1.0, num=20)
+
+def rls_update(L,beta,print_plot):
+    NMSE = lambda y, yhat : np.sum((y - yhat)**2)/np.var(y)
+    
+    rls = RLS_filter(L, beta, delta=1.)
+    # Entrenamiento
+    y_pred = np.zeros(shape=(len(y_obs), ))
+    for k in range(rls.__len__(), 500):
+        y_window = y_obs[k-rls.__len__():k]
+        rls.update(d=y_obs[k], u=y_window)
+        y_pred[k] = rls.predict(y_window)
+    # Prueba
+    for k in range(500, len(y_obs)):
+        y_window = y_obs[k-rls.__len__():k]
+        y_pred[k] = rls.predict(y_window)
+        
+    data_NMSE_train.append(NMSE(ymg[rls.__len__():500], y_pred[rls.__len__():500]))
+    data_NMSE_test.append(NMSE(ymg[500:], y_pred[500:]))
+
+    if print_plot:
+        print("MSE entrenamiento %0.6f, prueba %0.6f" %(NMSE(ymg[rls.__len__():500], y_pred[rls.__len__():500]), 
+                                                        NMSE(ymg[500:], y_pred[500:])))
+        fig, ax = plt.subplots(3, figsize=(9, 6), tight_layout=True)
+        ax[0].plot(t, y_obs, 'k.', alpha=0.5, label='Observado'); ax[0].legend();
+        ax[1].plot(t, ymg, 'g-', alpha=0.5, lw=2, label='Intrínseco'); 
+        ax[1].plot(t[:500], y_pred[:500], alpha=0.75, lw=2, label='Predicho train'); 
+        ax[1].plot(t[500:], y_pred[500:], alpha=0.75, lw=2, label='Predicho test'); ax[1].legend();
+
+        ax[2].plot(t[:500], (ymg[:500] - y_pred[:500])**2, label='Error cuadrático train'); 
+        ax[2].plot(t[500:], (ymg[500:] - y_pred[500:])**2, label='Error cuadrático test'); ax[2].legend(); 
+
+        
+
+l_opt = beta_opt = test_opt = 100000000
+
+
+for l_val in L:
+    print("L = %i"%l_val)
+    data_NMSE_train = []
+    data_NMSE_test = []
+    for beta_val in beta:
+        rls_update(l_val,beta_val,print_plot=False)
+    df = DataFrame({"BETA":beta, "MSE TRAIN": data_NMSE_train,"MSE TEST": data_NMSE_test})
+    print(df)
+    
+    for opt in data_NMSE_test:
+        if opt < test_opt:
+            test_opt = opt
+            l_opt = l_val
+            beta_opt = beta[data_NMSE_test.index(opt)]
+    
+    if l_val < 30 : print("--------------------------------------------------------------------------")
+    
+print("\n Valores Optimos L = %i, BETA = %f, test = %f"%(l_opt,beta_opt,test_opt))
+
+def rls_slider(L,beta):
+    rls_update(L,beta,print_plot=True)
+
+print("Plot for TAU=%f"%tau)
+interact(rls_slider, L=widgets.SelectionSlider(options=L, value=l_opt),beta = np.linspace(0.8, 1.0, num=20))
+
+# número de observaciones (no modificar)
+N = 1000
+# Razón señal a ruido (2., 0.5)
+SNR = 2.
+# constantes de la ecuación diferencial (no modificar)
+a, b = 0.1, 0.2
+# comportamiento dinámico de Mackey-Glass (17, 30)
+tau = 30.
+print("SERIES RESTARTED WITH TAU=%f"%tau)
+# paso de integración (no modificar)
+dt = 0.05
+# condición incial (no modificar)
+y0 = 0.9
+# largo temporal (no modificar)
+tt = 5.
+t = np.linspace(0, tt, num=N)
+
+N_full, tau_full = int(N*tt/dt), int(tau/dt)
+ymg = y0*np.ones(shape=(N_full, ))
+# Runge-Kutta integration
+for n in range(tau_full, N_full-1):
+    byd = b*ymg[n-tau_full]/(1.0 + ymg[n-tau_full]**10.0)
+    yk1 = dt*(-a*ymg[n] + byd)
+    yk2 = dt*(-a*(ymg[n]+yk1/2) + byd)
+    yk3 = dt*(-a*(ymg[n]+yk2/2) + byd)
+    yk4 = dt*(-a*(ymg[n]+yk3) + byd)
+    ymg[n+1] = ymg[n] + yk1/6 + yk2/3 +yk3/3 +yk4/6;
+ymg = ymg[::int(tt/dt)]
+#ymg = ymg - np.mean(ymg) 
+# Contaminación con ruido blanco aditivo
+s_noise = np.sqrt(np.var(ymg)/SNR) 
+np.random.seed(0)
+y_obs = ymg + s_noise*np.random.randn(len(ymg))
+
+l_opt = beta_opt = test_opt = 100000000
+
+
+for l_val in L:
+    print("L = %i"%l_val)
+    data_NMSE_train = []
+    data_NMSE_test = []
+    for beta_val in beta:
+        rls_update(l_val,beta_val,print_plot=False)
+    df = DataFrame({"BETA":beta, "MSE TRAIN": data_NMSE_train,"MSE TEST": data_NMSE_test})
+    print(df)
+    
+    for opt in data_NMSE_test:
+        if opt < test_opt:
+            test_opt = opt
+            l_opt = l_val
+            beta_opt = beta[data_NMSE_test.index(opt)]
+    
+    if l_val < 30 : print("--------------------------------------------------------------------------")
+    
+print("\n Valores Optimos L = %i, BETA = %f, test = %f"%(l_opt,beta_opt,test_opt))
+
+def rls_slider(L,beta):
+    rls_update(L,beta,print_plot=True)
+
+print("Plot for TAU=%f"%tau)
+interact(rls_slider, L=widgets.SelectionSlider(options=L, value=l_opt),beta = np.linspace(0.8, 1.0, num=20))

@@ -1,0 +1,64 @@
+import os
+import sys
+
+import numpy as np
+import matplotlib.pyplot as plt
+import scipy.ndimage
+
+homcv_dir = os.path.split(os.getcwd())[0]
+if homcv_dir not in sys.path:
+    sys.path.append(homcv_dir)
+from homcv.betti_numbers import betti_numbers
+
+def plot_image(image):
+    plt.imshow(image, cmap = 'Greys')
+    plt.colorbar()
+
+def load_image(image_filename):
+    filepath = os.path.join('images', image_filename)
+    image = 1 - plt.imread(filepath)[:,:, 0]
+    return image
+
+disk = np.zeros((10, 10))
+disk[1:4, 1: 4] = 1
+
+plot_image(disk)
+
+betti_numbers(disk)
+
+circle = np.zeros((10, 10))
+circle[[1, 3], 1: 4] = 1
+circle[1:4, [1, 3]] = 1
+
+plot_image(circle)
+
+betti_numbers(circle)
+
+figure_eight= np.zeros((10, 10))
+figure_eight[[1, 3], 1: 8] = 1
+figure_eight[1:4, [1, 3, 7]] = 1
+
+plot_image(figure_eight)
+
+betti_numbers(figure_eight, .5)
+
+two_circles= np.zeros((10, 10))
+two_circles[[1, 3], 1: 4] = 1
+two_circles[[1, 3], 5: 7] = 1
+two_circles[1:4, [1, 3, 5, 7]] = 1
+
+plot_image(two_circles)
+
+betti_numbers(two_circles)
+
+blob = load_image('blob.png')
+plot_image(blob)
+blob.shape
+
+betti_numbers(blob) == betti_numbers(disk)
+
+blob_with_hole = load_image('blob_with_hole.png')
+plot_image(blob_with_hole)
+blob_with_hole.shape
+
+betti_numbers(blob_with_hole) == betti_numbers(circle)

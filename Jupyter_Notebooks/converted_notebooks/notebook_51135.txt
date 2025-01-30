@@ -1,0 +1,144 @@
+reset -fs
+
+import numpy as np
+import pandas as pd
+
+path = "../../data/regression/"
+
+# Load train data - train data has potential features and price as target
+data_train_raw = pd.read_csv(path+"train.csv", low_memory=False)
+assert "price" in data_train_raw.columns
+
+target_raw = data_train_raw.pop('price')
+# Convert `price` as a string with dollar signs and commas to a float.
+y_train = np.array(target_raw.str.replace('$', '').str.replace(',', '').astype(float))
+
+# Keep track of the number of instances
+n_rows_input = data_train_raw.shape[0]
+
+def process_data(data):
+    """Feature engineering & feature selection
+    The input parameter and return value have the same name. All processing should happen inplace.
+    """
+
+    # YOUR CODE HERE
+    raise NotImplementedError()
+
+    return data
+
+"""
+2 points
+Test code for the 'process_data' function.
+This cell should NOT give any errors when it is run.
+"""
+
+data_train = process_data(data_train_raw)
+
+# Double check the type is still a pd.DataFrame
+assert type(data_train) == pd.core.frame.DataFrame
+# Double check no rows where drop. Dropping which will break test data performance.
+assert data_train.shape[0] == n_rows_input
+
+# Convert from pandas.DataFrame (tabular) to numpy.array (matrix)
+X_train = np.array(data_train)
+
+from sklearn import linear_model
+
+# Fit simple LR
+lm = linear_model.LinearRegression() # TODO: Replace with your choice of algorithm and hyperparameters
+lm.fit(X_train, y_train) # Train model
+
+# YOUR CODE HERE
+raise NotImplementedError()
+
+"""
+1 point
+Test for valid model type.
+This cell should NOT give any errors when it is run.
+"""
+
+assert str(type(lm)).split(".")[1] == 'linear_model'
+assert str(type(lm)).split(".")[-1].count('CV') == 0
+
+def rmlse(target_true, target_predicted):
+    "Root Mean Squared Logarithmic Error"
+
+    assert len(target_true) == len(target_predicted), "True and predicted targets need to be the same length"
+
+    log_diff = np.log(target_predicted + 1) - np.log(target_true + 1)
+    return np.sqrt(np.mean(np.power(log_diff, 2)))
+
+rmlse_value = rmlse(y_train, lm.predict(X_train))
+print(f"{rmlse_value:.4f} rmlse on training set")
+
+from sklearn import metrics
+
+medae_value = metrics.median_absolute_error(y_train, lm.predict(X_train))
+print(f"{medae_value:.4f} medae on training set")
+
+# Load test data - test data only has potential features, no price as target
+data_test_raw = pd.read_csv(path+"test.csv", low_memory=False)
+assert not "price" in data_test_raw.columns
+
+n_rows_input = data_test_raw.shape[0]
+
+"""
+2 points
+Test code for the 'process_data' function.
+This cell should NOT give any errors when it is run.
+"""
+
+data_test = process_data(data_test_raw)
+
+# Double check the type is still a pd.DataFrame
+assert type(data_test) == pd.core.frame.DataFrame
+
+# Double check not dropping any rows which will break test data
+assert data_test.shape[0] == n_rows_input
+
+# Performance on median benchmark (mock test dataset)
+# Sanity-check that your model can generate predicts in the correct form for actual test dataset.
+# Your performance on the median data is not a good indicator of preformance on actual test dataset.
+
+X_test = np.array(data_test)
+
+test_solutions = pd.read_csv(path+'median_benchmark.csv')
+y_median = test_solutions['median_price']
+
+medae_value = metrics.median_absolute_error(y_median, lm.predict(X_test))
+print(f"{medae_value:.4f} medae on median test set")
+
+"""
+1 point for medae less than 100 on test dataset.
+Tests are hidden since you don't have access to test targets.
+"""
+
+
+
+"""
+1 point for medae less than 90 on test dataset.
+Tests are hidden since you don't have access to test targets.
+"""
+
+
+
+"""
+1 point for medae less than 80 on test dataset.
+Tests are hidden since you don't have access to test targets.
+"""
+
+
+
+"""
+1 point for medae less than 70 on test dataset.
+Tests are hidden since you don't have access to test targets.
+"""
+
+
+
+"""
+1 point for medae less than 60 on test dataset.
+Tests are hidden since you don't have access to test targets.
+"""
+
+

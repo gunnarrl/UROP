@@ -1,0 +1,70 @@
+import pandas as pd
+import numpy as np
+def sigmoid(z):
+    return 1 / (1 + np.exp(-z))
+
+poor = open("poor_amazon_toy_reviews.txt").readlines()
+good = open("good_amazon_toy_reviews.txt").readlines()
+
+good_reviews = list(map(lambda review: (review, 1), good))
+poor_reviews = list(map(lambda review: (review, 0), poor))
+
+all_reviews = good_reviews + poor_reviews
+all_reviews_df = pd.DataFrame(all_reviews, columns=["review", "positive"])
+all_reviews_df.head()
+
+from sklearn.feature_extraction.text import CountVectorizer
+vectorizer = CountVectorizer(ngram_range=(1, 1),
+                             stop_words="english",
+                             max_features=1000,token_pattern='(?u)\\b[a-zA-Z][a-zA-Z]+\\b')
+
+X = vectorizer.fit_transform(all_reviews_df["review"])
+y = all_reviews_df["positive"].values
+X
+
+from sklearn.linear_model import LogisticRegression
+
+lr = LogisticRegression()
+lr.fit(X, y)
+
+y_pred = lr.predict(X)
+
+# calculate accuracy
+np.mean(y_pred == y)
+
+from sklearn.metrics import confusion_matrix
+
+confusion_matrix(y, y_pred)
+
+from sklearn.metrics import roc_auc_score
+roc_auc_score(y, y_pred)
+
+data = pd.DataFrame(X.toarray(), columns=vectorizer.get_feature_names())
+data["TARGET"] = y
+
+from sklearn.model_selection import train_test_split
+
+train_df, test_df = train_test_split(data)
+X_train = train_df.loc[:, ~train_df.columns.isin(['TARGET'])]
+X_test = test_df.loc[:, ~test_df.columns.isin(['TARGET'])]
+
+
+y_train = train_df["TARGET"]
+y_test = test_df["TARGET"]
+
+print(X_train.shape)
+print(y_train.shape)
+print(X_test.shape)
+print(y_test.shape)
+
+lr.fit(X_train, y_train)
+
+y_pred = lr.predict(X_test)
+
+np.mean(y_pred == y_test)
+
+from sklearn.model_selection import cross_validate
+X = data.loc[:, ~data.columns.isin(['TARGET'])]
+cv_results = cross_validate(lr, X, y, cv=10,return_train_score=False)
+
+cv_results['test_score']

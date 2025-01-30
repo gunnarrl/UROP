@@ -1,0 +1,164 @@
+import xlrd
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import hypertools as hyp
+import matplotlib.pyplot as plt
+%matplotlib inline
+sns.set_context('poster')
+
+data = pd.read_excel('GSS 3.xlsx', sheetname='Data')
+
+data.head()
+
+#list of happiness factors
+happiness = ['Standard of living of r will improve', 
+             'How much time felt sad in past wk', 
+             'How much time felt happy in past wk',
+             'How much time felt depressed in past wk',
+             'I am meeting my current goals',
+             'I see myself as successful',
+             'I expect more good things to happen to me than bad',
+             'I\'m always optimistic about my future',
+             'Happiness of marriage',
+             'General happiness',
+             'Happiness of relt with partner',
+             'Condition of health',
+             'Satisfaction with financial situation',
+             'Rs self ranking of social position',
+             'Is life exciting or dull']
+
+#list of work factors
+work = ['Rs income in constant $',
+        'Rs job is useful to society',
+        'R has opportunity to advance',
+        'Rs income is high',
+        'Rs job is secure',
+        'The highest degree r have earned',
+        'Respondents income',
+        'Rs living standard compared to parents',
+        'Respondents income',
+        'Living with parents when 16 yrs old',
+        'Marital status',
+        'Number of hours usually work a week',
+        'Job or housework',
+        'Is r likely to lose job']
+
+#list of demographic factors
+demo = ['Ballot used for interview', 
+        'Gss year for this respondent                       ',
+        'Year of birth',
+        'Region of interview',
+        'Was r born in this country']
+
+demo_df = data[demo]
+happiness_df = data[happiness]
+work_df = data[work]
+
+hyp.plot(happiness_df, '.', group = happiness_df['General happiness'], legend = list(happiness_df['General happiness'].unique()))
+
+for factor in happiness:
+    print(factor)
+    hyp.plot(happiness_df, '.', group=happiness_df[factor], legend = list(happiness_df[factor].unique()))
+
+sns.countplot('General happiness', data = data, order = ['Very happy', 'Pretty happy', 'Not too happy', "Don't know", 'No answer'])
+
+sns.swarmplot(data = data, x='General happiness', y='Rs income in constant $')
+
+sns.violinplot(data = data, x='General happiness', y='Rs income in constant $', order = ['Very happy', 'Pretty happy', 'Not too happy', "Don't know"])
+
+sns.boxplot(data = data, x='General happiness', y='Rs income in constant $', order = ['Very happy', 'Pretty happy', 'Not too happy', "Don't know"])
+
+#create a data frame for people who answered "pretty happy"
+pretty_happy = data.loc[data['General happiness'] == 'Pretty happy']
+
+#create a data frame for people who answered "very happy"
+very_happy = data.loc[data['General happiness'] == 'Very happy']
+
+#create a data frame for people who answered "not too happy"
+not_too_happy = data.loc[data['General happiness'] == 'Not too happy']
+
+sns.countplot('Rs income in constant $', data = very_happy)
+plt.title('Very happy')
+plt.xticks(rotation=90)
+plt.ylim(0, 60)
+plt.show()
+
+sns.countplot('Rs income in constant $', data = pretty_happy)
+plt.title('Pretty happy')
+plt.xticks(rotation=90)
+plt.ylim(0, 100)
+plt.show()
+
+sns.countplot('Rs income in constant $', data = not_too_happy)
+plt.title('Not too happy')
+plt.xticks(rotation=90)
+plt.ylim(0, 20)
+plt.show()
+
+sns.countplot('Job or housework', data = very_happy, order = ['Very satisfied', 'Mod. satisfied', 'A little dissat', 'Very dissatisfied', "Don't know", 'Not applicable', 'No answer'])
+plt.title('Very happy')
+plt.xticks(rotation=90)
+#plt.ylim(0, 100)
+plt.show()
+
+sns.countplot('Job or housework', data = pretty_happy, order = ['Very satisfied', 'Mod. satisfied', 'A little dissat', 'Very dissatisfied', "Don't know", 'Not applicable', 'No answer'])
+plt.title('Pretty happy')
+plt.xticks(rotation=90)
+#plt.ylim(0, 60)
+plt.show()
+
+sns.countplot('Job or housework', data = not_too_happy, order = ['Very satisfied', 'Mod. satisfied', 'A little dissat', 'Very dissatisfied', "Don't know", 'Not applicable', 'No answer'])
+plt.title('Not too happy')
+plt.xticks(rotation=90)
+#plt.ylim(0, 20)
+plt.show()
+
+sns.countplot('Rs job is secure', data = very_happy, order = ['Strongly agree', 'Agree', 'Neither', 'Disagree', 'Strongly disagree', 'No issp'])
+plt.title('Very happy')
+plt.xticks(rotation=90)
+plt.ylim(0, 150)
+plt.show()
+
+sns.countplot('Rs job is secure', data = pretty_happy, order = ['Strongly agree', 'Agree', 'Neither', 'Disagree', 'Strongly disagree', 'No issp'])
+plt.xticks(rotation=90)
+plt.ylim(0, 250)
+plt.show()
+
+sns.countplot('Rs job is secure', data = not_too_happy, order = ['Strongly agree', 'Agree', 'Neither', 'Disagree', 'Strongly disagree', 'No issp'])
+plt.title('Not too happy')
+plt.xticks(rotation=90)
+plt.ylim(0, 50)
+plt.show()
+
+#write function to get percentages by dividing value count of each by total count
+
+def answer(df, factor):
+    
+    #make list for all unique answers
+    answers = []
+    
+    for answer in range(0, len(df[factor].value_counts())):
+        answers.append(df[factor].value_counts().index[answer])
+        
+    return answers
+
+def percentage(df, factor):
+    
+    #make list for all percentages
+    percentage_list = []
+    
+    #get percentages
+    for answer in range(0, len(df[factor].value_counts())):
+        percentage_list.append(df[factor].value_counts()[answer]/sum(df[factor].value_counts()))
+    
+    return percentage_list
+
+#wrong bc value_counts and unique() are not in same order
+x = answer(very_happy, 'Job or housework')
+print(x)
+
+y = percentage(very_happy, 'Job or housework')
+print(y)
+
+sns.barplot(x = x, y = y, order = ['Very satisfied', 'Mod. satisfied', 'A little dissat', 'Very dissatisfied', "Don't know", 'Not applicable', 'No answer'])

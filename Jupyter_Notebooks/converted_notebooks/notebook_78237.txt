@@ -1,0 +1,286 @@
+import warnings, json, re, math
+from melanoma_utility_scripts import *
+from kaggle_datasets import KaggleDatasets
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import KFold, RandomizedSearchCV, GridSearchCV
+from xgboost import XGBClassifier
+
+SEED = 42
+seed_everything(SEED)
+warnings.filterwarnings("ignore")
+
+config = {
+  "N_FOLDS": 5,
+  "N_USED_FOLDS": 5,
+  "DATASET_PATH": 'melanoma-256x256'
+}
+
+with open('config.json', 'w') as json_file:
+    json.dump(json.loads(json.dumps(config)), json_file)
+    
+config
+
+database_base_path = '/kaggle/input/siim-isic-melanoma-classification/'
+train = pd.read_csv(f"/kaggle/input/{config['DATASET_PATH']}/train.csv")
+test = pd.read_csv(database_base_path + 'test.csv')
+
+print('Train samples: %d' % len(train))
+display(train.head())
+print(f'Test samples: {len(test)}')
+display(test.head())
+
+# age_approx (mean)
+train['age_approx'].fillna(train['age_approx'].mean(), inplace=True)
+test['age_approx'].fillna(train['age_approx'].mean(), inplace=True)
+# anatom_site_general_challenge (NaN)
+train['anatom_site_general_challenge'].fillna('NaN', inplace=True)
+test['anatom_site_general_challenge'].fillna('NaN', inplace=True)
+# sex (mode)
+train['sex'].fillna(train['sex'].mode()[0], inplace=True)
+test['sex'].fillna(train['sex'].mode()[0], inplace=True)
+
+### Label ecoding
+enc = LabelEncoder()
+train['sex_enc'] = enc.fit_transform(train['sex'].astype('str'))
+test['sex_enc'] = enc.transform(test['sex'].astype('str'))
+
+### One-hot ecoding
+# train = pd.concat([train, pd.get_dummies(train['sex'], prefix='sex_enc', drop_first=True)], axis=1)
+# test = pd.concat([test, pd.get_dummies(test['sex'], prefix='sex_enc', drop_first=True)], axis=1)
+
+### Mean ecoding
+# Sex
+train['sex_mean'] = train['sex'].map(train.groupby(['sex'])['target'].mean())
+test['sex_mean'] = test['sex'].map(train.groupby(['sex'])['target'].mean())
+
+
+# # External features
+# train_img_ft = pd.read_csv('../input/landscape/TrainSuperTab.csv')
+# test_img_ft = pd.read_csv('../input/landscape/TestSuperTab.csv')
+# ext_fts = ['V1', 'V2', 'V3', 'V4','V5', 'V6', 'V7', 'V8', 'V9', 'V10', 'V11', 'V12', 
+#            'V13', 'V14', 'V15', 'V16', 'V17', 'V18', 'V19', 'V20', 'V21', 'V22', 'V23', 'V24', 'V25',
+#            'V26', 'V27', 'V28', 'V29', 'V30', 'V31', 'V32', 'V33', 'V34', 'V35', 'V36', 'V37']
+# for ft in ext_fts:
+#     train[ft] = train_img_ft[ft]
+#     test[ft] = test_img_ft[ft]
+
+print('Train set')
+display(train.head())
+print('Test set')
+display(test.head())
+
+features = ['age_approx', 'sex_mean']
+
+ohe_features  = [col for col in train.columns if 'enc' in col]
+
+features += ohe_features
+
+# External features
+# features += ext_fts
+print(features)
+
+# Hyperparameter grid
+param_grid = {
+    'max_depth': list(range(2, 12, 2)),
+    'learning_rate': list(np.logspace(np.log10(0.005), np.log10(0.5), base=10, num=1000)),
+    'reg_alpha': list(np.linspace(0, 1)),
+    'reg_lambda': list(np.linspace(0, 1)),
+    'colsample_bytree': list(np.linspace(0.3, 1, 10)),
+    'subsample': list(np.linspace(0.5, 1, 100)),
+    'scale_pos_weight': list(np.linspace(1, (len(train[train['target'] == 0]) / len(train[train['target'] == 1])), 10)),
+}
+
+
+skf = KFold(n_splits=config['N_USED_FOLDS'], shuffle=True, random_state=SEED)
+
+def get_idxs():
+    for fold,(idxT, idxV) in enumerate(skf.split(np.arange(15))):
+        x_train = train[train['tfrecord'].isin(idxT)]
+        x_valid = train[~train['tfrecord'].isin(idxT)]
+        yield x_train.index, x_valid.index
+
+
+# Model
+model = XGBClassifier(n_estimators=300, random_state=SEED)
+
+grid_search = RandomizedSearchCV(param_distributions=param_grid, estimator=model, scoring='roc_auc', 
+                                 cv=iter(get_idxs()), n_jobs=-1, n_iter=100, verbose=1)
+result = grid_search.fit(train[features], train['target'])
+
+print("Best: %f using %s" % (result.best_score_, result.best_params_))
+means = result.cv_results_['mean_test_score']
+stds = result.cv_results_['std_test_score']
+params = result.cv_results_['params']
+for mean, stdev, param in zip(means, stds, params):
+    print("%f (%f) with: %r" % (mean, stdev, param))
+    
+params = result.best_params_
+
+skf = KFold(n_splits=config['N_USED_FOLDS'], shuffle=True, random_state=SEED)
+test['target'] = 0
+model_list = []
+
+for fold,(idxT, idxV) in enumerate(skf.split(np.arange(15))):
+    print(f'\nFOLD: {fold+1}')
+    print(f'TRAIN: {idxT} VALID: {idxV}')
+    
+    train[f'fold_{fold+1}'] = train.apply(lambda x: 'train' if x['tfrecord'] in idxT else 'validation', axis=1)
+    x_train = train[train['tfrecord'].isin(idxT)]
+    y_train = x_train['target']
+    x_valid = train[~train['tfrecord'].isin(idxT)]
+    y_valid = x_valid['target']
+
+    model = XGBClassifier(**params, random_state=SEED)
+    
+    model.fit(x_train[features], y_train, eval_set=[(x_valid[features], y_valid)], eval_metric='auc', verbose=0)
+    model_list.append(model)
+
+    # Evaludation
+    preds = model.predict_proba(train[features])[:, 1]
+    train[f'pred_fold_{fold+1}'] = preds
+    
+    # Inference
+    preds = model.predict_proba(test[features])[:, 1]
+    test[f'pred_fold_{fold+1}'] = preds
+    test['target'] += preds / config['N_USED_FOLDS']
+
+def func(x):
+    if x['fold_1'] == 'validation':
+        return x['pred_fold_1']
+    elif x['fold_2'] == 'validation':
+        return x['pred_fold_2']
+    elif x['fold_3'] == 'validation':
+        return x['pred_fold_3']
+    elif x['fold_4'] == 'validation':
+        return x['pred_fold_4']
+    elif x['fold_5'] == 'validation':
+        return x['pred_fold_5']
+    
+train['pred'] = train.apply(lambda x: func(x), axis=1)
+
+auc_oof = roc_auc_score(train['target'], train['pred'])
+print(f'Overall OOF AUC = {auc_oof:.3f}')
+
+df_oof = train[['image_name', 'target', 'pred']]
+df_oof.to_csv('oof.csv', index=False)
+display(df_oof.head())
+display(df_oof.describe().T)
+
+for n_fold, model in enumerate(model_list):
+    print(f'Fold: {n_fold + 1}')
+    feature_importance = model.get_booster().get_score(importance_type='weight')
+
+    keys = list(feature_importance.keys())
+    values = list(feature_importance.values())
+
+    importance = pd.DataFrame(data=values, index=keys,
+                              columns=['score']).sort_values(by='score',
+                                                             ascending=False)
+    plt.figure(figsize=(16, 8))
+    sns.barplot(x=importance.score.iloc[:20],
+                y=importance.index[:20],
+                orient='h',
+                palette='Reds_r')
+
+    plt.show()
+
+display(evaluate_model(train, config['N_USED_FOLDS']).style.applymap(color_map))
+display(evaluate_model_Subset(train, config['N_USED_FOLDS']).style.applymap(color_map))
+
+### Adversarial set
+adv_train = train.copy()
+adv_test = test.copy()
+adv_train['dataset'] = 1
+adv_test['dataset'] = 0
+
+x_adv = pd.concat([adv_train, adv_test], axis=0)
+y_adv = x_adv['dataset']
+
+### Adversarial model
+model_adv = XGBClassifier(**params, random_state=SEED)
+
+model_adv.fit(x_adv[features], y_adv, eval_metric='auc', verbose=0)
+
+
+### Preds
+preds = model_adv.predict_proba(x_adv[features])[:, 1]
+
+
+### Plot feature importance and ROC AUC curve
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
+
+# Feature importance
+feature_importance = model_adv.get_booster().get_score(importance_type='weight')
+
+keys = list(feature_importance.keys())
+values = list(feature_importance.values())
+
+importance = pd.DataFrame(data=values, index=keys,
+                          columns=['score']).sort_values(by='score',
+                                                         ascending=False)
+
+ax1.set_title('Feature Importances')
+sns.barplot(x=importance.score.iloc[:20],
+            y=importance.index[:20],
+            orient='h',
+            palette='Reds_r',
+            ax=ax1)
+
+# Plot ROC AUC curve
+fpr_train, tpr_train, _ = roc_curve(y_adv, preds)
+roc_auc_train = auc(fpr_train, tpr_train)
+
+ax2.set_title('ROC AUC curve')
+ax2.plot(fpr_train, tpr_train, color='blue', label='Adversarial AUC = %0.2f' % roc_auc_train)
+ax2.legend(loc = 'lower right')
+ax2.plot([0, 1], [0, 1],'r--')
+ax2.set_xlim([0, 1])
+ax2.set_ylim([0, 1])
+plt.ylabel('True Positive Rate')
+plt.xlabel('False Positive Rate')
+
+plt.show()
+
+train['pred'] = 0
+for n_fold in range(config['N_USED_FOLDS']):
+    train['pred'] += train[f'pred_fold_{n_fold+1}'] / config['N_FOLDS']
+
+print('Label/prediction distribution')
+print(f"Train positive labels: {len(train[train['target'] > .5])}")
+print(f"Train positive predictions: {len(train[train['pred'] > .5])}")
+print(f"Train positive correct predictions: {len(train[(train['target'] > .5) & (train['pred'] > .5)])}")
+    
+print('Top 10 samples')
+display(train[['image_name', 'sex', 'age_approx','anatom_site_general_challenge', 'diagnosis',
+                'target', 'pred'] + [c for c in train.columns if (c.startswith('pred_fold'))]].head(10))
+
+print('Top 10 positive samples')
+display(train[['image_name', 'sex', 'age_approx','anatom_site_general_challenge', 'diagnosis',
+                'target', 'pred'] + [c for c in train.columns if (c.startswith('pred_fold'))]].query('target == 1').head(10))
+
+print('Top 10 predicted positive samples')
+display(train[['image_name', 'sex', 'age_approx','anatom_site_general_challenge', 'diagnosis',
+                'target', 'pred'] + [c for c in train.columns if (c.startswith('pred_fold'))]].query('pred > .5').head(10))
+
+print(f"Test predictions {len(test[test['target'] > .5])}|{len(test[test['target'] <= .5])}")
+
+print('Top 10 samples')
+display(test[['image_name', 'sex', 'age_approx','anatom_site_general_challenge', 'target'] + 
+             [c for c in test.columns if (c.startswith('pred_fold'))]].head(10))
+
+print('Top 10 positive samples')
+display(test[['image_name', 'sex', 'age_approx','anatom_site_general_challenge', 'target'] + 
+             [c for c in test.columns if (c.startswith('pred_fold'))]].query('target > .5').head(10))
+
+submission = pd.read_csv(database_base_path + 'sample_submission.csv')
+submission['target'] = test['target']
+
+fig = plt.subplots(figsize=(20, 6))
+plt.hist(submission['target'], bins=100)
+plt.title('Preds', size=18)
+plt.show()
+
+display(submission.head(10))
+display(submission.describe())
+
+submission[['image_name', 'target']].to_csv('submission.csv', index=False)

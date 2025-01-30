@@ -1,0 +1,220 @@
+%matplotlib inline
+import numpy as np
+import pandas as pd
+import random
+import matplotlib.pyplot as plt
+
+from sklearn.model_selection import train_test_split
+
+from sklearn.model_selection import cross_val_score
+from sklearn.ensemble import AdaBoostClassifier
+from sklearn import tree
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import roc_curve, auc
+
+from sklearn import tree
+
+from sklearn.metrics import roc_curve, auc
+#from sklearn.preprocessing import LabelBinarizer
+
+from pandas.tseries.offsets import *
+
+import time
+
+
+#from graphviz import Source
+
+n_series = 6
+start_date = '2017-08-01 00:00:00'
+end_date = '2017-08-07 23:59:59'
+
+# regular behaviour
+max_noise_amplitude = 0.05 # all the timeseries will have values between 0 and 1
+
+# anomalies
+p_anomaly = 10E-6
+max_anomaly_duration = 4*3600 # 4 h
+
+# tuning parameters
+cut = 0.55
+window = 24
+
+dti=pd.DatetimeIndex(start=start_date,end=end_date, freq='s')
+n_timesteps = len(dti)
+df = pd.DataFrame()
+for s in range(n_series):
+    v = np.random.normal(random.random()/2, max_noise_amplitude/random.randint(1, 8), n_timesteps) 
+    df['link '+str(s)] = pd.Series(v)
+df['Flag']=0
+df['auc_score']=0.5
+df.index = dti
+df.head()
+
+to_generate = int(n_timesteps * p_anomaly)
+for a in range(to_generate):
+    affects = random.sample(range(n_series), random.randint(1, n_series))
+    duration = int(max_anomaly_duration * random.random())
+    start = int(n_timesteps * random.random())
+    end = min(start+duration, n_timesteps)
+    print('affected:', affects, df.iloc[start].name, df.iloc[end].name)
+    for s in affects:
+        df.iloc[start:end,s] = df.iloc[start:end,s] + random.random() * 0.2
+    df.iloc[start:end,n_series]=1
+        
+
+df[df<0] = 0
+df[df>1] = 1
+
+#df.plot(figsize=(20,7))
+fig = plt.figure(figsize=(20,7))
+plt.plot(df)
+fig.suptitle('Simulated Data', fontsize=20)
+plt.xlabel('Time', fontsize=18)
+plt.ylabel('Variance in Data', fontsize=16)
+plt.legend(df)
+
+#plt.figure(figsize=[16, 17])
+#gs = gridspec.GridSpec(4, 1)
+
+#ax2.plot(df)
+#ax2.set_xlabel('time')
+#ax2.set_ylabel('variance in data')
+#ax2.legend()
+
+#plt.show()
+
+print(df['auc_score'])
+
+print(df)
+
+def check_for_anomaly(ref, sub):
+    
+    y_ref = pd.Series([0] * ref.shape[0])
+    X_ref = ref
+    #print("y_ref before: ", y_ref)
+    #print("x_ref before: ", x_ref)
+    del X_ref['Flag']
+    del X_ref['auc_score']
+    #print("x_ref after: ", X_ref)
+    
+    y_sub = pd.Series([1] * sub.shape[0])
+    X_sub=sub
+    #print("y_sub before: ", y_sub)
+    #print("x_sub before: ", X_sub)
+    del X_sub['Flag']
+    del X_sub['auc_score']
+    #print("X_sub after: ", X_sub)
+    
+    # separate Reference and Subject into Train and Test
+    X_ref_train, X_ref_test, y_ref_train, y_ref_test = train_test_split(X_ref, y_ref, test_size=0.3, random_state=42)
+    X_sub_train, X_sub_test, y_sub_train, y_sub_test = train_test_split(X_sub, y_sub, test_size=0.3, random_state=42)
+    
+    # combine training ref and sub samples
+    X_train = pd.concat([X_ref_train, X_sub_train])
+    y_train = pd.concat([y_ref_train, y_sub_train])
+
+    # combine testing ref and sub samples
+    X_test = pd.concat([X_ref_test, X_sub_test])
+    y_test = pd.concat([y_ref_test, y_sub_test])
+    
+#     dtc=DecisionTreeClassifier()
+    clf = AdaBoostClassifier(base_estimator=DecisionTreeClassifier(max_depth=6)) #dtc
+#     clf = AdaBoostClassifier(DecisionTreeClassifier(max_depth=1),algorithm="SAMME",n_estimators=200)
+    
+    #train an AdaBoost model to be able to tell the difference between the reference and subject data
+    clf.fit(X_train, y_train) 
+
+    #Predict using the combined test data
+    y_predict = clf.predict(X_test)
+    
+    # scores = cross_val_score(clf, X, y)
+    # print(scores)
+    
+    fpr, tpr, thresholds = roc_curve(y_test, y_predict) # calculate the false positive rate and true positive rate
+    auc_score = auc(fpr, tpr) #calculate the AUC score
+    print ("auc_score = ", auc_score, "\tfeature importances:", clf.feature_importances_)
+    
+    if auc_score > cut: 
+        plot_roc(fpr, tpr, auc_score)
+        #filename='tree_'+sub.index.min().strftime("%Y-%m-%d_%H")
+        #tree.export_graphviz(clf.estimators_[0] , out_file=filename +'_1.dot') 
+        #tree.export_graphviz(clf.estimators_[1] , out_file=filename +'_2.dot') 
+        
+    return auc_score
+
+def plot_roc(fpr,tpr, roc_auc):
+    plt.figure()
+    plt.plot(fpr, tpr, color='darkorange', label='ROC curve (area = %0.2f)' % roc_auc)
+    plt.plot([0, 1], [0, 1], color='navy', linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.plot([0, 1], [0, 1], linestyle='--', color='r',label='Luck', alpha=.8)
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver operating characteristic')
+    plt.legend(loc="lower right")
+    plt.show()
+
+start = df.index.min()
+end = df.index.max()
+
+#print(df)
+
+print(df.index)
+
+start_time = time.time()
+
+#find min and max timestamps
+
+start = df.index.min()
+end = df.index.max()
+
+#round start 
+start.seconds=0
+start.minutes=0
+
+ref = window * Hour()
+sub = 1 * Hour()
+
+# loop over them
+ti=start+ref+sub
+count=0
+while ti < end + 1 * Minute():
+    ref_start = ti-ref-sub
+    ref_end = ti-sub
+    ref_df = df[(df.index >= ref_start) & (df.index < ref_end)]
+    #print("In while loop: ref_df: ", ref_df)
+    sub_df = df[(df.index >= ref_end) & (df.index < ti)]
+    #print("In while loop: sub_df: ", sub_df)
+    auc_score = check_for_anomaly(ref_df, sub_df)
+    df.loc[(df.index>=ref_end) & (df.index<=ti),['auc_score']] = auc_score
+    #print(ti,"\trefes:" , ref_df.shape[0], "\tsubjects:", sub_df.shape[0], '\tauc:', auc_score)
+    ti = ti + sub
+    count=count+1
+    #if count>2: break
+    
+
+
+print("--- %s seconds ---" % (time.time() - start_time))
+
+print(start)
+print(end)
+
+#df.plot(figsize=(20,7))
+
+df.plot(figsize=(20,7))
+plt.xlabel('Time', fontsize=18)
+plt.ylabel('Variance in Data', fontsize=16)
+plt.legend(df)
+
+fig, ax = plt.subplots(figsize=(20,7))
+df.loc[:,'Detected'] = 0
+df.loc[df.auc_score>0.55,'Detected']=1
+df.head()
+ax.plot(df.Flag, 'r')
+ax.plot(df.auc_score,'g')
+ax.fill( df.Detected, 'b', alpha=0.3)
+ax.legend(loc='upper left')
+plt.xlabel('Time', fontsize=18)
+plt.ylabel('AUC score', fontsize=16)
+plt.show()

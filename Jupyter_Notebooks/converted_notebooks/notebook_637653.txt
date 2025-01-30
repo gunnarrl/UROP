@@ -1,0 +1,185 @@
+from IPython.display import set_matplotlib_formats
+set_matplotlib_formats('retina')
+
+import numpy as np
+import matplotlib.pyplot as plt
+from pylab import rcParams
+import seaborn as sns
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.utils.data.dataloader as dataloader
+import torch.optim as optim
+
+from torch.utils.data import TensorDataset
+from torch.autograd import Variable
+from torchvision import transforms
+from torchvision.datasets import MNIST
+
+from sklearn import metrics
+
+%matplotlib inline
+
+rcParams['figure.figsize'] = 14, 8
+
+sns.set(style='whitegrid', palette='muted', font_scale=2)
+
+train = MNIST('./data', train=True, download=True, transform=transforms.Compose([
+    transforms.ToTensor(), # ToTensor does min-max normalization. 
+]), )
+
+test = MNIST('./data', train=False, download=True, transform=transforms.Compose([
+    transforms.ToTensor(), # ToTensor does min-max normalization. 
+]), )
+
+
+dataloader_args = dict(shuffle=True, batch_size=64,num_workers=1)
+train_loader = dataloader.DataLoader(train, **dataloader_args)
+test_loader = dataloader.DataLoader(test, **dataloader_args)
+
+train.train_data.size()
+
+test.test_data.size()
+
+train.train_data[0] # .numpy().flatten()
+
+def show_digit(digit):
+    plt.imshow(digit.view(28, 28).numpy(), cmap='gray')
+
+show_digit(train.train_data[0])
+
+train_data = train.train_data
+train_data = train.transform(train_data.numpy())
+
+print('[Train]')
+print(' - Numpy Shape:', train.train_data.cpu().numpy().shape)
+print(' - Tensor Shape:', train.train_data.size())
+print(' - Transformed Shape:', train_data.size())
+print(' - min:', torch.min(train_data))
+print(' - max:', torch.max(train_data))
+print(' - mean:', torch.mean(train_data))
+print(' - std:', torch.std(train_data))
+print(' - var:', torch.var(train_data))
+
+class Model(nn.Module):
+
+    def __init__(self):
+        super(Model, self).__init__()
+        self.l1 = nn.Linear(784, 520)
+        self.l2 = nn.Linear(520, 320)
+        self.l3 = nn.Linear(320, 240)
+        self.l4 = nn.Linear(240, 120)
+        self.l5 = nn.Linear(120, 10)
+
+    def forward(self, x):
+        x = x.view(-1, 784)  # Flatten the data (n, 1, 28, 28)-> (n, 784)
+        x = F.relu(self.l1(x))
+        x = F.relu(self.l2(x))
+        x = F.relu(self.l3(x))
+        x = F.relu(self.l4(x))
+        return self.l5(x)
+
+model = Model()
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+train_loss = []
+test_loss = []
+
+
+for epoch in range(15):
+    model.train()
+    e_train_loss = []
+    for batch_idx, (data, target) in enumerate(train_loader):
+        
+        data, target = Variable(data), Variable(target)
+        
+        optimizer.zero_grad()
+
+        y_pred = model(data) 
+
+        loss = criterion(y_pred, target)
+        e_train_loss.append(loss.data[0])
+        
+        # Backpropagation
+        loss.backward()
+        optimizer.step()
+        
+    mean_train_loss = np.mean(e_train_loss)
+    train_loss.append(mean_train_loss)
+        
+        
+        
+    model.eval()
+    e_test_loss = []
+    correct = 0
+    for data, target in test_loader:
+        data, target = Variable(data, volatile=True), Variable(target)
+        output = model(data)
+        
+        loss = criterion(output, target).data[0]
+        e_test_loss.append(loss)
+        
+        # get the index of the max
+        pred = output.data.max(1, keepdim=True)[1]
+        correct += pred.eq(target.data.view_as(pred)).cpu().sum()
+    
+    mean_test_loss = np.mean(e_test_loss)
+    test_loss.append(mean_test_loss)
+    
+    print(f"""
+    ######### Epoch {epoch + 1} #########\n
+    average train loss: {mean_train_loss}
+    average test loss: {mean_test_loss}
+    test accuracy: {correct}/{len(test_loader.dataset)} {100. * correct / len(test_loader.dataset)}%
+""")
+
+plt.figure(figsize=(16, 8))
+
+plt.plot(train_loss, "b", label="Train loss")
+
+plt.plot(test_loss, "g", label="Test loss")
+
+plt.title("Loss change during training")
+plt.legend(loc='upper right', shadow=True)
+plt.ylabel('Loss')
+plt.xlabel('Training Epoch')
+plt.ylim(0)
+
+plt.show();
+
+model.eval()
+
+ys = []
+y_hats = []
+
+for data, target in test_loader:
+    data= Variable(data, volatile=True)
+    output = model(data)
+
+    pred = output.data.max(1, keepdim=True)[1].numpy().flatten()
+    
+    y_hats.extend(pred)
+    ys.extend(target)
+
+confusion_matrix = metrics.confusion_matrix(ys, y_hats)
+
+plt.figure(figsize=(16, 14))
+sns.heatmap(confusion_matrix, annot=True, fmt="d")
+plt.title("Digit missclasification matrix")
+plt.ylabel('True label')
+plt.xlabel('Predicted label')
+plt.show();
+
+show_digit(test.test_data[0])
+
+test.test_labels[0]
+
+model.eval()
+
+data= Variable(test.test_data[0].float(), volatile=True)
+output = model(data)
+
+pred = output.data.max(1, keepdim=True)[1]
+pred

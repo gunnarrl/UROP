@@ -1,0 +1,131 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import random
+import math
+
+import tensorflow as tf
+
+model = tf.keras.Sequential([
+    tf.keras.layers.Dense(2, activation=tf.nn.sigmoid),
+    tf.keras.layers.Dense(1, activation=tf.nn.sigmoid)
+])
+
+# model = tf.keras.Sequential([
+#     tf.keras.layers.Dense(3, activation=tf.nn.sigmoid),
+#     tf.keras.layers.Dense(4, activation=tf.nn.sigmoid),
+#     tf.keras.layers.Dense(1, activation=tf.nn.sigmoid)
+# ])
+
+model.compile(optimizer=tf.keras.optimizers.SGD(lr=0.1),
+              loss='binary_crossentropy',
+              metrics=['accuracy'])
+
+# model.compile(optimizer=tf.keras.optimizers.RMSprop(lr=0.1),
+#               loss='binary_crossentropy',
+#               metrics=['accuracy'])
+
+def createSamples(list1, list2, label, bias = False):
+    random.shuffle(list1)
+    random.shuffle(list2)
+    tmp = []
+    for p1, p2 in zip(list1, list2):
+        if bias:
+            tmp.append([p1, p2, 1, label])
+        else:
+            tmp.append([p1, p2, label])
+    return tmp
+
+qte_sample = 30
+itemsx = []
+itemsy = []
+
+for i in range(qte_sample):
+    itemsy.append(random.random()*5+5)
+    itemsx.append(random.random()*15)
+
+rosas = createSamples(itemsx, itemsy, 0, True)
+
+qte_sample = 30
+itemsx = []
+itemsy = []
+
+for i in range(qte_sample):
+    itemsy.append(random.random()*5)
+    itemsx.append(random.random()*15+15)
+    
+violetas = createSamples(itemsx, itemsy, 1, True)
+
+points = np.array(rosas + violetas)
+
+np.take(points,np.random.permutation(points.shape[0]),axis=0,out=points)
+
+# 2 is bias
+valor = points[:,3]
+points = points[:,[0,1]]
+# Normalizando
+points[:,0] *= 1/30
+points[:,1] *= 1/10
+
+
+points = np.array([[1,0],[0,0],[0,1],[1,1]])
+valor = np.array([[1],[0],[1],[0]])
+
+def predict(X):
+    pred = model.predict(X)
+    return pred[0][0]
+
+predict(np.array([[1,1]]))
+
+def visualiza(points, valor, zero1=False):
+    img = np.ones((300, 400)) 
+    # grab the image dimensions
+    w = img.shape[0]
+    h = img.shape[1]
+
+    # loop over the image, pixel by pixel
+    for x in range(0, w):
+        for y in range(0, h):
+            # threshold the pixel
+            img[x][y] = predict(np.array([[x/w, y/h]]))
+    
+    plt.imshow(img, origin='lower')
+    plt.colorbar()
+    for x, y in zip(points,valor):
+        if y == 1:
+            plt.scatter(x=x[0]*h, y=x[1]*w, c='r', s=40)
+        else:
+            plt.scatter(x=x[0]*h, y=x[1]*w, c='b', s=40)
+    plt.show()
+    
+    
+    if zero1:
+        for x in range(0, w):
+            for y in range(0, h):
+                # threshold the pixel
+#                 print(predict([x/w, y/h]), (predict([x/w, y/h]) > 0.5))
+                if (img[x][y] > 0.5):
+                    img[x][y] = 1
+                else:
+                    img[x][y] = 0 
+    plt.imshow(img, origin='lower')
+    plt.colorbar()
+    for x, y in zip(points,valor):
+        if y == 1:
+            plt.scatter(x=x[0]*h, y=x[1]*w, c='r', s=40)
+        else:
+            plt.scatter(x=x[0]*h, y=x[1]*w, c='b', s=40)
+    plt.show()
+    
+
+visualiza(points, valor, True)
+
+model.fit(points, valor, epochs=5000)
+
+visualiza(points, valor, True)
+
+for layer in model.layers:
+    weights, biases = layer.get_weights()
+    print(weights)
+    print("-------")
+    print(biases)
+    print("-------")

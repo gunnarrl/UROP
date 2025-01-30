@@ -1,0 +1,136 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import warnings
+warnings.filterwarnings('ignore')
+from sklearn import preprocessing
+import tensorflow as tf
+%matplotlib inline
+import sklearn
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler
+df=pd.read_csv('45 channel 1sec beta-deltapower with label.csv')
+
+
+print('Number of rows and columns:', df.shape)
+df.head(5)
+
+
+print(df.columns)
+
+new_names = {'0.49674':'a', '0.27869':'b', '0.36769':'c', '0.15285':'cd', '0.1606':'d','0.1328':'de','0.17606':'e','0.3842':'f','0.19877':'g',
+       '0.17507':'l', '0.10564':'m', '0.3156':'n', '0.14643':'o', '0.10827':'p','1.2166':'q', '0.073472':'r',
+       '0.037876':'s', '0.26714':'t', '0.49989':'u', '0.094403':'v', '0.037798':'w', '0.0073178':'x', '0.6007':'y',
+       '2.22':'z', '0.13759':'aa', '0.22783':'bb', '2.3247':'cc', '3.8245':'dd', '0.16294':'ee',
+       '2.7036':'ff', '0.18483':'gg', '0.16376':'hh', '0.13955':'ii', '0.16332':'jj', '0.21231':'kk',
+       '0.85415':'ll', '0.026382':'mm', '0.47723':'nn', '0.49575':'oo', '0.020878':'pp', '0.56216':'qq',
+       '0.072675':'rr','0.012301':'j','0.14811':'ss','0.17573':'tt','1.3432':'uu','0.17928':'vv','0.10368':'ww','0.15127':'xx',
+       '0.20969':'k','0.96803':'h','1':'labels'}
+df= df.rename(index=str, columns=new_names)
+
+
+df.info()
+
+
+pd.set_option('display.max_columns', None)
+print(df.describe())
+
+
+
+data = df.iloc[:,:-1].values.tolist()
+target = df.iloc[:,-1].tolist()
+
+from sklearn import preprocessing
+from sklearn.model_selection import train_test_split
+x =df[df.columns[:98]]
+y =df.labels
+x_train, x_test, y_train, y_test = train_test_split(x, y , train_size = 0.7, random_state =  90)
+
+train_norm = x_train[x_train.columns[0:20]]
+test_norm = x_test[x_test.columns[0:20]]
+
+std_scale = preprocessing.StandardScaler().fit(train_norm)
+x_train_norm = std_scale.transform(train_norm)
+
+training_norm_col = pd.DataFrame(x_train_norm, index=train_norm.index, columns=train_norm.columns) 
+x_train.update(training_norm_col)
+print (x_train.head())
+
+x_test_norm = std_scale.transform(test_norm)
+testing_norm_col = pd.DataFrame(x_test_norm, index=test_norm.index, columns=test_norm.columns) 
+x_test.update(testing_norm_col)
+print (x_train.head())
+
+import numpy
+from sklearn.svm import SVC
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import accuracy_score
+
+def svm_classifier(): 
+    file_x = '45 channel 1sec beta-deltapower.csv'
+    file_y = 'Label.csv'
+    
+    X = data
+    y = target
+    # Split the data into training/testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.6, random_state=42)
+   
+    	
+
+     # Feature Scaling
+    from sklearn.preprocessing import StandardScaler
+    sc = StandardScaler()
+    X_train = sc.fit_transform(X_train)    
+    X_test = sc.transform(X_test)
+
+    # SVM Classifier
+    clf = SVC(kernel = 'rbf', random_state = 50)
+    clf.fit(X_train, y_train)
+    y_predict = clf.predict(X_test)
+    cm = confusion_matrix(y_test, y_predict)
+    print(cm)
+    print("Accuracy score : ")
+    print(accuracy_score(y_test, y_predict)*100)
+    
+if __name__ == '__main__':
+    svm_classifier()
+
+import numpy as np
+from keras.models import Sequential
+from keras.layers import Dense, Dropout
+
+model = Sequential()
+model.add(Dense(64, input_dim=91, activation='relu'))
+model.add(Dropout(0.5))
+model.add(Dense(64, activation='relu'))
+model.add(Dense(1, activation='sigmoid'))
+
+model.compile(loss='binary_crossentropy',
+              optimizer='rmsprop',
+              metrics=['accuracy'])
+
+model.fit(x_train, y_train,
+          epochs=25,
+          batch_size=128)
+score = model.evaluate(x_test, y_test, batch_size=128)
+
+from keras.models import Sequential
+from keras.layers import Dense, Dropout
+from keras.layers import Embedding
+from keras.layers import LSTM
+
+max_features = 30000
+
+model = Sequential()
+model.add(Embedding(max_features, output_dim=256))
+model.add(LSTM(128))
+model.add(Dropout(0.5))
+model.add(Dense(1, activation='sigmoid'))
+
+model.compile(loss='binary_crossentropy',
+              optimizer='rmsprop',
+              metrics=['accuracy'])
+
+model.fit(x_train, y_train, batch_size=20, epochs=2)
+score = model.evaluate(x_test, y_test, batch_size=20)

@@ -1,0 +1,113 @@
+%load_ext autoreload
+%autoreload 2
+
+# plot the predicted values and actual values (for the test data)
+def plot_result(test_df, pred_df):
+    # target column of dataframe is "value"
+    # past sequence length is 50
+    pred_value = pred_df["value"].values
+    true_value = test_df["value"].values[50:]
+    fig, axs = plt.subplots()
+
+    axs.plot(pred_value,color='red', label='predicted values')
+    axs.plot(true_value,color='blue', label='actual values')
+    axs.set_title('the predicted values and actual values (for the test data)')
+
+    plt.xlabel('test data index')
+    plt.ylabel('number of taxi passengers')
+    plt.legend(loc='upper left')
+    plt.show()
+
+import os
+import pandas as pd
+import numpy as np
+
+import matplotlib
+matplotlib.use('Agg')
+%pylab inline
+import seaborn
+import matplotlib.dates as md
+from matplotlib import pyplot as plt
+
+# load nyc taxi data
+from zoo.automl.common.util import load_nytaxi_data_df
+train_df, val_df, test_df = load_nytaxi_data_df(val_split_ratio=0.1, test_split_ratio=0.1)
+
+train_df.describe()
+
+train_df.head(5)
+
+# shape of the dataframe
+print("The shape of train_df is", train_df.shape)
+print("The shape of val_df is", val_df.shape)
+print("The shape of test_df is", test_df.shape)
+
+# visualisation of anomaly throughout time in train_df
+from pandas.plotting import register_matplotlib_converters
+register_matplotlib_converters()
+
+fig, ax = plt.subplots(figsize=(12, 5))
+# pd.plotting.deregister_matplotlib_converters()
+
+ax.plot(train_df['datetime'], train_df['value'], color='blue', linewidth=0.6)
+ax.set_title('NYC taxi passengers throughout time')
+
+plt.xlabel('datetime')
+plt.xticks(rotation=45) 
+plt.ylabel('The Number of NYC taxi passengers')
+plt.legend(loc='upper left')
+plt.show()
+
+# build time sequence predictor
+from zoo.automl.regression.time_sequence_predictor import TimeSequencePredictor
+
+# you need to specify the name of datetime column and target column
+# The default names are "datetime" and "value" respectively.
+tsp = TimeSequencePredictor(dt_col="datetime",
+                            target_col="value",
+                            extra_features_col=None)
+
+%%time
+# fit train_df and validate with val_df, return the best trial as pipeline.
+# the default trail num is 10, need about 5.5 mins.
+pipeline = tsp.fit(train_df,
+                   validation_df=val_df,
+                   metric="mean_squared_error")
+print("Training completed.")
+
+# predict test_df with the best trial
+pred_df = pipeline.predict(test_df)
+
+pred_df.head(5)
+
+# prediction value start from 50
+test_df[50:55]
+
+# evaluate test_df
+mse, rs = pipeline.evaluate(test_df, metric=["mean_squared_error", "r_square"])
+print("Evaluate: the mean square error is", mse)
+print("Evaluate: the r_squared value is", rs)
+
+# plot the predicted values and actual values
+plot_result(test_df, pred_df)
+
+# save the pipeline with best trial
+saved_pipeline_file = "../../../saved_pipeline/"
+pipeline.save(saved_pipeline_file)
+
+# create a new pipeline and specify the pipeline path to restore
+from zoo.automl.pipeline.time_sequence import TimeSequencePipeline
+
+new_pipeline = TimeSequencePipeline()
+new_pipeline.restore(saved_pipeline_file)
+
+# you can do predict and evaluate again
+# to compare results before and after restore, we use test_df as input
+new_pred = new_pipeline.predict(test_df)
+
+new_pred.head(5)
+
+# evaluate test_df
+mse, rs = new_pipeline.evaluate(test_df, metric=["mean_squared_error", "r_square"])
+print("Evaluate: the mean square error is", mse)
+print("Evaluate: the r_square value is", rs)

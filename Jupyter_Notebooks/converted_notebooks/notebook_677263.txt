@@ -1,0 +1,310 @@
+import tensorflow as tf
+import numpy as np
+import keras
+import pandas as pd
+
+# Load the original data
+data_ori = pd.read_csv('tmdb_5000_movies.csv')
+# show data detail
+data_ori.head(3)
+
+# show columns dtypes
+data_ori.dtypes
+
+movies = data_ori
+import json
+import warnings
+warnings.filterwarnings('ignore')
+
+
+# changing the genres column from json to string
+movies['genres']=movies['genres'].apply(json.loads)
+for index,i in zip(movies.index,movies['genres']):
+    list1=[]
+    for j in range(len(i)):
+        list1.append((i[j]['name']))# the key 'name' contains the name of the genre
+    movies.loc[index,'genres']=str(list1)
+    
+# changing the keywords column from json to string
+movies['keywords']=movies['keywords'].apply(json.loads)
+for index,i in zip(movies.index,movies['keywords']):
+    list1=[]
+    for j in range(len(i)):
+        list1.append((i[j]['name']))
+    movies.loc[index,'keywords']=str(list1)
+    
+## changing the production_companies column from json to string
+movies['production_companies']=movies['production_companies'].apply(json.loads)
+for index,i in zip(movies.index,movies['production_companies']):
+    list1=[]
+    for j in range(len(i)):
+        list1.append((i[j]['name']))
+    movies.loc[index,'production_companies']=str(list1)
+    
+# changing the production_countries column from json to string    
+movies['production_countries']=movies['production_countries'].apply(json.loads)
+for index,i in zip(movies.index,movies['production_countries']):
+    list1=[]
+    for j in range(len(i)):
+        list1.append((i[j]['name']))
+    movies.loc[index,'production_countries']=str(list1)
+    
+# changing the spoken_languages column from json to string    
+movies['spoken_languages']=movies['spoken_languages'].apply(json.loads)
+for index,i in zip(movies.index,movies['spoken_languages']):
+    list1=[]
+    for j in range(len(i)):
+        list1.append((i[j]['name']))
+    movies.loc[index,'production_countries']=str(list1)   
+
+data_ori.head(3)
+
+# here are multiple methods, I go with my original way which is cumbersome but striaght forward
+
+data_ori.columns
+
+columns = data_ori.columns
+type(columns)
+
+columns = list(data_ori)
+type(columns)
+
+# remove colmuns that is not float
+for col in columns:
+    if type(col) != float:
+        columns.remove(col)
+
+columns
+
+# here we see some columns of type object are stil there, I don't know why. We try another method
+data=data_ori.select_dtypes(exclude='object')
+data.head(3)
+
+# here we choose columns that we want
+features=['popularity','revenue','vote_average']
+label=['label']
+
+# we change budget to float
+data['budget']=data['budget']+0.0
+data['revenue']=data['revenue']+0.0
+data.head(1)
+
+# then we change label values according to their original value
+def change(i):
+    if i<=5.6:
+        i=0.0
+    if i>5.6 and i<=6.2:
+        i=1.0
+    if i>6.2 and i<=6.8:
+        i=2.0
+    if i>6.8:
+        i=3.0
+    return i
+data[label]=data[['vote_average']].applymap(lambda x : change(x))
+data[label].head(1)        
+
+
+data[label].describe()
+
+data.head(1)
+
+feature_data = data[features]
+feature_data.head(1)
+
+
+label_data=data[label]
+label_data.head(1)
+
+# split shuffled data
+trainingfeatures= feature_data[:4000]
+traininglabels=label_data[:4000]
+testingfeatures= feature_data[4000:]
+testinglabels=label_data[4000:]
+dfs = [trainingfeatures,traininglabels,testingfeatures,testinglabels]
+
+# write to csv files
+names=['trainingfeatures','traininglabels','testingfeatures','testinglabels']
+for i in range(len(dfs)):
+    df = dfs[i]
+    name= names[i]+'.csv'
+    df.to_csv(path_or_buf=name)
+
+# get datasets
+x_train = pd.read_csv('trainingfeatures.csv').drop(columns=['Unnamed: 0'])
+y_train = pd.read_csv('traininglabels.csv').drop(columns=['Unnamed: 0'])
+x_test = pd.read_csv('testingfeatures.csv').drop(columns=['Unnamed: 0'])
+y_test = pd.read_csv('testinglabels.csv').drop(columns=['Unnamed: 0'])
+temp_x_train=[]
+
+for row in x_train.iterrows():
+    index, data = row
+    temp_x_train.append(data.tolist())
+temp_y_train=[]
+
+for row in y_train.iterrows():
+    index, data = row
+    temp_y_train.append(data.tolist())
+
+temp_x_test=[]
+
+for row in x_test.iterrows():
+    index, data = row
+    temp_x_test.append(data.tolist())
+temp_y_test=[]
+
+for row in y_test.iterrows():
+    index, data = row
+    temp_y_test.append(data.tolist())
+
+# Parameters
+learning_rate = 0.05
+num_steps = 10000
+batch_size = 1000
+display_step = 500
+
+# Network Parameters
+n_hidden_1 = 100 # 1st layer number of neurons
+n_hidden_2 = 50 # 2nd layer number of neurons
+n_hidden_3 = 20 # 3rd layer number of neurons
+num_input =  3 #  data input 
+num_classes = 4 #  total classes (0-3 digits)
+
+# tf Graph input
+X = tf.placeholder("float", [None, num_input])
+Y = tf.placeholder("float", [None, num_classes])
+
+# Store layers weight & bias
+weights = {
+    'h1': tf.Variable(tf.random_normal([num_input, n_hidden_1])),
+    'h2': tf.Variable(tf.random_normal([n_hidden_1, n_hidden_2])),
+    'h3': tf.Variable(tf.random_normal([n_hidden_2,n_hidden_3])),
+    'out': tf.Variable(tf.random_normal([n_hidden_3, num_classes]))
+}
+biases = {
+    'b1': tf.Variable(tf.random_normal([n_hidden_1])),
+    'b2': tf.Variable(tf.random_normal([n_hidden_2])),
+    'b3': tf.Variable(tf.random_normal([n_hidden_3])),
+    'out': tf.Variable(tf.random_normal([num_classes]))
+}
+
+# Create model
+def neural_net(x):
+    # Hidden_1 fully connected layer 
+    layer_1 = tf.nn.softmax(tf.add(tf.matmul(x, weights['h1']), biases['b1']))
+    # Hidden_2 fully connected layer 
+    layer_2 = tf.nn.relu(tf.add(tf.matmul(layer_1, weights['h2']), biases['b2']))
+    #Hidden_3 fully connected layer  
+    layer_3 = tf.nn.relu(tf.add(tf.matmul(layer_2, weights['h3']), biases['b3']))
+    # Output fully connected layer with a neuron for each class
+    out_layer = tf.matmul(layer_3, weights['out']) + biases['out']
+    return out_layer
+
+# Construct model
+logits = neural_net(X)
+
+# Define loss and optimizer
+loss_op = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
+    logits=logits, labels=Y))
+tf.summary.scalar('loss',loss_op)
+optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
+train_op = optimizer.minimize(loss_op)
+
+# Evaluate model (with test logits, for dropout to be disabled)
+correct_pred = tf.equal(tf.argmax(logits, 1), tf.argmax(Y, 1))
+accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
+tf.summary.scalar('acuracy',accuracy)
+
+# Initialize the variables (i.e. assign their default value)
+init = tf.global_variables_initializer()
+    
+x= np.array(temp_x_train)
+
+y=np.array(keras.utils.to_categorical(y_train))
+dataset = tf.data.Dataset.from_tensor_slices((x,y))
+iter = dataset.make_one_shot_iterator()
+
+# Define a batch method
+def next_batch(num, data, labels):
+    '''
+    Return a total of `num` random samples and labels. 
+    '''
+    idx = np.arange(0 , len(data))
+    np.random.shuffle(idx)
+    idx = idx[:num]
+    data_shuffle = [data[ i] for i in idx]
+    labels_shuffle = [labels[ i] for i in idx]
+
+    return np.asarray(data_shuffle), np.asarray(labels_shuffle)
+
+# Start training
+with tf.Session() as sess:
+
+    # Run the initializer
+    sess.run(init)
+    merge_summary= tf.summary.merge_all()
+    writer = tf.summary.FileWriter('C:/Users/BoyangWei.LAPTOP-SRSNTDRH/7390/TensorFlow/files/1')
+    writer.add_graph(sess.graph)
+    for step in range(1, num_steps+1):
+        batch_x,batch_y=(x,y)
+        # Run optimization op (backprop)
+        sess.run(train_op, feed_dict={X: batch_x, Y: batch_y})
+        if step % display_step == 0 or step == 1:
+            # Calculate batch loss and accuracy
+            loss, acc = sess.run([loss_op, accuracy], feed_dict={X: batch_x,Y: batch_y})
+            summary=sess.run(merge_summary,feed_dict={X: batch_x,Y: batch_y})
+            writer.add_summary(summary,step)
+            print("Step " + str(step) + ", Minibatch Loss= " + \
+                  "{:.4f}".format(loss) + ",Accuracy= " + \
+                  "{:.3f}".format(acc))
+
+    print("Optimization Finished!")
+    pred = logits  
+    correct_prediction = tf.equal(tf.argmax(pred, 1), tf.argmax(Y, 1))
+    # Calculate accuracy
+    accuracy = tf.reduce_mean(tf.cast(correct_prediction, "float"))
+    print("Test ccuracy:", accuracy.eval({X: np.array(temp_x_test), Y: np.array(keras.utils.to_categorical(y_test))}))
+
+x.shape
+
+y
+
+EPOCHS = 10000
+BATCH_SIZE = 1000
+display_step = 500
+X = tf.placeholder("float", [None, num_input])
+Y = tf.placeholder("float", [None, num_classes])
+# using two numpy arrays
+features, labels = (X, Y)
+# make a simple model
+def Neuron(x):
+    net = tf.layers.dense(x, 100, activation=tf.tanh) # pass the first value 
+    #from iter.get_next() as input
+    net = tf.layers.dense(net, 50, activation=tf.nn.relu)
+    net = tf.layers.dense(net, 20, activation=tf.nn.softmax)
+    prediction = tf.layers.dense(net, 4)
+    return prediction
+prediction = Neuron(X)
+
+# loss fuction
+loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
+    logits=prediction, labels=Y)) 
+
+# prepare accuracy
+correct_pred = tf.equal(tf.argmax(prediction, 1), tf.argmax(Y, 1))
+accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
+
+# optimaze function
+train_op = tf.train.AdamOptimizer().minimize(loss)
+
+# start to train and test
+with tf.Session() as sess:
+    sess.run(tf.global_variables_initializer())
+    sess.run(tf.local_variables_initializer())
+    for i in range(EPOCHS):
+        _, loss_value,acc_value = sess.run([train_op, loss,accuracy],feed_dict={X: x, Y: y})
+        if i% display_step == 0:
+            print("Iter: {}, Loss: {:.4f}".format(i+1, loss_value)) 
+            print("Accurancy: " +str(acc_value))
+    correct_pred = tf.equal(tf.argmax(prediction, 1), tf.argmax(Y, 1))
+    accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
+    print("Test accuracy: "+ str(accuracy.eval({X: np.array(temp_x_test), Y: np.array(keras.utils.to_categorical(y_test))})))

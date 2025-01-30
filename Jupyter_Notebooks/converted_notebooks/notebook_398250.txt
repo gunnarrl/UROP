@@ -1,0 +1,188 @@
+# we assume that we have the dynet module in your path.
+import dynet as dy
+
+# create a parameter collection and add the parameters.
+m = dy.ParameterCollection()
+W = m.add_parameters((8,2))
+V = m.add_parameters((1,8))
+b = m.add_parameters((8))
+
+dy.renew_cg() # new computation graph. not strictly needed here, but good practice.
+
+
+#b[1:-1].value()
+b.value()
+
+
+x = dy.vecInput(2) # an input vector of size 2. Also an expression.
+output = dy.logistic(V*(dy.tanh((W*x)+b)))
+
+
+# we can now query our network
+x.set([0,0])
+output.value()
+
+
+# we want to be able to define a loss, so we need an input expression to work against.
+y = dy.scalarInput(0) # this will hold the correct answer
+loss = dy.binary_log_loss(output, y)
+
+x.set([1,0])
+y.set(0)
+print(loss.value())
+
+y.set(1)
+print(loss.value())
+
+
+trainer = dy.SimpleSGDTrainer(m)
+
+x.set([1,0])
+y.set(1)
+loss_value = loss.value() # this performs a forward through the network.
+print("the loss before step is:",loss_value)
+
+# now do an optimization step
+loss.backward()  # compute the gradients
+trainer.update()
+
+# see how it affected the loss:
+loss_value = loss.value(recalculate=True) # recalculate=True means "don't use precomputed value"
+print("the loss after step is:",loss_value)
+
+
+def create_xor_instances(num_rounds=2000):
+    questions = []
+    answers = []
+    for round in range(num_rounds):
+        for x1 in 0,1:
+            for x2 in 0,1:
+                answer = 0 if x1==x2 else 1
+                questions.append((x1,x2))
+                answers.append(answer)
+    return questions, answers 
+
+questions, answers = create_xor_instances()
+
+total_loss = 0
+seen_instances = 0
+for question, answer in zip(questions, answers):
+    x.set(question)
+    y.set(answer)
+    seen_instances += 1
+    total_loss += loss.value()
+    loss.backward()
+    trainer.update()
+    if (seen_instances > 1 and seen_instances % 100 == 0):
+        print("average loss is:",total_loss / seen_instances)
+
+
+x.set([0,1])
+print("0,1",output.value())
+
+x.set([1,0])
+print("1,0",output.value())
+
+x.set([0,0])
+print("0,0",output.value())
+
+x.set([1,1])
+print("1,1",output.value())
+
+
+W.value()
+
+V.value()
+
+b.value()
+
+# define the parameters
+m = dy.ParameterCollection()
+W = m.add_parameters((8,2))
+V = m.add_parameters((1,8))
+b = m.add_parameters((8))
+
+# renew the computation graph
+dy.renew_cg()
+
+# create the network
+x = dy.vecInput(2) # an input vector of size 2.
+output = dy.logistic(V*(dy.tanh((W*x)+b)))
+# define the loss with respect to an output y.
+y = dy.scalarInput(0) # this will hold the correct answer
+loss = dy.binary_log_loss(output, y)
+
+# create training instances
+def create_xor_instances(num_rounds=2000):
+    questions = []
+    answers = []
+    for round in range(num_rounds):
+        for x1 in 0,1:
+            for x2 in 0,1:
+                answer = 0 if x1==x2 else 1
+                questions.append((x1,x2))
+                answers.append(answer)
+    return questions, answers 
+
+questions, answers = create_xor_instances()
+
+# train the network
+trainer = dy.SimpleSGDTrainer(m)
+
+total_loss = 0
+seen_instances = 0
+for question, answer in zip(questions, answers):
+    x.set(question)
+    y.set(answer)
+    seen_instances += 1
+    total_loss += loss.value()
+    loss.backward()
+    trainer.update()
+    if (seen_instances > 1 and seen_instances % 100 == 0):
+        print("average loss is:",total_loss / seen_instances)
+
+
+
+import dynet as dy
+# create training instances, as before
+def create_xor_instances(num_rounds=2000):
+    questions = []
+    answers = []
+    for round in range(num_rounds):
+        for x1 in 0,1:
+            for x2 in 0,1:
+                answer = 0 if x1==x2 else 1
+                questions.append((x1,x2))
+                answers.append(answer)
+    return questions, answers 
+
+questions, answers = create_xor_instances()
+
+# create a network for the xor problem given input and output
+def create_xor_network(W, V, b, inputs, expected_answer):
+    dy.renew_cg() # new computation graph
+    x = dy.vecInput(len(inputs))
+    x.set(inputs)
+    y = dy.scalarInput(expected_answer)
+    output = dy.logistic(V*(dy.tanh((W*x)+b)))
+    loss =  dy.binary_log_loss(output, y)
+    return loss
+
+m2 = dy.ParameterCollection()
+W = m2.add_parameters((8,2))
+V = m2.add_parameters((1,8))
+b = m2.add_parameters((8))
+trainer = dy.SimpleSGDTrainer(m2)
+
+seen_instances = 0
+total_loss = 0
+for question, answer in zip(questions, answers):
+    loss = create_xor_network(W, V, b, question, answer)
+    seen_instances += 1
+    total_loss += loss.value()
+    loss.backward()
+    trainer.update()
+    if (seen_instances > 1 and seen_instances % 100 == 0):
+        print("average loss is:",total_loss / seen_instances)
+
+

@@ -1,0 +1,138 @@
+# import necessary packages
+import os
+import re
+import pandas as pd
+import numpy as np
+import bz2                                       # for decompression of files
+
+from mw import xml_dump                          # need to pip install mediawiki-utilities beforehand
+from mw.xml_dump import Iterator
+import difflib
+
+# set options
+pd.options.display.max_colwidth = 50
+pd.set_option('display.max_colwidth', -1) 
+pd.options.mode.chained_assignment = None        # default='warn'
+
+def compute_diffs(orig_df):
+    transf_df = []
+    grouped_df = orig_df.groupby('PAGE_ID')                           # grouped data by page_id
+    for PAGE_ID,REVISION_ID in grouped_df:                                         
+        for i in range(1,len(REVISION_ID)):
+            revision1 = REVISION_ID.iloc[i-1,4]
+            revision2 = REVISION_ID.iloc[i,4]
+            revision1_split = revision1.splitlines(keepends=False)
+            revision2_split = revision2.splitlines(keepends=False)
+            diff = difflib.Differ()                                   # initiate the differ object
+            result = diff.compare(revision1_split,revision2_split)    # calculate difference
+            diff_text = []
+            for line in result:
+                if line.startswith("+"):                              # + means unique to second object
+                    diff_text.append(line)                            # if unique to second object; keep in second only
+                else:
+                    pass                                              # do nothing 
+            diff_text_val = " ".join(diff_text)                       # convert list object to string
+            REVISION_ID.iloc[i,7] = diff_text_val                     # dump val to DIFF_TEXT column
+            transf_df.append({'CONTRIBUTOR':REVISION_ID.iloc[i-1,0],
+                              'NAMESPACE':REVISION_ID.iloc[i-1,1],
+                              'PAGE_ID':REVISION_ID.iloc[i-1,2],
+                              'REVISION_ID':REVISION_ID.iloc[i-1,3],
+                              'TEXT':REVISION_ID.iloc[i-1,4],
+                              'TIMESTAMP':REVISION_ID.iloc[i-1,5],
+                              'TITLE':REVISION_ID.iloc[i-1,6],
+                              'DIFF_TEXT':REVISION_ID.iloc[i-1,7]})
+    transf_df = pd.DataFrame(transf_df)                              
+    transf_df = transf_df[['NAMESPACE','CONTRIBUTOR','TITLE',        # rearrange order of columns
+                           'PAGE_ID','REVISION_ID','TIMESTAMP',
+                           'TEXT','DIFF_TEXT']]                      
+    return transf_df                                                 # return transformed dataframe
+
+def xml_parse(xml_compressed_file):
+    dump = Iterator.from_file(bz2.BZ2File(xml_compressed_file))
+    df = []
+    # Iterate through pages
+    for page in dump:
+        [df.append({'PAGE_ID':page.id,'NAMEPSACE':page.namespace,
+                       'TITLE':page.title,'REVISION_ID':revision.id,
+                       'TIMESTAMP':revision.timestamp,'CONTRIBUTOR':revision.contributor,
+                       'TEXT':revision.text}) for revision in page if page.namespace in (1,3)]
+
+    wiki_df = pd.DataFrame(df)       
+    wiki_df.insert(7, 'DIFF_TEXT', '')                                        # add empty column for diff_text
+    wiki_df['TEXT'].replace('\.\s?(?![a-z])','.\n',regex=True,inplace=True)   # add linebreak after fullstop
+    wiki_df['TEXT'].replace("\[\[.*\]\]?","",regex=True,inplace=True)         # replace [[wordherelinkedbywiki]] 
+    wiki_df['TEXT'].replace('\n+','\n',regex=True,inplace=True)               # replace multilinebreaks with one linebreak
+
+    wiki_df_diff = compute_diffs(wiki_df)                                     # call to function compute_diffs()
+    
+    #dump txt files
+    header = ['NAMESPACE','CONTRIBUTOR','TITLE','PAGE_ID','REVISION_ID','TIMESTAMP','TEXT','DIFF_TEXT']
+    wiki_df_diff.to_csv(str(xml_compressed_file)[:-4] + ".txt", sep = '\t',encoding='utf-8',header = True,index=False)
+
+path = "/home/ec2-user/SageMaker/s3fs-fuse/bucket/wiki_trust/xml_dump/"                             
+file_list = [x for x in os.listdir("/home/ec2-user/SageMaker/s3fs-fuse/bucket/wiki_trust/xml_dump/") 
+             if x.endswith(".bz2") ]                                                
+
+for file in file_list[-20:-18]: # specific files
+    xml_compressed_file = str(path) + str(file)     
+    print(xml_compressed_file)
+
+for file in file_list[-20:-18]:
+    xml_compressed_file = str(path) + str(file)     # file to be parsed
+    xml_parse(xml_compressed_file)                  # call to function
+
+# for single file
+path = "/home/ec2-user/SageMaker/s3fs-fuse/bucket/wiki_trust/xml_dump/"                             
+file_list = [x for x in os.listdir("/home/ec2-user/SageMaker/s3fs-fuse/bucket/wiki_trust/xml_dump/") 
+             if x.endswith(".bz2") ]                                            
+
+xml_compressed_file = str(path) + str(file_list[-22]) # one specific file
+print(xml_compressed_file)
+
+# for single file
+xml_parse(xml_compressed_file) 
+
+dump = Iterator.from_file(bz2.BZ2File('/home/ec2-user/SageMaker/s3fs-fuse/bucket/wiki_trust/xml_dump/enwiki-20180901-pages-meta-history1.xml-p16229p18132.bz2'))
+df = []
+# Iterate through pages
+for page in dump:
+    [df.append({'PAGE_ID':page.id,'NAMEPSACE':page.namespace,
+                'TITLE':page.title,'REVISION_ID':revision.id,
+                'TIMESTAMP':revision.timestamp,'CONTRIBUTOR':revision.contributor,
+                'TEXT':revision.text}) for revision in page if page.namespace in (1,3)]
+
+
+wiki_df = pd.DataFrame(df)
+wiki_df = wiki_df.head(30)
+wiki_df.insert(7, 'DIFF_TEXT', '')  
+wiki_df['TEXT'].replace('\.\s?(?![a-z])','.\n',regex=True,inplace=True) # add linebreak after fullstop
+wiki_df['TEXT'].replace("\[\[.*\]\]?","",regex=True,inplace=True) # replace [[ericross]] not [[Wiki:China]]
+wiki_df['TEXT'].replace('\n+','\n',regex=True,inplace=True) # replace multilinebreaks with one linebreak
+#wiki_df.head()
+
+wiki_df_diff = compute_diffs(wiki_df)
+wiki_df_diff.head()
+
+revision1 = wiki_df_diff.iloc[0,6]
+revision2 = wiki_df_diff.iloc[1,6]
+
+print(revision1)
+
+print(revision2)
+
+revision1_split = revision1.splitlines(keepends=False)
+revision2_split = revision2.splitlines(keepends=False)
+diff = difflib.Differ()                             
+result = diff.compare(revision1_split,revision2_split)    
+diff_text = []
+for line in result:
+    if line.startswith("+"):                             
+        diff_text.append(line)                            
+    else:
+        pass                                              
+    diff_text_val = " ".join(diff_text)
+diff_text_val
+
+print(revision1_split)
+
+print(revision2_split)

@@ -1,0 +1,666 @@
+print(5)
+
+%softreset
+
+## eventio
+
+################################################################
+# @coroutine decorator
+
+def coroutine(func):
+    """Decorator for marking coroutines."""
+    class Awaitable:
+        pass
+    a = Awaitable()
+    a.__await__ = func
+
+    return a.__await__
+
+# helpers for type checking
+
+type_tuple = type((None,))
+type_coro  = type((lambda: (yield))())  # Generator type
+type_corof = type((lambda: (yield)))    # Generator function
+
+################################################################
+# @coroutine decorator
+# time support for sleep
+# we use 32-bit wrap-around ms time (utime)
+
+import utime
+import time
+
+from microcontroller import deepsleep
+
+################################################################
+# @coroutine decorator
+# Queues for ready and waiting tasks
+
+# ready queue - MUST BE INTERRUPT SAFE!
+# supposedly thread-safe: https://docs.python.org/2/library/collections.html
+
+# stores args and task one after the other (no args if None)
+# from collections import deque
+from atomic import FIFO
+
+# wait queue
+from utimeq import utimeq
+
+class defaultdict:
+    def __init__(self, default_factory):
+        self.dict = {}
+        self.default_factory = default_factory
+    def __getitem__(self, key):
+        try:
+            return self.dict[key]
+        except KeyError:
+            v = self.default_factory.copy()
+            self.dict[key] = v
+            return v
+    def __setitem__(self, key, v):
+        self.dict[key] = v
+
+## test FIFO
+
+f = FIFO(5)
+
+f.put("abc")
+print(f.get())
+
+## test defaultdict
+
+d = defaultdict([])
+print("d", d)
+print("a", d["a"])
+
+d["a"].append(1)
+print("a", d["a"])
+d["a"].append(2)
+print("a", d["a"])
+d["b"].append(3)
+
+print("a", d["a"])
+print("b", d["b"])
+
+
+## test ticks
+
+t1 = utime.ticks_ms()
+time.sleep(0.5)
+t2 = utime.ticks_ms()
+
+# these are the same only if there is no wrap around!
+
+print("t2-t1 = {:8d},   ticks_diff(t2, t1) = {:8d}".format(t2-t1, utime.ticks_diff(t2, t1)))
+print("t2+t1 = {:8d},   ticks_add (t2, t1) = {:8d}".format(t2+t1, utime.ticks_add (t2, t1)))
+
+## test deepsleep
+
+# for some (?) reason these sleeps come up short
+# in actual kernel it works perfectly
+
+from timer import Chronometer
+
+timeout = [ 0.005, 0.05, 0.5, 1, 5 ]
+
+c = Chronometer()
+for t in timeout:
+    c.reset()
+    dt = deepsleep(t)
+    print("sleep for {:5.3f} s   actual:  {:5.3f} s   chrono {:5.3f}   error {:10.3f} ms".format(
+        t, dt, c.elapsed_time, 1000*(t-dt)
+    ))
+
+## test tuple type
+
+check = [ (5, 3, 1), ("abc",), 55 ]
+for c in check:
+    ist = "not "
+    if isinstance(c, type_tuple): ist = ""
+    print("{:20s} is {}a tuple".format(str(c), ist))
+
+## test coro types
+
+@coroutine
+def spawn(task):
+    yield task
+
+@coroutine
+def nice():
+    yield
+
+def nicer():
+    yield
+
+async def hello(name):
+    await nice()
+    print("Hello,", name)
+
+lam = (lambda: (yield StopIteration(0)))()
+
+x = 5
+
+check = [
+    ("spawn", spawn),
+    ("nice", nice),
+    ("nice()", nice()),
+    ("nicer", nicer),
+    ("nicer()", nicer()),
+    ("hello", hello),
+    ("hello('fred')", hello('fred')),
+    ("lam", lam),
+    ("x", x)
+]
+
+print("coro?")
+for name, c in check:
+    print("    {:20}".format(name), isinstance(c, type_coro))
+
+print("\ncoro function?")
+for name, c in check:
+    print("    {:20}".format(name), isinstance(c, type_corof))
+
+## test ready queue (deque)
+
+rq = deque((), 5, True)
+rq.append("arg1")
+rq.append("coro1")
+print(rq.popleft())
+rq.append("arg2")
+rq.append("coro2")
+rq.append("arg3")
+rq.append("coro3")
+print("lenght", len(rq))
+print("empty?", not bool(rq))
+print(rq.popleft())
+print(rq.popleft())
+print(rq.popleft())
+print(rq.popleft())
+print(rq.popleft())
+print("lenght", len(rq))
+print("empty?", not bool(rq))
+
+## test wait queue (utimeq)
+
+# note: does not work with float time ...
+# neg values ok
+
+wq = utimeq(5)
+wq.push(7, "coro", "7")
+wq.push(-2, "coro", "2")
+wq.push(2, "coro", "2")
+print("peek", wq.peektime())
+wq.push(1, "coro", "1")
+wq.push(5, "coro", "5")
+print("empty?", not bool(wq))
+print("length", len(wq))
+
+res = [1, 2, 3]
+while len(wq) > 0:
+    wq.pop(res)
+    print("pop", res)
+
+print("empty?", not bool(wq))
+
+## eventio FIFO
+
+%upload_delay 0.05
+
+import gc
+gc.collect()
+print("mem_free", gc.mem_free())
+
+from timer import Chronometer
+from micropython import const
+
+# Traps
+_trap_get_kernel = const(1)   # return kernel instance
+_trap_sleep      = const(2)   # suspend task temporarily
+_trap_spawn      = const(3)   # create new task
+_trap_switch     = const(4)   # relinquish CPU to let another task run
+_trap_cancel     = const(5)   # throw CancelledError to specified task and stop from rescheduling
+_trap_join       = const(6)   # wait for task to finish, return result. Return None if already finished
+
+# Errors
+
+class CancelledError(Exception):
+    pass
+
+# Actions
+
+@coroutine
+def get_kernel():
+    """Return reference to kernel"""
+    return (yield (_trap_get_kernel, ))
+
+@coroutine
+def sleep(delay):
+    """Suspend task for delay seconds"""
+    # we work internally with 32-bit time in [ms]
+    if delay > 1e6: raise ValueError("delay must be < 1e6")
+    yield (_trap_sleep, delay)
+
+@coroutine
+def spawn(child):
+    """Launch child task"""
+    return (yield (_trap_spawn, child))
+
+@coroutine
+def switch():
+    """Relinquish CPU"""
+    yield (_trap_switch, )
+
+@coroutine
+def cancel(target, blocking=True):
+    """Cancel Task"""
+    return (yield (_trap_cancel, target, blocking) )
+
+@coroutine
+def join(target):
+    "Wait for target to finish and return result, if any"
+    return (yield (_trap_join, target) )
+
+
+class Kernel:
+    # do we even need a class? for time_actual?
+
+    def __init__(self, readyq_len=16, waitq_len=16):
+        self.readyq = FIFO(readyq_len)
+        self.waitq  = utimeq(waitq_len)
+        self.time_actual  = Chronometer()
+        self.time_working = Chronometer()
+
+    def uptime(self):
+        """Kernel uptime in seconds"""
+        return self.time_actual.elapsed_time
+
+    def load_average(self):
+        """Load average in percent.
+        100% means CPU was always active, 0% means deepsleep (power down) all the time."""
+        return 100*self.time_working.elapsed_time/self.time_actual.elapsed_time
+
+    # run until no more ready or waiting tasks
+    def _run(self, task):
+        """Run task.
+        Call only once, i.e. not from kernel.
+        Returns after all tasks have finished.
+        """
+        readyq = self.readyq
+        waitq  = self.waitq
+        finish_set = set()                  # tasks that finished or were cancelled
+        join_dict = defaultdict([])         # task -> [ waiting to join task ]
+        waiting_task = [None, None, None]   # ms, coro, args
+
+        readyq.put(task)
+
+        # run until there is nothing left to do
+        while True:
+            # schedule tasks from the waitq that are ready to run
+            tnow = utime.ticks_ms()
+            while bool(waitq):
+                dt = utime.ticks_diff(waitq.peektime(), tnow)
+                if dt > 0:
+                    # not ready yet
+                    break
+                # schedule for execution
+                waitq.pop(waiting_task)
+                # print("wake up", waiting_task[1])
+                readyq.put(waiting_task[1])
+
+            # we don't know the number of tasks in the readyq
+            # let's just try to run one
+            try:
+                self._run_task(finish_set, join_dict)
+            except IndexError:
+                # readyq is empty
+                if bool(waitq):
+                    # deepsleep until waitq needs attention
+                    ds = max(0, utime.ticks_diff(self.waitq.peektime(), tnow))
+                    self.time_working.stop()
+                    da = deepsleep(ds/1000.0)
+                    self.time_working.resume()
+                    # print("deepsleep target {:5d} actual {:5d} ms".format(ds, round(da*1000)))
+                else:
+                    print("queues are empty --> quit kernel")
+                    return
+
+    # run task once
+    def _run_task(self, finish_set, join_dict):
+        readyq = self.readyq
+        waitq  = self.waitq
+        cur_task = readyq.get()
+        cur_args = None
+        if isinstance(cur_task, type_tuple):
+            (cur_task, cur_args) = cur_task
+        if cur_task in finish_set: return
+        try:
+            if isinstance(cur_args, Exception):
+                # print("throw {} to {}".format(cur_args, cur_task))
+                res = cur_task.throw(cur_args)
+            else:
+                # print("send  {} to {}".format(cur_args, cur_task))
+                res = cur_task.send(cur_args)
+        except (StopIteration, CancelledError) as e:
+            print("stop/cancel", type(e), cur_task)
+            finish_set.add(cur_task)
+            for t in join_dict[cur_task]:
+                print("ready", t)
+                readyq.put(t)
+        except Exception as error:
+            # prevent errors in tasks from ending the loop
+            print("Kernel caught", type(error), error)
+        else:
+            trap = res[0]
+            arg  = res[1] if len(res) > 1 else None
+            if trap == _trap_sleep:
+                wakeup_time_ms = utime.ticks_add(utime.ticks_ms(), int(1000*res[1]))
+                waitq.push(wakeup_time_ms, cur_task, cur_args)
+            elif trap == _trap_spawn:
+                # schedule the child
+                readyq.put(arg)
+                # reschedule the caller & send arg child
+                readyq.put((cur_task, arg))
+            elif trap == _trap_switch:
+                # same as sleep(0)
+                readyq.put(cur_task)
+            elif trap == _trap_cancel:
+                # return True if task not yet stopped or cancelled
+                if arg in finish_set:
+                    readyq.put((cur_task, False))
+                else:
+                    readyq.put((arg, CancelledError()))
+                    if res[2]:  # blocking
+                        join_dict[arg].append((cur_task, True))
+                    else:
+                        readyq.put((cur_task, True))
+            elif trap == _trap_join:
+                if res[1] in finish_set:
+                    # already finished, and we do not know the result
+                    readyq.put(cur_task)
+                else:
+                    # add to list of tasks to call when arg finished
+                    join_dict[arg].append(cur_task)
+            elif trap == _trap_get_kernel:
+                # reschedule called & send arg kernel
+                readyq.put((cur_task, self))
+            else:
+                raise RuntimeError("Unknown trap code", trap)
+
+# global instance
+_kernel = None
+
+def run(task, **kwargs):
+    global _kernel
+    if _kernel: raise RuntimeException("kernel is already running, use spawn to launch tasks")
+    _kernel = Kernel(**kwargs)
+    _kernel._run(task)
+    _kernel = None
+
+gc.collect()
+print("mem_free", gc.mem_free())
+
+
+## eventio
+
+%upload_delay 0.05
+
+import gc
+gc.collect()
+print("mem_free", gc.mem_free())
+
+from timer import Chronometer
+from micropython import const
+
+# Traps
+_trap_get_kernel = const(1)   # return kernel instance
+_trap_sleep      = const(2)   # suspend task temporarily
+_trap_spawn      = const(3)   # create new task
+_trap_switch     = const(4)   # relinquish CPU to let another task run
+_trap_cancel     = const(5)   # throw CancelledError to specified task and stop from rescheduling
+_trap_join       = const(6)   # wait for task to finish, return result. Return None if already finished
+
+# Errors
+
+class CancelledError(Exception):
+    pass
+
+# Actions
+
+@coroutine
+def get_kernel():
+    """Return reference to kernel"""
+    return (yield (_trap_get_kernel, ))
+
+@coroutine
+def sleep(delay):
+    """Suspend task for delay seconds"""
+    # we work internally with 32-bit time in [ms]
+    if delay > 1e6: raise ValueError("delay must be < 1e6")
+    yield (_trap_sleep, delay)
+
+@coroutine
+def spawn(child):
+    """Launch child task"""
+    return (yield (_trap_spawn, child))
+
+@coroutine
+def switch():
+    """Relinquish CPU"""
+    yield (_trap_switch, )
+
+@coroutine
+def cancel(target, blocking=True):
+    """Cancel Task"""
+    return (yield (_trap_cancel, target, blocking) )
+
+@coroutine
+def join(target):
+    "Wait for target to finish and return result, if any"
+    return (yield (_trap_join, target) )
+
+
+class Kernel:
+    # do we even need a class? for time_actual?
+
+    def __init__(self, readyq_len=16, waitq_len=16):
+        self.readyq = deque((), readyq_len, True)
+        self.waitq  = utimeq(waitq_len)
+        self.time_actual  = Chronometer()
+        self.time_working = Chronometer()
+
+    def uptime(self):
+        """Kernel uptime in seconds"""
+        return self.time_actual.elapsed_time
+
+    def load_average(self):
+        """Load average in percent.
+        100% means CPU was always active, 0% means deepsleep (power down) all the time."""
+        return 100*self.time_working.elapsed_time/self.time_actual.elapsed_time
+
+    def _run(self, task):
+        """Run task.
+        Call only once, i.e. not from kernel.
+        Returns after all tasks have finished.
+        """
+        readyq = self.readyq
+        waitq  = self.waitq
+        finish_set = set()                  # tasks that finished or were cancelled
+        join_dict = defaultdict([])         # task -> [ waiting to join task ]
+        waiting_task = [None, None, None]   # ms, coro, args
+
+        readyq.append(task)
+
+        # run until there is nothing left to do
+        while True:
+            # schedule tasks from the waitq that are ready to run
+            tnow = utime.ticks_ms()
+            while bool(waitq):
+                dt = utime.ticks_diff(waitq.peektime(), tnow)
+                if dt > 0:
+                    # not ready yet
+                    break
+                # schedule for execution
+                waitq.pop(waiting_task)
+                # print("wake up", waiting_task[1])
+                readyq.append(waiting_task[1])
+
+            # run all ready tasks once
+            for i in range(len(readyq)):
+                cur_task = readyq.popleft()
+                cur_args = None
+                if isinstance(cur_task, type_tuple):
+                    (cur_task, cur_args) = cur_task
+                if cur_task in finish_set: continue
+                try:
+                    if isinstance(cur_args, Exception):
+                        # print("throw {} to {}".format(cur_args, cur_task))
+                        res = cur_task.throw(cur_args)
+                    else:
+                        # print("send  {} to {}".format(cur_args, cur_task))
+                        res = cur_task.send(cur_args)
+                except (StopIteration, CancelledError) as e:
+                    print("stop/cancel", type(e), cur_task)
+                    finish_set.add(cur_task)
+                    for t in join_dict[cur_task]:
+                        print("ready", t)
+                        readyq.append(t)
+                except Exception as error:
+                    # prevent errors in tasks from ending the loop
+                    print("Kernel caught", type(error), error)
+                else:
+                    trap = res[0]
+                    arg  = res[1] if len(res) > 1 else None
+                    if trap == _trap_sleep:
+                        wakeup_time_ms = utime.ticks_add(utime.ticks_ms(), int(1000*res[1]))
+                        waitq.push(wakeup_time_ms, cur_task, cur_args)
+                    elif trap == _trap_spawn:
+                        # schedule the child
+                        readyq.append(arg)
+                        # reschedule the caller & send arg child
+                        readyq.append((cur_task, arg))
+                    elif trap == _trap_switch:
+                        # same as sleep(0)
+                        readyq.append(cur_task)
+                    elif trap == _trap_cancel:
+                        # return True if task not yet stopped or cancelled
+                        if arg in finish_set:
+                            readyq.append((cur_task, False))
+                        else:
+                            readyq.append((arg, CancelledError()))
+                            if res[2]:  # blocking
+                                join_dict[arg].append((cur_task, True))
+                            else:
+                                readyq.append((cur_task, True))
+                    elif trap == _trap_join:
+                        if res[1] in finish_set:
+                            # already finished, and we do not know the result
+                            readyq.append(cur_task)
+                        else:
+                            # add to list of tasks to call when arg finished
+                            join_dict[arg].append(cur_task)
+                    elif trap == _trap_get_kernel:
+                        # reschedule called & send arg kernel
+                        readyq.append((cur_task, self))
+                    else:
+                        raise RuntimeError("Unknown trap code", trap)
+
+            # sleep (or stop) if no work
+            if not bool(readyq):
+                if bool(waitq):
+                    # deepsleep until waitq needs attention
+                    ds = max(0, utime.ticks_diff(self.waitq.peektime(), tnow))
+                    self.time_working.stop()
+                    da = deepsleep(ds/1000.0)
+                    self.time_working.resume()
+                    # print("deepsleep target {:5d} actual {:5d} ms".format(ds, round(da*1000)))
+                else:
+                    print("queues are empty --> quit kernel")
+                    return
+
+# global instance
+_kernel = None
+
+def run(task, **kwargs):
+    global _kernel
+    if _kernel: raise RuntimeException("kernel is already running, use spawn to launch tasks")
+    _kernel = Kernel(**kwargs)
+    _kernel._run(task)
+    _kernel = None
+
+## test
+
+print("countdown test")
+
+async def countdown(n):
+    while n > 0:
+        print('T-minus', n)
+        await sleep(0.5)
+        n -= 1
+    kernel = await get_kernel()
+    print("Took {} seconds, {} % CPU utilization".format(
+        kernel.uptime(), kernel.load_average()
+    ))
+
+run(countdown(3))
+
+## test
+
+async def kid():
+    print("Playing")
+    try:
+        await sleep(10)
+        print("kid finished playing")
+    except CancelledError:
+        print("saving my work")
+        raise
+    print("done playing")
+
+async def countdown(n):
+    child = await spawn(kid())
+    while n > 0:
+        print('T-minus', n)
+        await sleep(0.5)
+        n -= 1
+    print("cancel kid:", await cancel(child))
+    kernel = await get_kernel()
+    print("Took {} seconds, {} % CPU utilization".format(
+        kernel.uptime(), kernel.load_average()
+    ))
+
+run(countdown(3))
+
+## test
+print("blink test")
+
+import board, digitalio
+from timer import Chronometer
+
+chrono = Chronometer()
+
+async def blink(color, pin, period):
+    global chrono
+    p = digitalio.DigitalInOut(pin)
+    p.direction = digitalio.Direction.OUTPUT
+    for i in range(20):
+        await sleep(period/2)
+        p.value = not p.value
+        print("{} at {:10.3f} s".format(color, chrono.elapsed_time))
+    p.deinit()
+
+async def main():
+    r = await spawn(blink("red  ", board.LED2_R, 0.3))
+    g = await spawn(blink("green", board.LED2_G, 0.7))
+    b = await spawn(blink("blue ", board.LED2_B, 0.5))
+    print("all LEDs blinking ...")
+    await sleep(8)
+    kernel = await get_kernel()
+    print("Took {} seconds, {} % CPU utilization".format(
+        kernel.uptime(), kernel.load_average()
+    ))
+
+run(main())
+
+t = (1, 2)
+print(t)
+(t, b) = t
+print(t, b)

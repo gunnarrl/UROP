@@ -1,0 +1,211 @@
+import os
+import glob
+from PIL import Image
+import numpy as np
+import tensorflow as tf
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+
+def read_feature(folder, num):
+    filename = glob.glob(os.path.join(folder, '*'))
+    img_arr = np.zeros([len(filename), 100, 100, 3])
+    label = num * np.ones(len(filename), dtype="float32")
+    for i, name in enumerate(filename):
+        img = Image.open(name)
+        img_arr[i, :, :, :] = np.asarray(img, dtype="uint8")
+    return img_arr, label
+
+tb_img_arr, tb_label = read_feature('./TB_Image', 1)
+non_tb_img_arr, non_tb_label = read_feature('./Non-TB_Image', 0)
+images = np.concatenate((tb_img_arr, non_tb_img_arr))
+labels = np.concatenate((tb_label, non_tb_label))
+
+print(np.shape(images))
+print(np.shape(labels))
+X_train, X_val, y_train, y_val = train_test_split(images, labels, test_size=0.1)
+
+X_train = X_train.astype(np.int)
+X_val = X_val.astype(np.int)
+y_train = y_train.astype(np.int)
+y_val = y_val.astype(np.int)
+
+# change into one-hot vector
+y_train = tf.keras.utils.to_categorical(y_train, 2) 
+y_val = tf.keras.utils.to_categorical(y_val, 2)
+
+# reshape dataset
+X_train = X_train.reshape(X_train.shape[0], 100, 100, 3)
+X_val = X_val.reshape(X_val.shape[0], 100, 100, 3)
+
+from matplotlib import pyplot as plt
+%matplotlib inline
+
+print('Training data shape', X_train.shape)
+_, (ax1, ax2) = plt.subplots(1, 2)
+ax1.imshow(X_train[0].reshape(100, 100, 3), cmap=plt.cm.Greys);
+ax2.imshow(X_train[1].reshape(100, 100, 3), cmap=plt.cm.Greys);
+
+def train_data(model):
+    loss = []
+    acc = []
+    val_loss = []
+    val_acc = []
+    early_stop = tf.keras.callbacks.EarlyStopping(monitor='val_loss', min_delta=1e-3, patience=3)
+    tensorboard = tf.keras.callbacks.TensorBoard(log_dir='logs/{}'.format('model_name'))
+    hist = model.fit(X_train, y_train,
+                     batch_size=64,
+                     epochs=50,  # Run thru all the data point in each epoch
+                     verbose=1,
+                     validation_data=(X_val, y_val),
+                     #callbacks=[tensorboard])
+                     callbacks=[early_stop, tensorboard])
+    #val_err.append(hist.history['val_mean_absolute_error'][-1]) # a dict
+    loss.append(hist.history['loss'][-1])
+    val_loss.append(hist.history['val_loss'][-1])
+    acc.append(hist.history['acc'][-1])
+    val_acc.append(hist.history['val_acc'][-1])   
+    
+    return loss, val_loss, hist
+
+def VGG(activ):
+    model = tf.keras.Sequential([
+        tf.keras.layers.Conv2D(64, (3,3), padding='same', activation=activ, input_shape=(100, 100, 3)),
+        tf.keras.layers.MaxPool2D(padding='same'),
+
+        tf.keras.layers.Conv2D(128, (3,3), padding='same', activation=activ),
+        tf.keras.layers.MaxPool2D(padding='same'),
+        
+        tf.keras.layers.Conv2D(256, (3,3), padding='same', activation=activ),
+        tf.keras.layers.Conv2D(256, (3,3), padding='same', activation=activ),
+        tf.keras.layers.MaxPool2D(padding='same'),
+        
+        tf.keras.layers.Conv2D(512, (3,3), padding='same', activation=activ),
+        tf.keras.layers.Conv2D(512, (3,3), padding='same', activation=activ),
+        tf.keras.layers.MaxPool2D(padding='same'),
+
+        tf.keras.layers.Conv2D(512, (3,3), padding='same', activation=activ),
+        tf.keras.layers.Conv2D(512, (3,3), padding='same', activation=activ),
+        tf.keras.layers.MaxPool2D(padding='same'),
+
+
+        tf.keras.layers.Flatten(),
+        tf.keras.layers.Dense(4096, activation=activ),
+        tf.keras.layers.Dense(4096, activation=activ),
+        tf.keras.layers.Dense(1000, activation=activ),
+        tf.keras.layers.Dense(2, activation='softmax')
+    ])
+    param = model.count_params()
+    model.compile(optimizer=tf.train.AdamOptimizer(0.000001),
+                  loss='categorical_crossentropy',
+                  metrics=['accuracy'])
+   
+
+    model.summary()
+    
+    return model, param
+
+def dnnmodel(n, activ):
+    param = []
+    model = tf.keras.Sequential([])
+    model.add(tf.keras.layers.Flatten(input_shape=(100, 100, 3)))
+    for i in range(n):
+        model.add(tf.keras.layers.Dense(100, activation=activ))
+    model.add(tf.keras.layers.Dense(2, activation='softmax'))
+    # model.summary()
+    # model.count_params()
+    param.append(model.count_params())
+    model.compile(optimizer=tf.train.AdamOptimizer(0.000001),
+                  loss='categorical_crossentropy',
+                  metrics=['accuracy', 'mae'])
+    return model, param
+
+activ = 'relu'
+model_VGG1, param_VGG1 = VGG(activ)
+loss_VGG1, val_loss_VGG1, hist_VGG1= train_data(model_VGG1)
+
+def plot_acc_and_loss(hist):
+    acc = hist.history['acc']
+    loss = hist.history['loss']
+    val_acc = hist.history['val_acc']
+    val_loss = hist.history['val_loss']
+    
+    plt.plot(acc, 'r-o')
+    plt.title("Trainning accuracy")
+    plt.show()
+    
+    plt.plot(loss, 'g-o')
+    plt.title("Trainning loss")
+    plt.show()
+    
+    plt.plot(val_acc, 'b-o')
+    plt.title("Validation accuracy")
+    plt.show()
+    
+    plt.plot(val_loss, 'm-o')
+    plt.title("Validation loss")
+    plt.show()
+
+plot_acc_and_loss(hist_VGG1)
+
+from sklearn.metrics import confusion_matrix
+
+predictions = model_VGG1.predict(X_val)
+y_val = np.argmax(y_val, axis=-1)
+predictions = np.argmax(predictions, axis=-1)
+c = confusion_matrix(y_val, predictions)
+print('Confusion matrix:\n', c)
+print('sensitivity', c[0, 0] / (c[0, 1] + c[0, 0]))
+print('specificity', c[1, 1] / (c[1, 1] + c[1, 0]))
+
+activ = 'tanh'
+model_VGG2, param_VGG2 = VGG(activ)
+loss_VGG2, val_loss_VGG2, hist_VGG2= train_data(model_VGG2)
+
+plot_acc_and_loss(hist_VGG2)
+
+predictions = model_VGG2.predict(X_val)
+y_val1 = np.argmax(y_val, axis=-1)
+predictions = np.argmax(predictions, axis=-1)
+c = confusion_matrix(y_val1, predictions)
+print('Confusion matrix:\n', c)
+print('sensitivity', c[0, 0] / (c[0, 1] + c[0, 0]))
+print('specificity', c[1, 1] / (c[1, 1] + c[1, 0]))
+
+activ = 'relu'
+model_DNN, param1_DNN = dnnmodel(15, activ)
+loss_DNN, val_loss_DNN, hist_DNN= train_data(model_DNN)
+
+plot_acc_and_loss(hist_DNN)
+
+predictions = model_DNN.predict(X_val)
+y_val1 = np.argmax(y_val, axis=-1)
+predictions = np.argmax(predictions, axis=-1)
+c = confusion_matrix(y_val1, predictions)
+print('Confusion matrix:\n', c)
+print('sensitivity', c[0, 0] / (c[0, 1] + c[0, 0]))
+print('specificity', c[1, 1] / (c[1, 1] + c[1, 0]))
+
+from tensorflow.keras.applications import ResNet50
+
+def resnet():
+    input_tensor = tf.keras.layers.Input(shape=(100, 100, 3))
+    model = ResNet50(include_top=True, weights=None, input_tensor=input_tensor, input_shape=None, pooling=None, classes=2)
+    param = model.count_params()
+    model.compile(optimizer=tf.train.AdamOptimizer(0.00001),
+                  loss='categorical_crossentropy',
+                  metrics=['accuracy'])
+    model.summary()
+    return model, param
+
+model_resnet, param_resnet = resnet()
+loss_resnet, val_loss_resnet, hist_resnet= train_data(model_resnet)
+
+plot_acc_and_loss(hist_resnet)
+
+predictions = model_resnet.predict(X_val)
+y_val1 = np.argmax(y_val, axis=-1)
+predictions = np.argmax(predictions, axis=-1)
+c = confusion_matrix(y_val1, predictions)
+print('Confusion matrix:\n', c)
+print('sensitivity', c[0, 0] / (c[0, 1] + c[0, 0]))
+print('specificity', c[1, 1] / (c[1, 1] + c[1, 0]))

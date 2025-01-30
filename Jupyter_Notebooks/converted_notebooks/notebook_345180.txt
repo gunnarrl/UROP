@@ -1,0 +1,88 @@
+import tensorflow as tf
+
+%load_ext version_information
+%version_information numpy, scipy, matplotlib, pandas, tensorflow, sklearn, skflow
+
+CLUSTER_SPEC= """
+{
+    'ps' : ['tensorflow0.pipeline.io:8888', 'tensorflow1.pipeline.io:8888'],
+    'worker' : [ 'tensorflow2.pipeline.io:8888','tensorflow3.pipeline.io:8888'],
+}
+"""
+
+import ast
+
+cluster_def = ast.literal_eval(CLUSTER_SPEC)
+
+cluster_def
+
+spec = tf.train.ClusterSpec(cluster_def)
+
+spec.jobs
+
+for job in spec.jobs:
+    print(job, spec.job_tasks(job))    
+
+workers = ['/job:worker/task:{}'.format(i) for i in range(len(cluster_def['worker']))]
+param_servers = ['/job:ps/task:{}'.format(i) for i in range(len(cluster_def['ps']))]
+
+workers
+
+param_servers
+
+l = tf.Variable("local_cpu")
+l.device
+
+for ps in param_servers:
+    with tf.device(ps):
+        v = tf.Variable("my_var")
+v.device
+
+def launch_worker(job_name, task_id, cluster_def):
+    server = tf.train.Server(
+        cluster_def,
+        job_name=job_name,
+        task_index=task_id
+    )
+    server.join()
+
+
+v.to_proto()
+
+batch_size = 1000
+
+graph = tf.Graph()
+with graph.as_default():
+        
+    with tf.device('/job:ps/task:0'):
+        input_array = tf.placeholder(tf.int32, shape=[None])
+        final_result = tf.Variable(0)
+        
+    # divide the input across the cluster:
+    all_reduce = []
+    splitted = tf.split(0, len(workers), input_array)
+    for idx, (portion, worker) in enumerate(zip(splitted,workers)):
+        with tf.device(worker):
+           print(worker)
+           local_reduce = tf.reduce_sum(portion)
+           local_reduce = tf.Print(portion, [local_reduce], message="portion is")
+           all_reduce.append(local_reduce)
+    
+    final_result = tf.reduce_sum(tf.pack(all_reduce))
+
+sess_config = tf.ConfigProto(
+    allow_soft_placement=True,
+    log_device_placement=True)
+
+import numpy as np
+run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+
+with tf.Session("grpc://tensorflow3.pipeline.io:8888", graph=graph, config=sess_config) as session:
+    result = session.run(final_result, feed_dict={ input_array: np.ones([1000]) }, options=run_options)
+    print(result)
+
+final_result.device
+
+with tf.Session("grpc://tensorflow3.pipeline.io:8888", graph=graph, config=sess_config) as session:
+    result = session.run(local_reduce, feed_dict={ input_array: np.ones([1000]) }, options=run_options)
+    print(result)

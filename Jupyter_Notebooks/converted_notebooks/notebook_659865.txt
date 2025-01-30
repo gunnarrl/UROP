@@ -1,0 +1,262 @@
+import os
+import cv2
+import math
+import warnings
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import tensorflow as tf
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, fbeta_score
+from keras import optimizers
+from keras import backend as K
+from keras.models import Sequential, Model
+from keras import applications
+from keras.preprocessing.image import ImageDataGenerator
+from keras.callbacks import LearningRateScheduler, EarlyStopping, ReduceLROnPlateau
+from keras.layers import Dense, Dropout, Flatten, Conv2D, MaxPool2D, Activation, BatchNormalization, GlobalAveragePooling2D, Input
+
+# Set seeds to make the experiment more reproducible.
+from tensorflow import set_random_seed
+from numpy.random import seed
+set_random_seed(0)
+seed(0)
+
+%matplotlib inline
+sns.set(style="whitegrid")
+warnings.filterwarnings("ignore")
+
+train = pd.read_csv('../input/imet-2019-fgvc6/train.csv')
+labels = pd.read_csv('../input/imet-2019-fgvc6/labels.csv')
+test = pd.read_csv('../input/imet-2019-fgvc6/sample_submission.csv')
+
+train["attribute_ids"] = train["attribute_ids"].apply(lambda x:x.split(" "))
+train["id"] = train["id"].apply(lambda x: x + ".png")
+test["id"] = test["id"].apply(lambda x: x + ".png")
+
+print('Number of train samples: ', train.shape[0])
+print('Number of test samples: ', test.shape[0])
+print('Number of labels: ', labels.shape[0])
+display(train.head())
+display(labels.head())
+
+# Model parameters
+BATCH_SIZE = 64
+EPOCHS = 50
+WARMUP_EPOCHS = 2
+LEARNING_RATE = 0.0001
+WARMUP_LEARNING_RATE = 0.001
+HEIGHT = 156
+WIDTH = 156
+CANAL = 3
+N_CLASSES = labels.shape[0]
+ES_PATIENCE = 4
+RLROP_PATIENCE = 2
+DECAY_DROP = 0.5
+DECAY_EPOCHS = 10
+
+def f2_score_thr(threshold=0.5):
+    def f2_score(y_true, y_pred):
+        beta = 2
+        y_pred = K.cast(K.greater(K.clip(y_pred, 0, 1), threshold), K.floatx())
+
+        true_positives = K.sum(K.clip(y_true * y_pred, 0, 1), axis=1)
+        predicted_positives = K.sum(K.clip(y_pred, 0, 1), axis=1)
+        possible_positives = K.sum(K.clip(y_true, 0, 1), axis=1)
+
+        precision = true_positives / (predicted_positives + K.epsilon())
+        recall = true_positives / (possible_positives + K.epsilon())
+
+        return K.mean(((1+beta**2)*precision*recall) / ((beta**2)*precision+recall+K.epsilon()))
+    return f2_score
+
+
+def custom_f2(y_true, y_pred):
+    beta = 2
+
+    tp = np.sum((y_true == 1) & (y_pred == 1))
+    tn = np.sum((y_true == 0) & (y_pred == 0))
+    fp = np.sum((y_true == 0) & (y_pred == 1))
+    fn = np.sum((y_true == 1) & (y_pred == 0))
+    
+    p = tp / (tp + fp + K.epsilon())
+    r = tp / (tp + fn + K.epsilon())
+
+    f2 = (1+beta**2)*p*r / (p*beta**2 + r + 1e-15)
+
+    return f2
+
+def step_decay(epoch):
+    initial_lrate = LEARNING_RATE
+    drop = DECAY_DROP
+    epochs_drop = DECAY_EPOCHS
+    lrate = initial_lrate * math.pow(drop, math.floor((1+epoch)/epochs_drop))
+    
+    return lrate
+
+train_datagen=ImageDataGenerator(rescale=1./255, validation_split=0.25,
+                                 horizontal_flip=True)
+
+train_generator=train_datagen.flow_from_dataframe(
+    dataframe=train,
+    directory="../input/imet-2019-fgvc6/train",
+    x_col="id",
+    y_col="attribute_ids",
+    batch_size=BATCH_SIZE,
+    shuffle=True,
+    class_mode="categorical",
+    target_size=(HEIGHT, WIDTH),
+    subset='training')
+
+valid_generator=train_datagen.flow_from_dataframe(
+    dataframe=train,
+    directory="../input/imet-2019-fgvc6/train",
+    x_col="id",
+    y_col="attribute_ids",
+    batch_size=BATCH_SIZE,
+    shuffle=True,
+    class_mode="categorical",    
+    target_size=(HEIGHT, WIDTH),
+    subset='validation')
+
+test_datagen = ImageDataGenerator(rescale=1./255)
+
+test_generator = test_datagen.flow_from_dataframe(  
+        dataframe=test,
+        directory = "../input/imet-2019-fgvc6/test",    
+        x_col="id",
+        target_size=(HEIGHT, WIDTH),
+        batch_size=1,
+        shuffle=False,
+        class_mode=None)
+
+def create_model(input_shape, n_out):
+    input_tensor = Input(shape=input_shape)
+    base_model = applications.Xception(weights=None, include_top=False,
+                   input_tensor=input_tensor)
+    base_model.load_weights('../input/xception/xception_weights_tf_dim_ordering_tf_kernels_notop.h5')
+
+    x = GlobalAveragePooling2D()(base_model.output)
+    x = Dropout(0.5)(x)
+    final_output = Dense(n_out, activation='sigmoid', name='final_output')(x)
+    model = Model(input_tensor, final_output)
+    
+    return model
+
+model = create_model(input_shape=(HEIGHT, WIDTH, CANAL), n_out=N_CLASSES)
+
+for layer in model.layers:
+    layer.trainable = False
+
+for i in range(-5,0):
+    model.layers[i].trainable = True
+
+metrics = ["accuracy", "categorical_accuracy"]
+optimizer = optimizers.Adam(lr=WARMUP_LEARNING_RATE)
+model.compile(optimizer=optimizer, loss="binary_crossentropy",  metrics=metrics)
+model.summary()
+
+STEP_SIZE_TRAIN = train_generator.n//train_generator.batch_size
+STEP_SIZE_VALID = valid_generator.n//valid_generator.batch_size
+
+history = model.fit_generator(generator=train_generator,
+                              steps_per_epoch=STEP_SIZE_TRAIN,
+                              validation_data=valid_generator,
+                              validation_steps=STEP_SIZE_VALID,
+                              epochs=WARMUP_EPOCHS,
+                              verbose=2)
+
+for layer in model.layers:
+    layer.trainable = True
+
+# lrate = LearningRateScheduler(step_decay)
+es = EarlyStopping(monitor='val_loss', mode='min', patience=ES_PATIENCE, restore_best_weights=True, verbose=1)
+rlrop = ReduceLROnPlateau(monitor='val_loss', mode='min', patience=RLROP_PATIENCE, factor=DECAY_DROP, min_lr=1e-6, verbose=1)
+
+callbacks = [es, rlrop]
+optimizer = optimizers.Adam(lr=LEARNING_RATE)
+metrics = ["accuracy"]
+model.compile(optimizer=optimizer, loss="binary_crossentropy",  metrics=metrics)
+model.summary()
+
+STEP_SIZE_TRAIN = train_generator.n//train_generator.batch_size
+STEP_SIZE_VALID = valid_generator.n//valid_generator.batch_size
+
+history = model.fit_generator(generator=train_generator,
+                              steps_per_epoch=STEP_SIZE_TRAIN,
+                              validation_data=valid_generator,
+                              validation_steps=STEP_SIZE_VALID,
+                              epochs=EPOCHS,
+                              callbacks=callbacks,
+                              verbose=2)
+
+sns.set_style("whitegrid")
+fig, (ax1, ax2) = plt.subplots(1, 2, sharex='col', figsize=(20,7))
+
+ax1.plot(history.history['loss'], label='Train loss')
+ax1.plot(history.history['val_loss'], label='Validation loss')
+ax1.legend(loc='best')
+ax1.set_title('Loss')
+
+ax2.plot(history.history['acc'], label='Train Accuracy')
+ax2.plot(history.history['val_acc'], label='Validation accuracy')
+ax2.legend(loc='best')
+ax2.set_title('Accuracy')
+
+plt.xlabel('Epochs')
+sns.despine()
+plt.show()
+
+lastFullValPred = np.empty((0, N_CLASSES))
+lastFullValLabels = np.empty((0, N_CLASSES))
+
+for i in range(STEP_SIZE_VALID+1):
+    im, lbl = next(valid_generator)
+    scores = model.predict(im, batch_size=valid_generator.batch_size)
+    lastFullValPred = np.append(lastFullValPred, scores, axis=0)
+    lastFullValLabels = np.append(lastFullValLabels, lbl, axis=0)
+    
+print(lastFullValPred.shape, lastFullValLabels.shape)
+
+def find_best_fixed_threshold(preds, targs, do_plot=True):
+    score = []
+    thrs = np.arange(0, 0.5, 0.01)
+    for thr in thrs:
+        score.append(custom_f2(targs, (preds > thr).astype(int)))
+    score = np.array(score)
+    pm = score.argmax()
+    best_thr, best_score = thrs[pm], score[pm].item()
+    print(f'thr={best_thr:.3f}', f'F2={best_score:.3f}')
+    if do_plot:
+        plt.plot(thrs, score)
+        plt.vlines(x=best_thr, ymin=score.min(), ymax=score.max())
+        plt.text(best_thr+0.03, best_score-0.01, f'$F_{2}=${best_score:.3f}', fontsize=14);
+        plt.show()
+    return best_thr, best_score
+
+threshold, best_score = find_best_fixed_threshold(lastFullValPred, lastFullValLabels, do_plot=True)
+
+test_generator.reset()
+STEP_SIZE_TEST = test_generator.n//test_generator.batch_size
+preds = model.predict_generator(test_generator, steps=STEP_SIZE_TEST)
+
+predictions = []
+for pred_ar in preds:
+    valid = []
+    for idx, pred in enumerate(pred_ar):
+        if pred > threshold:
+            valid.append(idx)
+    if len(valid) == 0:
+        valid.append(np.argmax(pred_ar))
+    predictions.append(valid)
+
+filenames = test_generator.filenames
+label_map = {valid_generator.class_indices[k] : k for k in valid_generator.class_indices}
+
+results = pd.DataFrame({'id':filenames, 'attribute_ids':predictions})
+results['id'] = results['id'].map(lambda x: str(x)[:-4])
+results['attribute_ids'] = results['attribute_ids'].apply(lambda x: list(map(label_map.get, x)))
+results["attribute_ids"] = results["attribute_ids"].apply(lambda x: ' '.join(x))
+results.to_csv('submission.csv',index=False)
+results.head(10)

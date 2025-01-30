@@ -1,0 +1,114 @@
+x = 10
+derivative = []
+y = []
+
+for i in range(1000):
+    old_value = x
+    y.append(old_value ** 2)
+    derivative.append(old_value - 0.01 * 2 * old_value)
+    x = old_value - 0.01 * 2 * old_value
+
+y[:20]
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
+
+#create a dataframe
+df = pd.read_csv('slr06.csv')
+df.head()
+
+#reshape the x_column
+raw_X = df["X"].values.reshape(-1, 1)
+y = df["Y"].values
+
+raw_x.shape
+
+#plot the values
+plt.figure(figsize=(10,6))
+plt.plot(raw_X, y, 'o', alpha=0.5)
+
+#preview the data points
+raw_X[:5], y[:5]
+
+#fill the first column of raw_X with ones
+np.ones((len(raw_X),1))[:3]
+X = np.concatenate( (np.ones((len(raw_X),1)), raw_X ), axis=1)
+X[:5]
+
+w = np.random.normal((2,1)) 
+# w = np.array([5,3]) w is theta
+w
+
+plt.figure(figsize=(10,5))
+y_predict = np.dot(X, w)
+plt.plot(raw_X,y,'o', color='blue', alpha=0.5) #raw_X and y are from the dataset we imported
+plt.plot(raw_X,y_predict)
+
+y_predict[:10]
+
+def hypothesis_function(X, theta):
+    """
+    input: matrix X and theta values
+    output: expected values of y from matrix X and theta values
+    """
+    return X.dot(theta)
+
+#a vector containing expected values of y from random weight values
+# note that this is the same as y_predict values from section 1
+h = hypothesis_function(X,w)
+h[:10]
+
+def cost_function(h, y):
+    """
+    input: hypothesis function and y-values
+    output: cost_function output
+    """
+    return (1/(2*len(y))) * np.sum((h-y)**2)
+
+h = hypothesis_function(X,w)
+cost_function(h, y)
+
+def gradient_descent(X, y, w, alpha, iterations):
+    theta = w
+    m = len(y)
+    
+    theta_list = [theta.tolist()]
+    cost = cost_function(hypothesis_function(X, theta), y)
+    cost_list = [cost]
+
+    for i in range(iterations):
+        t0 = theta[0] - (alpha / m) * np.sum(np.dot(X, theta) - y)
+        t1 = theta[1] - (alpha / m) * np.sum((np.dot(X, theta) - y) * X[:,1])
+        theta = np.array([t0, t1])
+        
+        if i % 10== 0:
+            theta_list.append(theta.tolist())
+            cost = cost_function(hypothesis_function(X, theta), y)
+            cost_list.append(cost)
+
+
+    return theta, theta_list, cost_list
+
+iterations = 10000
+alpha = 0.001
+
+theta, theta_list, cost_list = gradient_descent(X, y, w, alpha, iterations)
+cost = cost_function(hypothesis_function(X, theta), y)
+
+print("theta:", theta)
+print('cost:', cost_function(hypothesis_function(X, theta), y))
+
+theta_list = np.array(theta_list)
+
+plt.figure(figsize=(10,5))
+
+y_predict_step= np.dot(X, theta_list.transpose())
+
+y_predict_step
+plt.plot(raw_X,y,"o", alpha=0.5)
+for i in range (0,len(cost_list),100):
+    plt.plot(raw_X,y_predict_step[:,i], label='Line %d'%i)
+
+plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+plt.show()

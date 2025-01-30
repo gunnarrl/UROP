@@ -1,0 +1,96 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# 不是随机生成，具有可重复性
+np.random.seed(666)
+x = 2*np.random.random(size=100)
+y = x*3 + 4 + np.random.normal(size=100)
+
+X = x.reshape(-1, 1) # -1 代表任意
+
+X[:5]
+
+plt.scatter(X, y)
+
+# 损失函数
+def J(theta, X_b, y):
+    try:
+        return np.sum((y - X_b.dot(theta))**2) / len(X_b)
+    except:
+        return float('inf')
+
+# 梯度计算
+def dJ(theta, X_b, y):
+    res = np.empty(len(theta))
+    res[0] = np.sum(X_b.dot(theta) - y) # 第0个参数
+    
+    for i in range(1, len(theta)):
+        # 每一个样本取出 对应特征 对应的列
+        res[i] = np.sum((X_b.dot(theta) -y).dot(X_b[:, i]))
+        
+    return res * 2 / len(X_b)
+
+def gradient_descent(X_b, y, initial_theta, eta, n_iters=1e3 ,epsilon=1e-8):
+    
+    theta = initial_theta
+    i_iter = 0
+    
+    while i_iter < n_iters:
+        gradient = dJ(theta, X_b, y)
+        last_theta = theta
+        theta = theta - eta * gradient # 向导数的负方向移1步
+    
+        # 是不是最小值的点，导数等于0 的点 --- 可能永远达不到这个精度
+        # 每一次损失函数都要小一点
+        if(abs(J(theta, X_b, y) - J(last_theta, X_b, y)) < epsilon):
+            break
+        
+        i_iter += 1
+        
+    return theta
+
+X_b = np.hstack([np.ones((len(x), 1)), x.reshape(-1, 1)]) # 变成列向量
+initial_theta = np.zeros(X_b.shape[1])
+eta = 0.01
+
+theta = gradient_descent(X_b, y, initial_theta, eta)
+
+X_b[:5]
+
+y[:5]
+
+initial_theta
+
+# 就是我们要计算的 b w
+# 截距 斜率
+# 找到最低点，我的theta就不变了
+# 此时的theta=[b, w]决定的直线，与原始数据误差最小！！
+theta 
+
+from playML.LinearRegression import LinearRegression
+
+lin_reg = LinearRegression()
+lin_reg.fit_gd(X, y)
+
+lin_reg._theta
+
+# 系数
+lin_reg.coef_
+
+# 系数
+lin_reg.intercept_
+
+lin_reg2 = LinearRegression()
+lin_reg2.fit_normal(X, y)
+
+lin_reg2.coef_
+
+lin_reg2.intercept_
+
+def dJ(theta, X_b, y):
+    # res = np.empty(len(theta))
+    # res[0] = np.sum(X_b.dot(theta) - y)
+    # for i in range(1, len(theta)):
+    #     res[i] = (X_b.dot(theta) - y).dot(X_b[:, i])
+    # return res * 2 / len(X_b)
+    return X_b.T.dot(X_b.dot(theta) - y) * 2. / len(X_b)

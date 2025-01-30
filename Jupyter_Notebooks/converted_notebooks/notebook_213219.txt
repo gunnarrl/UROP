@@ -1,0 +1,67 @@
+import numpy as np
+import scipy as sp
+from scipy import optimize
+import matplotlib.pyplot as plt
+from sympy.solvers import solve
+from sympy import Symbol
+import math as mt
+#pyomo
+
+#define parameters
+R = 5.0
+C = 2.0
+mu = 10.0
+lambd = 8.0
+rho = lambd/mu
+
+#define social rate function
+def f(n):
+    return lambd*R*((1-rho**n)/(1-rho**(n+1)))-(C*((rho/(1-rho))-((n+1)*rho**(n+1))/(1-rho**(n+1))))
+
+#plot expected social benefit rate vs n
+
+for n in range(1,40,1):
+    plt.plot(n, f(n), marker = "o")
+plt.title('expected social benefit rate vs n')
+plt.show()
+
+#find the exact max value and associated n value, define the benefit
+#rate again
+def SO(n):
+    return lambd*R*((1-rho**n[0])/(1-rho**(n[0]+1)))-C*((rho/(1-rho))-((n[0]+1)*rho**(n[0]+1))/(1-rho**(n[0]+1)))
+
+sp.optimize.fmin(lambda n: -SO(n), np.array([0,0]))
+
+#calculate individual optimize system size
+n_e = (R * mu)/C
+print(n_e)
+
+p = Symbol('p')
+solve(((R - p)*mu)/C - 8, p)
+
+def z_n(n):
+    return lambd*((1-rho**n)/(1-rho**(n+1)))*(R - (C*n)/mu)
+
+for n in range(1,40,1):
+    plt.plot(n, z_n(n), marker = "o")
+plt.title('expected profit rate vs n')
+plt.show()
+
+#define the profit function again in array form for optimizer
+def z_n_a(n):
+    return lambd*((1-rho**n[0])/(1-rho**(n[0]+1)))*(R - (C*n[0])/mu)
+
+sp.optimize.fmin(lambda n: -z_n_a(n), np.array([0,0]))
+
+rho4 = 0.95
+def p0_cal(c):
+    sec_part = 0
+    for j in range(0, c, 1):
+        sec_part = sec_part + ((c*rho4)**j)/mt.factorial(j)
+    return (((c*rho4)**c)/((1-rho4)*mt.factorial(c)) + sec_part)**(-1)
+
+for c in [1, 2, 4, 8, 16, 32]:
+    p0 = p0_cal(c)
+    d_frac = p0*((c**c)/mt.factorial(c))*((rho4**c)/(1 - rho4))
+    d_exp = (1/(1 - rho4*(1/c))) * d_frac
+    print('c = ', c, ",", 'fraction delayed = ', d_frac, ', expected delay time = ', d_exp)

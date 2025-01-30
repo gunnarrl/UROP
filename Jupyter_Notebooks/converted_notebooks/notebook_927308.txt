@@ -1,0 +1,116 @@
+from IPython.core.display import display, HTML
+display(HTML("<style>.container { width:95% !important; }</style>"))
+
+# import essential modules
+import os
+
+import matplotlib
+import matplotlib.pyplot as plt
+%matplotlib inline
+
+import seaborn as sns
+
+import pandas as pd
+import numpy as np
+
+
+# some useful utils funcion to load data
+
+def process_read_dataframe(df: pd.DataFrame):
+    bins = [0.25, 0.5, 0.75, 0.9, 0.95, 0.99]
+    # group
+    df["unique_id_question_body"] = df["question_body"].astype("category").cat.codes
+    df["unique_id_question_body"] = df["category"].str.cat(df["unique_id_question_body"].astype("str"), sep="_")
+    df["host_stem"] = df["host"].str.split(".").apply(lambda x: ".".join(x[-2:]))
+    group_columns = ["category", "host_stem", "unique_id_question_body"]
+    df[group_columns] = df[group_columns].astype("category")
+
+    # corpus
+    columns = ["question_title", "question_body", "answer"]
+    for col in columns:
+        df[f"count_{col}"] = df[col].str.split(" ").apply(lambda x: len(x)).astype(np.int32)
+
+    df["count_question_title_body"] = (df["count_question_title"] + df["count_question_body"]).astype(np.int32)
+    df["count_question_title_body_answer"] = (df["count_question_title_body"] + df["count_answer"]).astype(np.int32)
+    stats_columns = [f"count_{col}" for col in columns] + [
+        "count_question_title_body", "count_question_title_body_answer"]
+
+    df_stats = df[stats_columns].describe(bins)
+    df_stats_split = df.groupby("category")[stats_columns].apply(lambda x: x.describe(bins)).unstack(0).T
+
+    # concat
+    # df["question_title_body"] = df["question_title"].str.cat(others=df["question_body"], sep=" ")
+    # columns = columns + ["question_title_body"]
+    return df[columns], df[group_columns], df_stats, df_stats_split
+
+
+# data folder
+data_dir = '../input/google-quest-challenge'
+index_name = 'qa_id'
+
+target_columns = [
+    "question_asker_intent_understanding", "question_body_critical", "question_conversational",
+    "question_expect_short_answer", "question_fact_seeking", "question_has_commonly_accepted_answer",
+    "question_interestingness_others", "question_interestingness_self", "question_multi_intent",
+    "question_not_really_a_question", "question_opinion_seeking", "question_type_choice", "question_type_compare",
+    "question_type_consequence", "question_type_definition", "question_type_entity", "question_type_instructions",
+    "question_type_procedure", "question_type_reason_explanation", "question_type_spelling",
+    "question_well_written", "answer_helpful", "answer_level_of_information", "answer_plausible",
+    "answer_relevance", "answer_satisfaction", "answer_type_instructions", "answer_type_procedure",
+    "answer_type_reason_explanation", "answer_well_written"
+]
+
+# split by questioin and answer
+output_categories_question = list(filter(lambda x: x.startswith("question_"), target_columns))
+output_categories_answer = list(filter(lambda x: x.startswith("answer_"), target_columns))
+output_categories = output_categories_question + output_categories_answer
+
+# training
+df_train = pd.read_csv(os.path.join(data_dir, "train.csv")).set_index(index_name)
+
+# labels
+df_train[target_columns] = df_train[target_columns].astype(np.float32)
+train_y = df_train[output_categories]
+train_x, train_groups, train_stats, train_stats_split = process_read_dataframe(df_train)
+train_x.shape  # training data size
+
+# looking for the ratio of duplicated questions
+df_train["question_body"].nunique() / df_train.shape[0] 
+
+# Frequency of duplicated questions, ~1750 question bodies don't have any dupplicates, and over 1250 with duplicated once, and some even have 12.
+train_groups["unique_id_question_body"].value_counts().value_counts().sort_index().plot(kind="bar", legend="distribution of duplicated distribution", grid=True)
+
+df_train.groupby("category").apply(lambda x: x["question_body"].nunique() / len(x))  # duplicated among different categories
+
+# get stats of setence length by words of question and answer pair: ["question_title", "question_body", "answer"]
+train_stats.T  # half of the context of question_body and answer are less 100 words (93, 91 words on question_body and answer,respectively). 
+
+# 95% of them are less than 440 words, this provide a good insights to set the input max_lengh for language model.
+
+train_stats_split  # Further split by category. There are five categories: CULTURE, LIFE_ARTS, SCIENCE, STACKOVERFLOW and TECHNOLOGY.
+
+train_y.describe().T
+
+train_y.nunique()  # observe how many unique values within labels: 
+
+train_y.mean().rename('mean of score').sort_values().plot(kind='barh', figsize=(18, 15), grid=True, fontsize=14, legend='Mean value of each target')
+
+train_y.corr().abs().describe([.99]).T  #labels has very weak correaltion among each other. The max 1.0 is correlation with label theirselves.
+
+df_test = pd.read_csv(os.path.join(data_dir, "test.csv")).set_index(index_name)
+test_x, test_groups, test_stats, test_stats_split = process_read_dataframe(df_test)
+
+test_stats.T 
+
+test_stats_split
+
+((train_stats.T['mean'] - test_stats.T['mean']) / train_stats.T['mean']).rename("length dfifference (%)").plot(
+    kind='barh', grid=True, fontsize=14, legend='paragragh length differencec between train and test')  # seems training is generally shorter.
+
+df = ((train_stats_split['mean'] - test_stats_split['mean']) / train_stats_split['mean']).reset_index()
+df.columns = ['field'] + df.columns.tolist()[1:]
+
+g = sns.catplot(x="category", y="mean", hue="field", data=df, height=6, kind="bar", palette="muted", )
+g.despine(left=True)
+g.set_ylabels("breakdown paragraph length by category")
+g.set_xticklabels(rotation=45)  # upside longer on training set, and downside on longer on test set.

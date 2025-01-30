@@ -1,0 +1,227 @@
+%load_ext autoreload
+%autoreload 2
+
+# Seed value
+# Apparently you may use different seed values at each stage
+seed_value= 0
+
+# 1. Set the `PYTHONHASHSEED` environment variable at a fixed value
+import os
+os.environ['PYTHONHASHSEED']=str(seed_value)
+
+# 2. Set the `python` built-in pseudo-random generator at a fixed value
+import random
+random.seed(seed_value)
+
+# 3. Set the `numpy` pseudo-random generator at a fixed value
+import numpy as np
+np.random.seed(seed_value)
+
+# 4. Set the `tensorflow` pseudo-random generator at a fixed value
+import tensorflow as tf
+tf.set_random_seed(seed_value)
+
+# 5. Configure a new global `tensorflow` session
+from keras import backend as K
+session_conf = tf.ConfigProto(intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
+sess = tf.Session(graph=tf.get_default_graph(), config=session_conf)
+K.set_session(sess)
+
+import keras
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import sklearn
+# plt.style.use('fivethirtyeight')
+sns.set_style("whitegrid")
+sns.set_context("notebook")
+
+
+DATA_PATH = '../data/'
+VAL_SPLITS = 4
+
+from plot_utils import plot_confusion_matrix
+from cv_utils import run_cv_f1
+from cv_utils import plot_cv_roc
+from cv_utils import plot_cv_roc_prc
+from sklearn.model_selection import StratifiedShuffleSplit
+from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_validate
+
+df = pd.read_csv(os.path.join(DATA_PATH,'df_train.csv'))
+df.drop(columns= df.columns[0:2],inplace=True)
+df.head()
+
+cv = StratifiedShuffleSplit(n_splits=1,test_size=0.15,random_state=0)
+
+# In case we want to select a subset of features
+# df_ = df[['Class','V9','V14','V16','V2','V3','V17']]
+df_ = df[['Class','V4','V14','V16','V12','V3','V17']]
+X = df_.drop(columns='Class').to_numpy()
+y = df_['Class'].to_numpy()
+
+for idx_t, idx_v in cv.split(X,y):
+    X_train = X[idx_t]
+    y_train = y[idx_t]
+    X_val = X[idx_v]
+    y_val = y[idx_v]
+    
+    # Now we need to erase the FRAUD cases on the TRAINING set  
+    X_train_normal = X_train[y_train==0]
+
+# this is the size of our encoded representations
+ENCODED_DIM = 2
+INPUT_DIM = X.shape[1]
+
+from keras.layers import Input, Dense
+from keras.models import Model
+from keras.models import Sequential
+from keras.layers import Dense, Activation
+from keras.layers import LeakyReLU
+
+def create_encoder(input_dim, encoded_dim):
+    encoder = Sequential([
+        Dense(32, input_shape=(input_dim,)),
+        LeakyReLU(),
+        Dense(16),
+        LeakyReLU(),
+        Dense(8),
+        LeakyReLU(),
+        Dense(encoded_dim)
+    ], name='encoder')
+    return encoder
+
+def create_decoder(input_dim, encoded_dim):
+    decoder = Sequential([
+    Dense(8, input_shape=(encoded_dim,) ),
+    LeakyReLU(),
+    Dense(16),
+    LeakyReLU(),
+    Dense(8),
+    LeakyReLU(),
+    Dense(input_dim)
+],name='decoder')
+    return decoder
+
+
+
+def create_autoencoder(input_dim, encoded_dim, return_encoder = True):
+    encoder = create_encoder(input_dim,encoded_dim)
+    decoder = create_decoder(input_dim,encoded_dim)
+    inp = Input(shape=(INPUT_DIM,),name='Input_Layer')
+
+    # a layer instance is callable on a tensor, and returns a tensor
+    x_enc = encoder(inp)
+    x_out = decoder(x_enc)
+
+
+    # This creates a model that includes
+    # the Input layer and three Dense layers
+    autoencoder = Model(inputs=inp, outputs=x_out)
+    if return_encoder:
+        return autoencoder, encoder
+    else:
+        return autoencoder
+
+autoencoder, encoder = create_autoencoder(INPUT_DIM,ENCODED_DIM)
+print('ENCODER SUMMARY\n')
+print(encoder.summary())
+print('AUTOENCODER SUMMARY\n')
+print(autoencoder.summary())
+
+autoencoder.compile(optimizer='adam',
+              loss='mean_squared_error')
+
+autoencoder.fit(x=X_train_normal, y= X_train_normal,
+                   batch_size=512,epochs=40, validation_split=0.1)  # starts training
+
+X_enc = encoder.predict(X_val)
+X_enc_normal = X_enc[y_val==0]
+X_enc_fraud = X_enc[y_val==1]
+sns.scatterplot(x = X_enc_normal[:,0], y = X_enc_normal[:,1] ,label='Normal', alpha=0.5)
+sns.scatterplot(x = X_enc_fraud[:,0], y = X_enc_fraud[:,1] ,label='Fraud')
+
+X_out = autoencoder.predict(X_val)
+print(X_out.shape)
+
+X_val.shape
+
+distances = np.sum((X_out-X_val)**2,axis=1)
+
+bins = np.linspace(0,np.max(distances),40)
+sns.distplot(distances[y_val==0],label='Normal',kde=False, 
+             bins=bins, norm_hist=True, axlabel='Distance')
+sns.distplot(distances[y_val==1],label='Fraud',kde=False, bins=bins, norm_hist=True)
+
+bins = np.linspace(0,100,40)
+sns.distplot(distances[y_val==0],label='Normal',kde=False, 
+             bins=bins, norm_hist=True, axlabel='Distance')
+sns.distplot(distances[y_val==1],label='Fraud',kde=False, bins=bins, norm_hist=True)
+plt.xlim((0,100))
+
+from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_validate
+from sklearn.metrics import f1_score
+
+def clf_autoencoder(X,autoencoder,threshold):
+    """
+    Classifier based in the autoencoder.
+    A datapoint is a nomaly if the distance of the original points
+    and the result of the autoencoder is greater than the threshold.
+    """
+    X_out = autoencoder.predict(X)
+    distances = np.sum((X_out-X)**2,axis=1).reshape((-1,1))
+    # y_pred = 1 if it is anomaly
+    y_pred = 1.*(distances > threshold )
+    return y_pred
+
+cv = StratifiedShuffleSplit(n_splits=VAL_SPLITS,test_size=0.15,random_state=0)
+# Thresholds to validate
+thresholds = np.linspace(0,100,100)
+# List with the f1 of all the thresholds at each validation fold
+f1_all = [] 
+for i,(idx_t, idx_v) in enumerate(cv.split(X,y)):
+    X_train = X[idx_t]
+    y_train = y[idx_t]
+    X_val = X[idx_v]
+    y_val = y[idx_v]
+    # Now we need to erase the FRAUD cases on the TRAINING set  
+    X_train_normal = X_train[y_train==0]
+    
+    # Train the autoencoder
+    autoencoder, encoder = create_autoencoder(INPUT_DIM,ENCODED_DIM)
+    autoencoder.compile(optimizer='adam',
+              loss='mean_squared_error')
+    autoencoder.fit(x=X_train_normal, y= X_train_normal,
+                   batch_size=512,epochs=30, shuffle=True,
+                   verbose=0)  # starts training
+    
+    # Plot of the validation set in the embedding space
+    X_enc = encoder.predict(X_val)
+    X_enc_normal = X_enc[y_val==0]
+    X_enc_fraud = X_enc[y_val==1]
+    sns.scatterplot(x = X_enc_normal[:,0], y = X_enc_normal[:,1] ,label='Normal', alpha=0.5)
+    sns.scatterplot(x = X_enc_fraud[:,0], y = X_enc_fraud[:,1] ,label='Fraud')
+    plt.show()
+    
+    # Transformation of the points through the autoencoder 
+    # and calculate the predictions
+    y_preds=clf_autoencoder(X_val,autoencoder,thresholds)
+    
+    metrics_f1 = np.array([ f1_score(y_val,y_pred) for y_pred in y_preds.T  ])
+    f1_all.append(metrics_f1)
+    
+    # Save the models into files for future use
+    autoencoder.save('models_autoencoder/autoencoder_fold_'+str(i+1)+'.h5')
+    encoder.save('models_autoencoder/encoder_fold_'+str(i+1)+'.h5')
+    del(autoencoder,encoder)
+
+f1_mean = np.mean(f1_all,axis=0) 
+# Plot of F1-Threshold curves
+for i,f1_fold in enumerate(f1_all):
+    sns.lineplot(thresholds,f1_fold, label='Fold '+str(i+1))
+sns.scatterplot(thresholds,f1_mean,label='Mean')
+plt.show()
+f1_opt = f1_mean.max()
+threshold_opt = thresholds[np.argmax(f1_mean)]
+print('F1 max = {:.3f} at threshold = {:.3f}'.format(f1_opt,threshold_opt))

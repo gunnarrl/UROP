@@ -1,0 +1,741 @@
+%matplotlib notebook
+
+import math
+import matplotlib.pyplot as plt
+import time
+import numpy as np
+from IPython.display import HTML, display, clear_output
+
+# Polar coordinate transformations
+def polar2cart(r, theta):
+    return (r * math.cos(theta), r * math.sin(theta))
+
+def cart2polar(x, y):
+    return (math.sqrt(x**2 + y**2), math.atan2(y, x))
+
+np.random.seed(42)  # seed with superior number
+
+def eight_trajectory(t, A, w):
+    return (A * math.sin(w * t), A * math.sin(2 * w * t))
+
+
+def constant_trajectory(t, A, w, x=10000, y=10000):
+    return (x, y)
+
+
+def limacon_trajectory(t, A, w):  # t is degrees
+    r = 0.5 + math.cos(math.radians(t))
+    cx, cy = polar2cart(r, math.radians(t))
+    return (cx * 9000 - 6000, cy * 8400)
+
+
+class plane(object):
+    obj_count = 0
+
+    def __init__(self,
+                 x0=0,
+                 y0=0,
+                 t0=0,
+                 v=300,
+                 q=9,
+                 sigma=1.,
+                 trajectory_fx=eight_trajectory):
+        self.id = plane.obj_count
+        plane.obj_count += 1
+        self.name = ' plane '+str(self.id)
+        dt = 0.5
+        # Newton Dynamics Model
+        F = np.array([[1, dt, 0.5 * (dt**2), 0, 0, 0], [0, 1, dt, 0, 0, 0],
+                      [0, 0, 1, 0, 0, 0], [0, 0, 0, 1, dt, 0.5 * (dt**2)],
+                      [0, 0, 0, 0, 1, dt], [0, 0, 0, 0, 0, 1]])
+        D = (sigma**2) * np.array(
+            [[0.25 * (dt**4), 0.5 * (dt**3), 0.5 * (dt**2), 0, 0, 0],
+             [0.5 * (dt**3),
+              (dt**2), dt, 0, 0, 0], [0.5 * (dt**2), dt, 1, 0, 0, 0],
+             [0, 0, 0, 0.25 * (dt**4), 0.5 * (dt**3), 0.5 * (dt**2)],
+             [0, 0, 0, 0.5 * (dt**3),
+              (dt**2), dt], [0, 0, 0, 0.5 * (dt**2), dt, 1]])
+        self.F = F
+        self.D = D
+        self.x0 = x0
+        self.y0 = y0
+        self.x = self.x0
+        self.y = self.y0
+        self.t = t0
+        self.traj_fx = trajectory_fx
+        self.set_params(v, q)
+        # step
+        self.step(dt=0)
+
+    # We can use adaptive v and q! 
+    def set_params(self, v, q):
+        self.v = v
+        self.q = q
+        self.A = (v**2) / q
+        self.w = q / (2 * v)
+
+    # Update plane location
+    def step(self, dt):
+        self.t += dt
+        (self.x, self.y) = self.traj_fx(self.t, self.A, self.w)
+        self.x += self.x0
+        self.y += self.y0
+
+    # Return the x,y-pos -> external sensor readings
+    def get_position(self):
+        return (self.x, self.y)
+
+class world(object):
+    def __init__(self):
+        self.objs = []
+
+    def add_obj(self, dyn_obj):
+        self.objs.append(dyn_obj)
+
+    def step(self, dt):
+        for obj in self.objs:
+            obj.step(dt)
+
+    def get_objects(self):
+        return self.objs
+
+class SensorCooldownException(
+        Exception):  # this happens if sensor is not ready to measure.
+    pass
+
+
+class pos_sensor(object):  # original angular deviation was 0.0035
+    sensor_count = 0
+
+    def __init__(self,
+                 world,
+                 location=[0, 0],
+                 cart_sigma=0,
+                 polar_sigma=(20, 0.00135),
+                 latency=0,
+                 offset=0,
+                 clutter_prob=.1,
+                 clutter_rad=10000):
+        self.id = pos_sensor.sensor_count
+        pos_sensor.sensor_count += 1
+        self.name = ' sensor '+str(self.id)
+        self.cart_sigma = cart_sigma
+        self.polar_sigma = polar_sigma
+        self.location = location
+        self.polars = []
+        self.latency = latency
+        self.lastsense = -1 * latency
+        self.world = world
+        self.offset = offset
+        self.clutter_prob = clutter_prob
+        self.clutter_rad = clutter_rad
+
+    def sense(self, time):
+        if self.lastsense + self.latency + self.offset <= time:
+            self.polars = []
+            for obj in self.world.objs:
+                self.force_sense(obj)
+            self.lastsense = time
+            
+            clutter_threshold = self.clutter_prob
+            while clutter_threshold > 0:
+                rn = np.random.rand()
+                clutter_threshold -= rn
+                r = np.random.uniform(low=0, high=self.clutter_rad)
+                phi = np.random.uniform(low=0, high=2 * math.pi)
+                self.polars.append((r, phi))
+        else:
+            raise SensorCooldownException('Sensor not ready to measure again')
+
+    def force_sense(self, dyn_object):
+        cart_pos = dyn_object.get_position()
+        cart_pos = self.apply_cart_noise(cart_pos)
+        dx = (cart_pos[0] - self.location[0])
+        dy = (cart_pos[1] - self.location[1])
+        clear_polar = cart2polar(dx, dy)
+        self.polars.append(self.apply_polar_noise(clear_polar))
+
+    def read_last(self):
+        return self.polars
+
+    # TODO: not only cartesian, but also polar noise! (or either of both)
+    def apply_cart_noise(self, vec):
+        return vec + self.cart_sigma * np.random.multivariate_normal(
+            mean=[0, 0], cov=[[1, 0], [0, 1]])
+
+    def apply_polar_noise(self, vec):
+        range_n = vec[0] + self.polar_sigma[0] * np.random.normal()
+        angle_n = vec[1] + self.polar_sigma[1] * np.random.normal()
+        return (range_n, angle_n)
+
+
+class Track():
+    def __init__(self, Xs=[], Ps=[]):
+        # X, P, are the outputs of the Kalman Filter
+        self.Xs = list(Xs)  # array of the means (state variable x) of the output of the Kalman Filter
+        self.Ps = list(Ps)  # array of the covariances of the output of the Kalman Filter
+        
+    def append(self, x, P):
+        self.Xs.append(x)
+        self.Ps.append(P)
+
+
+class planemodel(object):
+    F = np.identity(3)
+    D = np.zeros((1, 3))
+
+
+class KalmanFilter(object):
+    obj_count = 0
+
+    def __init__(self, x0, P0, F, D):
+        self.filter_steps = 0
+        self.id = KalmanFilter.obj_count
+        KalmanFilter.obj_count += 1
+        self.track = Track()
+        self.raw_track = Track()
+        self.set_dynamics_matrices(F, D)
+        self.set_state(x0, P0)
+    def get_state(self):
+        return self.x
+
+    def get_full_state(self):
+        return self.x, self.P
+
+    def set_state(self, x, P):
+        self.x = x
+        self.P = P
+
+    def set_sensor_matrices(self, H, sigma_phi, sigma_r):
+        self.H = H
+        self.sigma_phi = sigma_phi
+        self.sigma_r = sigma_r
+
+    # Set the dynamics and sensor model
+    def set_dynamics_matrices(self, F, D):
+        self.F = F  # Dynamics
+        self.D = D  # Dynamics Noise
+
+    # Kalman Filter prediction-step
+    def predict(self):
+        xp = np.dot(self.F, self.x)
+        Pp = np.dot(np.dot(self.F, self.P), self.F.T) + self.D
+        self.set_state(xp, Pp)
+        self.track.append(xp, Pp)
+        self.raw_track.append(xp, Pp)
+
+    def set_sensor_noise(self, polar_z):
+        phi = polar_z[1]
+        r = polar_z[0]
+        D_phi = np.array([[math.cos(phi), -math.sin(phi)],
+                          [math.sin(phi), math.cos(phi)]])
+        S_r = np.array([[self.sigma_r**2, 0], [0, (r * self.sigma_phi)**2]])
+        self.R = np.dot(np.dot(D_phi, S_r), D_phi.T)
+
+    # Kalman Filter filter-step - correction
+    def filter(self, cartesian_z):
+        self.filter_steps += 1
+        v = cartesian_z - np.dot(self.H, self.x)  # Prediction Error
+
+        S = np.dot(np.dot(self.H, self.P),
+                   self.H.T) + self.R  # Uncertainty of current measurement (?)
+        W = np.dot(np.dot(self.P, self.H.T), np.linalg.inv(S))  # Kalman Gain
+        xf = self.x + np.dot(W, v)  # Filtered state
+
+        # P = (I-WH)P(I-WH)' + WRW'
+        # This is more numerically stable (Joseph Form)
+        Id = np.eye(self.x.shape[0])  # 6: dim_x
+        Id_WH = Id - np.dot(W, self.H)
+        Pf = np.dot(np.dot(Id_WH, self.P), Id_WH.T) + np.dot(
+            np.dot(W, self.R), W.T)
+        # vs numerically unstable version: (see slides)
+        # Pf = self.P - np.dot(np.dot(W,S),W.T)
+
+        self.set_state(xf, Pf)  # Update class variables
+        self.track.Xs[-1] = xf
+        self.track.Ps[-1] = Pf
+        self.raw_track.Xs[-1] = xf
+        self.raw_track.Ps[-1] = Pf
+        
+        self.track = self.retrodict(self.raw_track)
+            
+    def retrodict(self, track):
+        n = len(track.Xs)
+        dim_x = track.Xs[0].size
+        # in our model, F and D is allways the same for each tracking obj.
+        Fs = [self.F] * n
+        Ds = [self.D] * n
+        # retrodiction gain
+        W = np.zeros((n, dim_x, dim_x))
+
+        Xs = np.array(track.Xs)
+        Ps = np.array(track.Ps)
+
+        x, P, Pp = Xs.copy(), Ps.copy(), Ps.copy()
+
+        for k in range(n - 2, -1, -1):
+            Pp[k] = np.dot(np.dot(Fs[k + 1], P[k]), Fs[k + 1].T) + Ds[k + 1]
+            W[k] = np.dot(np.dot(P[k], Fs[k + 1].T), np.linalg.inv(Pp[k]))
+            x[k] += np.dot(W[k], x[k + 1] - np.dot(Fs[k + 1], x[k]))
+            P[k] += np.dot(np.dot(W[k], P[k + 1] - Pp[k]), W[k].T)
+                
+        return Track(x, P)
+
+class Agent(object):
+    def __init__(self, min_dist=1000):
+        self.targets = []
+        self.kfs = []
+        self.sensors = []
+        self.sensor_data = []
+        self.new_sensor_data = []
+        self.min_dist = min_dist
+
+    def add_sensor(self, sensor):
+        self.sensors.append(sensor)
+
+    def register_object(self, dyn_object):
+        x0 = np.array([[dyn_object.x, 0, 0, dyn_object.y, 0, 0]]).T
+        P0 = np.eye(6) * 10**8
+        kf = KalmanFilter(x0=x0, P0=P0, F=dyn_object.F, D=dyn_object.D)
+        self.kfs.append(kf)
+
+    def read_new_data(self):
+        data = self.new_sensor_data
+        self.new_sensor_data = []
+        return data
+
+    def step(self, time):
+        for kf in self.kfs:
+            kf.predict()
+        for sensor in self.sensors:
+            try:
+                sensor.sense(time)
+                readpolars = sensor.read_last()
+                index = 0
+                for readpolar in readpolars:
+                    cx, cy = polar2cart(readpolar[0], readpolar[1])
+                    cartesian = np.array(
+                        [[sensor.location[0] + cx, sensor.location[1] + cy]]).T
+                    data = [cartesian, sensor.id]
+                    self.sensor_data.append(data)
+                    self.new_sensor_data.append(data)
+
+                    H = np.array([[1, 0, 0, 0, 0, 0], [0, 0, 0, 1, 0, 0]])
+
+                    nearest_kf = None
+                    min_dist = 10**10
+                    for kf in self.kfs:
+                        state = np.dot(H, kf.get_state())
+                        dist = math.sqrt((cartesian[0] - state[0])**2 +
+                                         (cartesian[1] - state[1])**2)
+                        if (dist < min_dist):
+                            min_dist = dist
+                            nearest_kf = kf
+                    min_filter_steps = 10**6
+                    for kf in self.kfs:
+                        min_filter_steps = min(min_filter_steps, kf.filter_steps)
+                    if min_filter_steps < 5:
+                        nearest_kf = self.kfs[index]
+                        index = index + 1
+                        nearest_kf.set_sensor_matrices(
+                            H=H,
+                            sigma_phi=sensor.polar_sigma[1],
+                            sigma_r=sensor.polar_sigma[0])
+                        nearest_kf.set_sensor_noise(
+                            [readpolar[0], readpolar[1]])
+                        nearest_kf.filter(cartesian)
+                        if index >= len(self.kfs):
+                            break
+                    elif min_dist < self.min_dist:
+                        nearest_kf.set_sensor_matrices(
+                            H=H,
+                            sigma_phi=sensor.polar_sigma[1],
+                            sigma_r=sensor.polar_sigma[0])
+                        nearest_kf.set_sensor_noise(
+                            [readpolar[0], readpolar[1]])
+                        nearest_kf.filter(cartesian)
+            except SensorCooldownException:  # To be expected when we query the sensor too often
+                pass
+
+    def get_kf_state(self, kf_idx=0):
+        return self.kfs[kf_idx].get_full_state()
+
+    def get_kf_track(self, kf_idx=0):
+        return self.kfs[kf_idx].track
+
+    def get_tracks(self):
+        tracks = []
+        for kf in kfs:
+            tracks.append(kf.track)
+        return tracks
+
+from __future__ import print_function
+from matplotlib.patches import Ellipse
+
+from ipywidgets import interact, interactive, fixed, interact_manual
+import ipywidgets as widgets
+
+from matplotlib.patches import Ellipse
+
+class plotter(object):
+    colormap = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', 
+                '#bcf60c', '#fabebe', '#008080', '#e6beff', '#9a6324',  '#800000', '#aaffc3', 
+                '#808000', '#ffd8b1', '#000075', '#808080', '#000000']
+    def __init__(self,world, agent, sleep_dt, shadows=[100, 100, None]):
+        self.obj_shadow = shadows[0]
+        self.pred_shadow = shadows[1]
+        self.marker_shadow = shadows[2]
+        self.markersizes = [5, 1, 3, 10] # sensor, truth, filtered, sensor_base
+        self.sleep_dt = sleep_dt # in seconds
+        self.plotray = False
+        self.init_canvas()
+        self.init_world_plot(world)
+        self.init_agent_plot(agent)
+        self.init_sensor_plot()
+
+        
+    # SENSOR
+    def init_sensor_plot(self):
+        self.sensor_plotdata=[]
+        for sensor in self.agent.sensors:
+            self.sensor_plotdata.append({})
+            self.sensor_plotdata[-1]['sensor'] = sensor
+            self.sensor_plotdata[-1]['locx'] = sensor.location[0]
+            self.sensor_plotdata[-1]['locy'] = sensor.location[1]
+            self.sensor_plotdata[-1]['readx'] = self.sensor_plotdata[-1]['locx']
+            self.sensor_plotdata[-1]['ready'] = self.sensor_plotdata[-1]['locy']
+            self.sensor_plotdata[-1]['rayx'] = [self.sensor_plotdata[-1]['locx'], self.sensor_plotdata[-1]['readx']]
+            self.sensor_plotdata[-1]['rayy'] = [self.sensor_plotdata[-1]['locy'], self.sensor_plotdata[-1]['ready']]
+            self.sensor_plotdata[-1]['readxlist'] = []
+            self.sensor_plotdata[-1]['readylist'] = []
+            if self.marker_shadow is None:
+                self.sensor_plotdata[-1]['shadow'] = int(self.obj_shadow/sensor.latency)
+            else:
+                self.sensor_plotdata[-1]['shadow'] = self.marker_shadow
+            self.sensor_plotdata[-1]['readline'], = self.ax.plot(self.sensor_plotdata[-1]['readxlist'], self.sensor_plotdata[-1]['readylist'], 'o', markersize=self.markersizes[0], color=self.colormap[sensor.id])
+            if self.plotray:
+                self.sensor_plotdata[-1]['rayline'], = self.ax.plot(self.sensor_plotdata[-1]['rayx'], self.sensor_plotdata[-1]['rayy'], '-', linewidth=1, color=self.colormap[sensor.id])
+            self.sensor_plotdata[-1]['marker'], = self.ax.plot(self.sensor_plotdata[-1]['locx'], self.sensor_plotdata[-1]['locy'], 's', color=self.colormap[sensor.id], markersize=self.markersizes[3])
+            self.sensor_plotdata[-1]['text'] = self.ax.text(self.sensor_plotdata[-1]['locx'], self.sensor_plotdata[-1]['locy'], sensor.name)
+            self.sensor_plotdata[-1]['text'].set_fontsize('x-small')
+    def update_sensors(self, sensor_data):
+        for line in sensor_data:
+          # TODO: fix rays
+            sensor_id = line[1]
+            read = line[0]
+            self.sensor_plotdata[sensor_id]['readx'] = read[0]
+            self.sensor_plotdata[sensor_id]['ready'] = read[1]
+            self.sensor_plotdata[sensor_id]['readxlist'].append(read[0])
+            self.sensor_plotdata[sensor_id]['readylist'].append(read[1])
+            self.sensor_plotdata[sensor_id]['readxlist'] = self.sensor_plotdata[sensor_id]['readxlist'][-self.sensor_plotdata[sensor_id]['shadow']:]
+            self.sensor_plotdata[sensor_id]['readylist'] = self.sensor_plotdata[sensor_id]['readylist'][-self.sensor_plotdata[sensor_id]['shadow']:]
+    def plot_sensor(self):
+        for sensor in self.sensor_plotdata:
+            if self.plotray:
+                sensor['rayline'].set_xdata(sensor['rayx'])
+                sensor['rayline'].set_ydata(sensor['rayy'])
+            sensor['readline'].set_xdata(sensor['readxlist'])
+            sensor['readline'].set_ydata(sensor['readylist'])
+        
+    def show_sensors(self, show_sensors):
+        if show_sensors:
+            for sensor in self.sensor_plotdata:
+                sensor['readline'].set_alpha(1.)
+                sensor['marker'].set_alpha(1.)
+                sensor['text'].set_alpha(1.)
+        else:
+            for sensor in self.sensor_plotdata:
+                sensor['readline'].set_alpha(0.)
+                sensor['marker'].set_alpha(0.)
+                sensor['text'].set_alpha(0.)
+    # PLANE
+    def init_world_plot(self, world):
+        self.world = world
+        self.world_plotdata=[]
+        for obj in world.objs:
+            self.world_plotdata.append({})
+            self.world_plotdata[-1]['obj_x'] = []
+            self.world_plotdata[-1]['obj_y'] = []
+            self.world_plotdata[-1]['obj'] = obj
+            self.world_plotdata[-1]['obj_line'], = self.ax.plot(self.world_plotdata[-1]['obj_x'], self.world_plotdata[-1]['obj_y'], 'o', color=self.colormap[-obj.id], markersize=self.markersizes[1])
+            self.world_plotdata[-1]['obj_text'] = self.ax.text(0, 0, self.world_plotdata[-1]['obj'].name)
+            self.world_plotdata[-1]['obj_text'].set_fontsize('x-small')
+    def update_world(self):
+        for obj in self.world.objs:
+            (objx, objy) = obj.get_position()
+            self.world_plotdata[obj.id]['obj_x'].append(objx)
+            self.world_plotdata[obj.id]['obj_y'].append(objy)
+            self.world_plotdata[obj.id]['obj_x'] = self.world_plotdata[obj.id]['obj_x'][-self.obj_shadow:]
+            self.world_plotdata[obj.id]['obj_y'] = self.world_plotdata[obj.id]['obj_y'][-self.obj_shadow:]
+            self.world_plotdata[obj.id]['obj_text'].set_position((objx, objy))
+    def plot_world(self):
+        for obj in self.world.objs:
+            self.world_plotdata[obj.id]['obj_line'].set_xdata(self.world_plotdata[obj.id]['obj_x'])
+            self.world_plotdata[obj.id]['obj_line'].set_ydata(self.world_plotdata[obj.id]['obj_y'])
+        
+    def init_agent_plot(self, agent):
+        self.agent = agent
+        self.track_plotdata=[]
+        for kf in self.agent.kfs:
+            self.track_plotdata.append({})
+            self.track_plotdata[-1]['trackx'] = []
+            self.track_plotdata[-1]['tracky'] = []
+            self.track_plotdata[-1]['trackx_raw'] = []
+            self.track_plotdata[-1]['tracky_raw'] = []
+            self.track_plotdata[-1]['kf'] = kf
+            self.track_plotdata[-1]['trackline'], = self.ax.plot(self.track_plotdata[-1]['trackx'], self.track_plotdata[-1]['tracky'], 'o-', markersize=self.markersizes[2], color=self.colormap[-kf.id])
+            self.track_plotdata[-1]['trackline_raw'], = self.ax.plot(self.track_plotdata[-1]['trackx_raw'], self.track_plotdata[-1]['tracky_raw'], 'o-', markersize=self.markersizes[2], color=self.colormap[-kf.id], alpha=0.4)
+            self.track_plotdata[-1]['covmat'] = np.zeros([6,6])
+            self.track_plotdata[-1]['covellipse'] = self.track_plotdata[kf.id]['covellipse'] = Ellipse(xy=(0,0),width=0, height=0,angle=0)
+            self.track_plotdata[-1]['covellipse'].set_facecolor('r')
+            self.track_plotdata[-1]['covellips_alpha'] = 1.
+            self.ax.add_artist(self.track_plotdata[-1]['covellipse'])
+    def update_agent(self):
+        for kf in self.agent.kfs:
+            self.track_plotdata[kf.id]['trackx'] = np.array(kf.track.Xs)[-self.pred_shadow:,0]
+            self.track_plotdata[kf.id]['tracky'] = np.array(kf.track.Xs)[-self.pred_shadow:,3]
+            self.track_plotdata[kf.id]['trackx_raw'] = np.array(kf.raw_track.Xs)[-self.pred_shadow:,0]
+            self.track_plotdata[kf.id]['tracky_raw'] = np.array(kf.raw_track.Xs)[-self.pred_shadow:,3]
+            self.track_plotdata[kf.id]['covmat'] = np.array(kf.track.Ps)[-1,:]
+          
+        
+    def plot_agent(self):
+        for kf in self.agent.kfs:
+            if not self.track_plotdata[kf.id]['covellipse'] is None:
+                self.track_plotdata[kf.id]['covellipse'].remove()
+            # get eigen values
+            lambda_, v = np.linalg.eig(self.track_plotdata[kf.id]['covmat'])
+            lambda_ = np.sqrt(lambda_)
+
+            self.track_plotdata[kf.id]['covellipse'] = Ellipse(xy=(self.track_plotdata[kf.id]['trackx'][-1], self.track_plotdata[kf.id]['tracky'][-1]),
+                  width=lambda_[0]*4, height=lambda_[3]*4,
+                  angle=np.rad2deg(np.arccos(v[0, 0])))
+
+            self.track_plotdata[kf.id]['covellipse'].set_facecolor('r')
+            self.track_plotdata[kf.id]['covellipse'].set_alpha(self.track_plotdata[kf.id]['covellips_alpha'])
+            self.ax.add_artist(self.track_plotdata[kf.id]['covellipse'])
+            self.track_plotdata[kf.id]['trackline'].set_xdata(self.track_plotdata[kf.id]['trackx'])
+            self.track_plotdata[kf.id]['trackline'].set_ydata(self.track_plotdata[kf.id]['tracky'])
+            self.track_plotdata[kf.id]['trackline_raw'].set_xdata(self.track_plotdata[kf.id]['trackx_raw'])
+            self.track_plotdata[kf.id]['trackline_raw'].set_ydata(self.track_plotdata[kf.id]['tracky_raw'])
+    
+    def show_tracks(self, show_track):
+        if show_track:
+            for track in self.track_plotdata:
+                track['trackline_raw'].set_alpha(.3)
+                track['covellipse'].set_alpha(1.)
+                track['covellips_alpha'] = 1.
+        else:
+            for track in self.track_plotdata:
+                track['trackline_raw'].set_alpha(0.)
+                track['covellipse'].set_alpha(0.)
+                track['covellips_alpha'] = 0.
+                
+    def show_tracks_retrodiction(self, show_retrodiction):
+        if show_retrodiction:
+            for track in self.track_plotdata:
+                track['trackline'].set_alpha(1.)
+        else:
+            for track in self.track_plotdata:
+                track['trackline'].set_alpha(0.)
+                
+    def show_truth(self, show_truth):
+        if show_truth:
+            for obj in self.world.objs:
+                self.world_plotdata[obj.id]['obj_line'].set_alpha(1.)
+                self.world_plotdata[obj.id]['obj_text'].set_alpha(1.)
+        else:
+            for obj in self.world.objs:
+                self.world_plotdata[obj.id]['obj_line'].set_alpha(0.)
+                self.world_plotdata[obj.id]['obj_text'].set_alpha(0.)
+            
+    def set_sleeptime(self, sleeptime):
+        self.sleep_dt = sleeptime
+    # GENERAL
+    def init_canvas(self):
+        self.fig,self.ax = plt.subplots(1,1, figsize=(10, 7))
+        self.ax.set_xlabel('X')
+        self.ax.set_ylabel('Y')
+        self.xlimits = [-11000, 11000]
+        self.ylimits = [-11000, 11000]
+        self.ax.set_xlim(self.xlimits[0], self.xlimits[1])
+        self.ax.set_ylim(self.ylimits[0], self.ylimits[1])
+    def plot_step(self, t):
+        self.plot_world()
+        self.plot_sensor()
+        self.plot_agent()
+        
+        #self.fig.canvas.draw()
+        self.ax.set_title('Simulation in t='+str(t))
+        plt.pause(self.sleep_dt)
+
+import time
+
+class simulator(object):
+    def __init__(self, sleep_dt, setup=0):
+        self.pause = False
+        self.stop = False
+        self.world = world()
+
+        if setup==0:
+            clutter_prob = 0.
+            shadows = [100, 100, None]
+            
+            # objects
+            self.world.add_obj(
+                plane(v=300, sigma=80, t0=-15, trajectory_fx=eight_trajectory))
+            
+            # agent
+            self.agent = Agent(min_dist=1000000)
+            
+            # sensors
+            self.agent.add_sensor(pos_sensor(location=[7000, -7000],clutter_prob=clutter_prob, world=self.world,latency=1,offset=0,polar_sigma=(400, 0.135)))
+        elif setup==1:
+            clutter_prob = 0.
+            shadows = [100, 100, None]
+            
+            # objects
+            self.world.add_obj(
+                plane(v=300, sigma=10, t0=-15, trajectory_fx=eight_trajectory))
+            self.world.add_obj(
+                plane(v=300, sigma=10, trajectory_fx=limacon_trajectory))
+            
+            # agent
+            self.agent = Agent(min_dist=3000)
+            
+            # sensors
+            self.agent.add_sensor(pos_sensor(location=[7000, -7000],clutter_prob=clutter_prob, world=self.world,latency=6,offset=0,polar_sigma=(150, 0.035)))
+        elif setup==2:
+            clutter_prob = 0.
+            shadows = [100, 100, None]
+            
+            # objects
+            self.world.add_obj(
+                plane(v=300, sigma=10, t0=-15, trajectory_fx=eight_trajectory))
+            self.world.add_obj(
+                plane(v=300, sigma=10, trajectory_fx=limacon_trajectory))
+            
+            # agent
+            self.agent = Agent(min_dist=3000)
+            
+            # sensors
+            self.agent.add_sensor(pos_sensor(location=[7000, -7000],clutter_prob=clutter_prob, world=self.world,latency=6,offset=0,polar_sigma=(150, 0.035)))
+            self.agent.add_sensor(pos_sensor(location=[-7000, 7000],clutter_prob=clutter_prob, world=self.world,latency=6,offset=1,polar_sigma=(150, 0.035)))
+            self.agent.add_sensor(pos_sensor(location=[-7000, -7000],clutter_prob=clutter_prob, world=self.world,latency=6,offset=2,polar_sigma=(150, 0.035)))
+            self.agent.add_sensor(pos_sensor(location=[7000, 7000],clutter_prob=clutter_prob, world=self.world,latency=6,offset=3,polar_sigma=(150, 0.035)))
+        elif setup==3:
+            clutter_prob = 80
+            shadows = [100, 100, 400]
+            
+            # objects
+            self.world.add_obj(
+                plane(v=300, sigma=1, t0=-10, trajectory_fx=eight_trajectory))
+            self.world.add_obj(
+                plane(v=300, sigma=1, trajectory_fx=limacon_trajectory))
+            
+            # agent
+            self.agent = Agent(min_dist=400)
+            
+            #sensors 
+            self.agent.add_sensor(pos_sensor(location=[7000, -7000],clutter_prob=clutter_prob, clutter_rad=27000, world=self.world,latency=2,offset=0,polar_sigma=(5, 0.0035)))
+            self.agent.add_sensor(pos_sensor(location=[-7000, 7000],clutter_prob=clutter_prob, clutter_rad=27000, world=self.world,latency=2, offset=1,polar_sigma=(5, 0.0035)))
+        elif setup==4:
+            clutter_prob = 4
+            shadows = [40, 40, 50]
+            
+            # objects
+            self.world.add_obj(
+                plane(v=300, sigma=1, t0=-10, trajectory_fx=eight_trajectory))
+            self.world.add_obj(
+                plane(v=300, sigma=1, trajectory_fx=limacon_trajectory))
+            
+            # agent
+            self.agent = Agent(min_dist=2400)
+            
+            #sensors 
+            self.agent.add_sensor(pos_sensor(location=[7000, -7000],clutter_prob=clutter_prob, clutter_rad=27000, world=self.world,latency=2,offset=0,polar_sigma=(300, 0.04)))
+            
+        for obj in self.world.objs:
+            self.agent.register_object(obj)
+
+        self.plotter = plotter(
+            world=self.world, agent=self.agent, sleep_dt=sleep_dt, shadows=shadows)
+
+    def pause_simu(self, pause_simu):
+        self.pause = pause_simu
+        
+    def call_stop(self):
+        self.stop = True
+        
+    def run(self, t_max, dt):
+        t = 0
+        
+        #out = display('fig', display_id=True)
+        while t < t_max - dt and not self.stop:
+            if self.pause:
+                time.sleep(0.2)
+                continue
+            # Simulate
+            self.world.step(dt)
+            (px, py) = self.world.objs[0].get_position()
+
+            self.agent.step(time=t)
+
+            # Plotting
+            if t > 0:
+                self.plotter.update_world()
+                self.plotter.update_sensors(self.agent.read_new_data())
+                self.plotter.update_agent()
+                self.plotter.plot_step(t)
+                #out.update(self.plotter.fig)
+            t += dt
+
+import sys
+import threading
+from IPython.display import display 
+
+def run_trial(setup=0, steps=1000):
+    np.random.seed(42)  # seed RNG
+    pos_sensor.sensor_count = 0
+    KalmanFilter.obj_count = 0
+    plane.obj_count = 0
+
+    simu = simulator(sleep_dt=0.15, setup=setup)
+    
+    def run_simu():
+        simu.run(steps, 2)
+
+    simu_thread = threading.Thread(target=run_simu)
+    simu_thread.daemon = True
+    simu_thread.start()
+
+    button = widgets.Button(description="Kill Sim")
+    display(button)
+
+    def on_button_clicked(b):
+        simu.call_stop()
+
+    button.on_click(on_button_clicked)
+    
+    interact(simu.pause_simu, pause_simu=False)
+    interact(simu.plotter.show_tracks, show_track=True)
+    interact(simu.plotter.show_tracks_retrodiction, show_retrodiction=True)
+    interact(simu.plotter.show_sensors, show_sensors=True)
+    interact(simu.plotter.show_truth, show_truth=True)
+    interact(simu.plotter.set_sleeptime, sleeptime=widgets.FloatSlider(min=0.01,max=1,step=0.01,value=0.2));
+
+# one okish sensor
+run_trial(0, 1000)
+
+# one bad sensor
+# two objects
+run_trial(1, 1000)
+
+# multiple bad sensors.
+run_trial(2, 1000)
+
+# false measuremts two sensors
+run_trial(3, 800)
+
+# what can go wrong when very bad sensor and noisy env with multiple objects - measurement assignment!!
+run_trial(4, 80)

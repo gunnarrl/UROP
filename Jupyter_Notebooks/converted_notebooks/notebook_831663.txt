@@ -1,0 +1,105 @@
+# Example iterator.
+
+import collections
+
+
+class RangeIterator(collections.Iterator):
+    """Naive implementation of builtins.range() iterator."""
+    def __init__(self, stop):
+        if not isinstance(stop, int):
+            raise TypeError('stop must be an int')
+        if stop < 0:
+            raise ValueError('stop must be >= 0')
+        super().__init__()
+        self.stop = stop
+        self.next_item = 0 if (stop > 0) else StopIteration()
+        
+    def __repr__(self):
+        return f"<{self.__class__.__name__}({self.stop!r}): next_item={self.next_item!r}>"
+    
+    # __iter__ is already defined in `collections.Iterator` as
+    #
+    # def __iter__(self):
+    #     return self
+    
+    def __next__(self):
+        item = self.next_item
+        if isinstance(item, StopIteration):
+            raise StopIteration
+        self.next_item += 1
+        if self.next_item >= self.stop:
+            self.next_item = StopIteration()
+        return item
+
+range_iterator = RangeIterator(2)
+range_iterator
+
+iter(range_iterator), iter(range_iterator) is range_iterator
+
+next(range_iterator), range_iterator
+
+next(range_iterator), range_iterator
+
+import traceback
+
+try:
+    next(range_iterator)
+except StopIteration:
+    traceback.print_exc()
+
+next(range_iterator, 2)
+
+# Example iterable.
+
+import collections
+
+
+class RangeIterable(collections.Iterable):
+    """Naive implementation of an builtins.range() iterable."""
+    def __init__(self, stop):
+        super().__init__()
+        self.stop = stop
+        
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.stop!r})"
+    
+    def __iter__(self):
+        return RangeIterator(stop=self.stop)
+
+range_iterable = RangeIterable(2)
+range_iterable
+
+import traceback
+
+try:
+    next(range_iterable)
+except TypeError:
+    traceback.print_exc()
+
+iter(range_iterable)
+
+iter(range_iterable) is range_iterable
+
+iter(range_iterable) is iter(range_iterable)
+
+next(iter(range_iterable))
+
+for item in RangeIterable(2):
+    print(item)
+
+def manual_simplified_for_loop(iterable, function):
+    iterator = iter(iterable)
+    running = True
+    while running:
+        try:
+            item = next(iterator)
+        except StopIteration:
+            running = False
+        else:
+            function(item)
+
+manual_simplified_for_loop(RangeIterable(2), print)
+
+list(RangeIterable(5))
+
+list(filter(None, RangeIterable(5)))

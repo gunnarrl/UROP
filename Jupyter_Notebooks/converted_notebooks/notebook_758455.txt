@@ -1,0 +1,85 @@
+import json
+import pandas as pd
+import nltk
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+import altair as alt
+
+
+path_to_file = 'json_dump.json'
+
+with open(path_to_file) as file:
+    chat_history = json.load(file)
+
+chat_history.keys()
+
+messages = pd.DataFrame(chat_history['messages'])
+
+messages.head()
+
+
+# helper function
+def convert_time(timestamp):
+    return pd.to_datetime(timestamp,
+                          unit='ms') # because that's our format from json
+
+# create new column
+messages['date'] = messages['timestamp_ms'].apply(convert_time)
+
+messages.head(2)
+
+# helper functions
+def get_month(date):
+    return date.month
+
+def get_year(date):
+    return date.year
+
+
+# create new columns
+messages['month'] = messages['date'].apply(get_month)
+messages['year'] = messages['date'].apply(get_year)
+
+
+# download dictionary of words 
+# with positive/negative scores assigned
+nltk.download('vader_lexicon')
+
+# create analyser object
+sentiment_analyser = SentimentIntensityAnalyzer()
+
+# get polarity scores
+sentiment_analyser.polarity_scores('Have you ever wondered about all the personal data that Facebook collects on its over 2 billion users? It’s time to harness the information Facebook has on you for your own good and discover some insights.')
+
+# helper function
+def get_polarity(text):
+    # we're only interested in the compound score
+    return sentiment_analyser.polarity_scores(text)['compound']
+
+
+# create new column for polarity scores
+messages['sentiment'] = messages['content'].apply(get_polarity)
+
+messages.head()
+
+
+messages.groupby(
+    'sender_name',
+    as_index=False)['sentiment'].mean(
+).sort_values('sentiment',
+              ascending=False)
+
+
+year_month = messages.groupby(
+    ['month',
+     'year',
+     'sender_name'],
+    as_index=False)['sentiment'].mean()
+
+year_month.head()
+
+
+alt.Chart(year_month).mark_line().encode(
+    x='month',
+    y='sentiment',
+    color='sender_name'
+)

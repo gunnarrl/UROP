@@ -1,0 +1,224 @@
+# Imports
+import joblib
+import json
+import pandas as pd
+import os
+import sys
+
+
+from os.path import dirname
+from joblib import Parallel, delayed
+from sklearn.model_selection import KFold
+
+# Custom imports
+
+root_dir = dirname(dirname(os.getcwd()))
+src_dir = os.path.join(root_dir, 'src')
+resc_dir = os.path.join(root_dir, 'resc')
+libs_dir = os.path.join(root_dir, 'resc')
+data_dir = os.path.join(resc_dir, 'data')
+tidy_dir = os.path.join(data_dir, 'tidy')
+
+sys.path.append(libs_dir)
+sys.path.append(src_dir)
+
+from exp.runner.RunMercs import RunMercs
+from exp.runner.RunExp import RunExp
+
+from exp.utils import filesystem as fs
+
+def build_single_csv(config, dataset):
+    config['io']['dirs']['raw_dataset'] = fs.make_dname(name=dataset, parent_dir=config['io']['dirs']['raw'])
+    config['io']['dirs']['data_dataset'] = fs.make_dname(name=dataset, parent_dir=config['io']['dirs']['input_data'])
+
+    config['io']['file']['raw'] = fs.make_fname(name=dataset,
+                                                extension='csv',
+                                                dname=config['io']['dirs']['raw_dataset'])
+
+    # Joining test, valid and train
+    fnames = os.listdir(config['io']['dirs']['raw_dataset'])
+    fnames = [os.path.join(config['io']['dirs']['raw_dataset'],f)
+              for f in fnames
+              if ('train' in f or 'test' in f or 'valid' in f)]
+
+    dfs = [pd.read_csv(f, header=None) for f in fnames]
+
+    # Join
+    df_all=pd.concat(dfs)
+
+    # Drop constant columns (These for sure need to go.)
+    df_all = drop_constant_columns(df_all)
+
+    # Save
+    df_all.to_csv(config['io']['file']['raw'], header=None, index=False)
+
+    msg = """
+    Done building single csv for dataset:  {}
+    """.format(dataset)
+    #print(msg)
+    return msg
+
+
+def drop_constant_columns(df):
+    for col in df:
+        if df[col].nunique() < 2:
+            df = df.drop([col], axis=1)
+
+    return df
+
+
+def split_in_folds(config, dataset, **kwargs):
+
+    config['io']['dirs']['raw_dataset'] = fs.make_dname(name=dataset, parent_dir=config['io']['dirs']['raw'])
+    config['io']['dirs']['data_dataset'] = fs.make_dname(name=dataset, parent_dir=config['io']['dirs']['input_data'])
+
+    fs.ensure_dir(config['io']['dirs']['data_dataset'])
+
+    config['io']['file']['raw'] = fs.make_fname(name=dataset,
+                                                extension='csv',
+                                                dname=config['io']['dirs']['raw_dataset'])
+
+    fname = config['io']['file']['raw']
+    X = pd.read_csv(fname, header=None)
+
+    kf = KFold(**kwargs)
+
+    for f_idx, (train_idx, test_idx) in enumerate(kf.split(X)):
+        dfs = {'Train': X.iloc[train_idx, :],
+               'Test':  X.iloc[test_idx, :]}
+
+        for mode in ['Train', 'Test']:
+            msg = [mode, fs.gen_appendix(f_idx, kind='fold')]
+            fold_fname = fs.insert_msg_in_fname(fname, msg)
+            fold_fname = fs.alter_directory_fname(fold_fname, config['io']['dirs']['data_dataset'])
+
+            dfs[mode].to_csv(fold_fname, header=None, index=False)
+    return
+
+
+def detect_constant_cols(directory):
+
+    ds_fnames = [os.path.join(directory, f) for f in os.listdir(directory)
+                   if 'bayesfusion' not in f]
+
+    ds_train_fnames = [os.path.join(directory, f) for f in os.listdir(directory)
+                       if 'Train' in f
+                       if 'bayesfusion' not in f]
+
+    cte_cols = []
+
+    # Detect constant colums
+    for ds_fn in ds_train_fnames:
+        # Read
+        df = pd.read_csv(ds_fn, header=None)
+
+        cte_cols_here = [c for c in df if df[c].nunique() < 2]
+        cte_cols.extend(cte_cols_here)
+
+        del df
+
+    cte_cols = list(set(cte_cols))
+
+    print(cte_cols)
+
+    # Remove these cols everywhere
+    for ds_fn in ds_fnames:
+        df = pd.read_csv(ds_fn, header=None)
+        for col in cte_cols:
+            df = df.drop([col], axis=1)
+
+        df.to_csv(ds_fn, header=None, index=False)
+        del df
+
+    msg = """
+    Finished directory: {}
+    """.format(directory)
+    #print(msg)
+
+    return msg
+
+
+config = {}
+config['io'] = {}
+config['io']['dirs']={}
+config['io']['file']={}
+
+config['io']['dirs']['data'] = data_dir
+config['io']['dirs']['raw'] = fs.make_dname(name='raw', parent_dir=config['io']['dirs']['data'])
+config['io']['dirs']['input_data'] = fs.make_dname(name='tidy', parent_dir=config['io']['dirs']['data'])
+
+datasets = os.listdir(config['io']['dirs']['raw'])
+datasets.sort()
+
+for ds in datasets:
+    build_single_csv(config, ds)
+    msg = """
+    Done building dataset: {}
+    """.format(ds)
+    print(msg)
+
+datasets = os.listdir(config['io']['dirs']['raw'])
+datasets.sort()
+
+Parallel(n_jobs=6)(delayed(build_single_csv)(config, ds)
+                   for ds in datasets)
+
+datasets = os.listdir(config['io']['dirs']['raw'])
+datasets.sort()
+for ds in datasets:
+    split_in_folds(config, ds, n_splits=10, random_state=997, shuffle=True)
+    msg = """
+    Done splitting dataset: {}
+    """.format(ds)
+    print(msg)
+
+datasets = os.listdir(config['io']['dirs']['raw'])
+datasets.sort()
+
+Parallel(n_jobs=4)(delayed(split_in_folds)(config, ds, n_splits=10, random_state=997, shuffle=True)
+                   for ds in datasets)
+
+datasets = os.listdir(tidy_dir)
+datasets.sort()
+ds_dirs = [os.path.join(tidy_dir, ds) for ds in datasets]
+ds_dirs
+
+Parallel(n_jobs=6)(delayed(detect_constant_cols)(ds_dir) for ds_dir in ds_dirs)
+
+def read_modify_write(in_fname):
+
+    if 'bayesfusion' in in_fname:
+        return
+    elif '.csv' not in in_fname:
+        return
+    else:
+        # Read
+        df = pd.read_csv(in_fname, header=None)
+
+        # Modify
+        bf_columns = ["att_{}".format(x) for x in df.columns.values]
+        df.columns = bf_columns
+
+        # Write
+        base, ext = os.path.splitext(in_fname)
+        out_fname = base+"_bayesfusion"+ext
+        df.to_csv(out_fname, index=False)
+
+        msg = """
+        Succesful modification of file: {}
+        Results written to: {}
+        """.format(in_fname, out_fname)
+        #print(msg)
+
+    return
+
+def bayesfusionize_dir(directory):
+    ds_fnames = [os.path.join(directory, x) for x in os.listdir(directory)]
+    ds_fnames.sort()
+    for f in ds_fnames:
+        read_modify_write(f)
+    return "Ready for Bayesfusion"
+
+
+
+Parallel(n_jobs=6)(delayed(bayesfusionize_dir)(ds) for ds in ds_dirs)

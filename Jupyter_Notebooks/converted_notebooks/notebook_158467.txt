@@ -1,0 +1,185 @@
+# importing relevant modules
+import matplotlib.pyplot   as plt
+
+from pandas                import read_csv, to_datetime
+from numpy                 import reshape, array
+from datetime              import datetime
+from sklearn.preprocessing import MinMaxScaler
+from keras.layers          import Dense, Dropout, LSTM, Input, TimeDistributed
+from keras.models          import Model
+from keras_tqdm            import TQDMNotebookCallback
+from IPython.display       import SVG, display
+from keras.utils.vis_utils import model_to_dot
+from keras.callbacks       import EarlyStopping
+
+%matplotlib inline
+
+#For Demonstration purpose only, 
+rawData = read_csv('sample_data.csv')
+rawData[0:5]  #first five records in the dataset
+
+def Read_File(file: int = 0, split: float = 0.05, reduce: int = 0):          #File size (in MB)
+  
+    # Read input sample data into a data frame.
+    df = read_csv('sample_data.csv')
+    
+    # Append 'date' column to the sample dataframe.
+    # Uses the Unix timestamp to create equivalent date
+    # This attribute will be used to calculate the daily weighted average
+    df['date'] = to_datetime(df['Timestamp'],unit='s').dt.date
+    
+    # Store the average weighted price per day (in USD).
+    daily_average = [df.groupby('date')['Weighted_Price'].mean(),
+                     df.groupby('date')['Weighted_Price'].mean()][0].values
+    
+    #reduce file, if desired.
+    if reduce and reduce < len(daily_average):
+        daily_average = daily_average[len(daily_average) - 1 - reduce:]
+        
+    #Gaurantees at least one testing example.
+    partition     = min(-int(split*len(daily_average)), -1)
+    
+    training_set, testing_set = daily_average[:partition], daily_average[partition:]
+    
+    # Create instance of min-max scaler.
+    sc                        = MinMaxScaler(feature_range = (0, 1))
+    
+    # Reshape training and testing sets and then perform min-max scaling.
+    training_set, testing_set = sc.fit_transform(reshape(training_set, (len(training_set), 1))), \
+                                sc.transform(reshape(testing_set, (len(testing_set), 1)))
+    
+    
+    return training_set[:-1], training_set[1:], testing_set[:-1], testing_set[1:], sc
+
+#Plot results.
+def Plot(data1, data2, title: str = '', label1: str = '', label2: str = '', ylabel: str = '', scatter: bool = True):
+    plt.figure(figsize   = (25,15),
+               dpi       = 80,
+               facecolor = 'w',
+               edgecolor = 'k')
+    
+    ax = plt.gca()
+
+    x  = [_ for _ in range(len(data1))]
+    
+    if scatter:
+        plt.plot(data1, 
+                 color = '#AA00FF',
+                 ls    = 'dashed')
+        plt.plot(data2,
+                 color = '#000000',
+                 ls    = 'dashed')
+        plt.scatter(x,
+                   data1,
+                   label = label1,
+                   color = '#AA00FF',
+                   s     = 50)
+        plt.scatter(x,
+                   data2,
+                   label = label2,
+                   color = '#000000',
+                   s     = 50)
+    else:
+        plt.bar(x,
+                reshape(data1, (len(data1))),
+                label = label1,
+                color = '#AA00FF')
+        plt.bar(x,
+                reshape(data2, (len(data2))),
+                label = label2,
+                color = '#000000',
+                alpha = 0.5)
+
+    plt.title(title,
+              fontsize = 40)
+
+    for tick in ax.xaxis.get_major_ticks():
+        tick.label1.set_fontsize(18)
+    for tick in ax.yaxis.get_major_ticks():
+        tick.label1.set_fontsize(18)
+
+    plt.xlabel('Time (days)',
+               fontsize = 40)
+    plt.ylabel(ylabel,
+               fontsize = 40)
+    plt.legend(loc  = 'best',
+               prop = {'size': 25})
+
+    plt.show()
+
+# Get percent change results for plotting.
+Get_Percent_Change = lambda p: [100*(e2 - e1)/e1 for e1, e2 in zip(reshape(p[:-1], p[:-1].shape), reshape(p[1:], p[1:].shape))]
+
+# Create training/testing arrays and store min-max scaler so we can perform inverse transform later.
+x_train, y_train, x_test, y_test, sc = Read_File()
+
+#Reshape the training and testing input so that it meets the specifications of the net input.
+x_train                              = reshape(x_train, (len(x_train), 1, 1))
+x_test                               = reshape(x_test, (len(x_test), 1, 1))
+
+# Building the model
+lstm_units  = 100
+inputs      = Input(shape = x_train[0].shape)
+
+layer       = LSTM(units            = lstm_units,
+                   return_sequences = False,
+                   activation       = 'selu')(inputs)
+
+layer       = Dropout(0.2)(layer)
+
+predictions = Dense(units      = 1,
+                    activation = 'linear')(layer)
+
+model       = Model(inputs, predictions)
+
+model.compile(loss      = 'mse',
+              optimizer = 'adadelta',
+              metrics   = ['accuracy'])
+
+# Visual representation of net.
+SVG(model_to_dot(model).create(prog='dot', format='svg'))
+
+# Fitting the RNN to the Training set
+
+epoch_size= 500
+history = model.fit(x                = x_train,
+                    y                = y_train,
+                    batch_size       = len(x_train),
+                    epochs           = epoch_size,
+                    validation_split = 0.2,
+                    verbose          = 0,
+                    shuffle          = False,
+                    callbacks        = [TQDMNotebookCallback() ])#EarlyStopping(patience = 3)])
+
+plt.figure()
+# summarize history for accuracy
+plt.subplot(211)
+plt.plot(history.history['acc'])
+plt.plot(history.history['val_acc'])
+plt.title('model accuracy')
+plt.ylabel('accuracy')
+plt.xlabel('epoch')
+plt.legend(['train', 'test'], loc='upper left')
+# summarize history for loss
+plt.subplot(212)
+plt.plot(history.history['loss'])
+plt.plot(history.history['val_loss'])
+plt.title('model loss')
+plt.ylabel('loss')
+plt.xlabel('epoch')
+plt.legend(['train', 'test'], loc='upper left')
+plt.tight_layout()
+plt.show()
+
+# Comparing our model's output, given the training data, to the expected output.
+actual_prices_train       = sc.inverse_transform(y_train)[:-1]
+predicted_BTC_price_train = sc.inverse_transform(model.predict(x_train))[1:]
+
+Plot(actual_prices_train, predicted_BTC_price_train, \
+     "BTC Price Prediction for Training Data", "Real BTC Price", "Predicted BTC Price", "BTC Price (USD)")
+
+#Predicting the future.
+actual_prices_test       = sc.inverse_transform(y_test)[:-1]
+predicted_BTC_price_test = sc.inverse_transform(model.predict(x_test))[1:]
+
+Plot(actual_prices_test, predicted_BTC_price_test, "BTC Price Prediction for Testing Data", "Real BTC Price", "Predicted BTC Price", "BTC Price (USD)")

@@ -1,0 +1,74 @@
+import os, sys, glob, scipy
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+base_dir = os.path.realpath('') 
+data_dir = base_dir + '/Data'
+
+data = pd.read_csv(data_dir + '/Study1_UG.csv')
+data = data[['sub','trial','unfairness','choice']]
+data['offer'] = 100 - data['unfairness']
+data.head()
+
+sub = 2
+sub_data = data.query('sub == 2')
+sub_data.head()
+
+# Always accept
+def model_1(offer):
+    
+    
+    
+    return choice
+
+# Always reject
+def model_2(offer):
+    
+    
+    
+    return choice
+
+# Act random
+def model_3(offer):
+    
+    
+    
+    return choice
+
+# Maximize payoff
+def model_4(offer):
+    
+    
+    
+    
+    return choice
+
+# Minimize payoff
+def model_5(offer):
+    
+    
+    
+    
+    return choice
+
+# Unfairness punisher
+def model_6(offer):
+    
+    
+    
+    
+    return choice
+
+# Inequity aversion
+def model_7(offer):
+    
+    
+    
+    
+    return choice
+
+simulated_sub_data = sub_data[['trial','offer','choice']].copy()
+simulated_sub_data['choice'] = np.nan
+simulated_sub_data.head()

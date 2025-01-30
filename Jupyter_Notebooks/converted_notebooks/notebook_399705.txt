@@ -1,0 +1,196 @@
+# import packages
+import pandas as pd
+import numpy as np
+import datetime as dt
+import matplotlib.pyplot as plt
+from statsmodels.tsa.api import VAR
+
+# import data
+stationary = pd.read_csv('stationary_data_all.csv', index_col = 0)
+stationary.tail()
+
+# stationary index to datetime
+stationary.index = pd.DatetimeIndex(stationary.index).date
+
+# pick start date for your analysis
+# look at last step and see when data starts to be consistent
+start_date = dt.date(2012, 1, 1)
+stationary = stationary[start_date : ]
+stationary.head()
+
+# create train data (80/20 split)
+train = stationary[ : int(0.8*(len(stationary)))].copy()
+
+# create VAR model on train data
+model = VAR(endog = train)
+
+# see the different lag order suggestions to pick your information criterion
+print(model.select_order(trend = 'c'))
+
+# fit model to train data
+# model_fit is a VARResultsWrapper object
+model_fit = model.fit(ic = 'aic', trend = 'c')
+# number of lags
+num_lag = model_fit.k_ar
+num_lag
+
+# model_fit summary
+model_fit.summary()
+
+# example one day forecast into the future using train data
+## IMPORTANT = data has to be in ndarray format. use '.values' on y argument ##
+model_fit.forecast(y = train.values, steps = 1)
+
+# create function so that we can iterate model_fit.forecast() over test data
+# VAR also has the method 'predict' but it doesn't work so we have to do this the hard way
+
+def predict(data, fitted_model, lag_order, predict_steps):
+    # empty list for our predictions
+    prediction = []
+  
+    # for loop to iterate fitted_model over data
+    for i in range(lag_order, len(data)):
+        # window of lagged data that the model uses to predict next observation
+        window = data.iloc[i - lag_order : i].copy()
+        # results of fitted_model being applied to window
+        results = fitted_model.forecast(y = window.values, steps = predict_steps)
+        # append results to prediction list
+        prediction.append(results)
+        
+    # convert prediction (which is a list of numpy arrays) to a dataframe
+    df = np.vstack(prediction)
+    df = pd.DataFrame(df)
+    # df column names from data
+    df.columns = list(data.columns)
+    # df index from data
+    df.index = data.iloc[len(data) - len(prediction) :].index
+    
+    # return df
+    return df
+
+# create error functions
+
+# root mean squared error
+def rmse(predicted, actual):
+    # formula for rmse
+    residual = predicted - actual
+    residual_sq = residual ** 2
+    mean_sq = np.mean(residual_sq)
+    rmse_value = np.sqrt(mean_sq)
+    # return rmse_value
+    return rmse_value
+
+# mean absolute error
+def mae(predicted, actual):
+    # formula for mae
+    absolute_residual = np.absolute(predicted - actual)
+    mae_value = np.mean(absolute_residual)
+    # return mae_value
+    return mae_value
+
+# function that returns lineplot of predicted vs actual data w/ rmse and mae, and histograph of the residual
+
+def model_graphs(predicted, actual, title = str):
+    # RMSE
+    rmse_value = rmse(predicted = predicted, actual = actual)
+    # MAE
+    mae_value = mae(predicted = predicted, actual = actual)
+    # start_year (for putting in text box)
+    start_year = predicted.iloc[ : 1].index.copy()
+    # text box in line plot
+    text_str = 'RMSE = ' + str(rmse_value) + '\n MAE = ' + str(mae_value)
+    # line plot
+    plt.figure(1)
+    plt.plot(actual, color = 'blue', linewidth = 2, label = 'actual')
+    plt.plot(predicted, color = 'red', linewidth = 1, label = 'predicted')
+    plt.legend()
+    plt.title(title + ' Actual vs Predicted')
+    plt.text(x = start_year, y = 0.2, s = text_str)
+    # residual & hist
+    plt.figure(2)
+    residual = actual - predicted
+    plt.hist(residual, bins = 200)
+    plt.title('Distribution of ' + title + ' residual')
+    plt.axvline(residual.mean(), color = 'k', linestyle = 'dashed', linewidth = 1)
+    # show graphics
+    plt.show()
+
+# function classifies price movement each day as either going up(if positive) or down(negative)
+def category(x):
+    if x >= 0:
+        return 'up'
+    elif x < 0:
+        return 'down'
+
+# function that returns confusion matrix of model with metrics
+def confusion_matrix(predicted, actual, title = str):
+    df = pd.DataFrame()
+    df['predicted'] = predicted.apply(category)
+    df['actual'] = actual.apply(category)
+    # code
+    df.loc[(df['predicted'] == 'up') & (df['actual'] == 'up'), 'code'] = 'true_positive'
+    df.loc[(df['predicted'] == 'up') & (df['actual'] == 'down'), 'code'] = 'false_positive'
+    df.loc[(df['predicted'] == 'down') & (df['actual'] == 'down'), 'code'] = 'true_negative'
+    df.loc[(df['predicted'] == 'down') & (df['actual'] == 'up'), 'code'] = 'false_negative'
+    # confusion dictionary
+    z = dict(df['code'].value_counts())
+    # confusion metrics
+    accuracy = (z['true_positive'] + z['true_negative']) / (z['true_positive'] + z['true_negative'] + z['false_positive'] + z['false_negative'])
+    true_positive_rate = z['true_positive'] / (z['true_positive'] + z['false_negative'])
+    false_positive_rate = z['false_positive'] / (z['false_positive'] + z['true_negative'])
+    true_negative_rate = z['true_negative'] / (z['true_negative'] + z['false_positive'])
+    false_negative_rate = z['false_negative'] / (z['false_negative'] + z['true_positive'])
+    # print metrics
+    print('\nMetrics for [{0}]\nAccuracy:{1:6.3f} \nTP Rate:{2:7.3f} \nFP Rate:{3:7.3f}\nTN Rate:{4:7.3f} \nFN Rate:{5:7.3f}'.format(str(title), accuracy, true_positive_rate, false_positive_rate, true_negative_rate, false_negative_rate))
+    # print confusion matrix graph
+    print('\n'+
+      '            [{title}] Confusion Matrix\n'.format(title = str(title))+
+      '\n'+
+      '           |-------------|-------------|\n'+
+      '  n= {0}  | Predicted:  | Predicted:  |\n'.format(z['true_positive']+z['false_positive']+z['true_negative']+z['false_negative'])+
+      '           |    Down     |    Up       |\n'+
+      '|----------|-------------|-------------|------------|\n'+
+      '| Actual:  |             |             |            |\n'+
+      '|  Down    |  tn: {0}    |  fp: {1}    |    {2}     |\n'.format(z['true_negative'], z['false_positive'], z['true_negative']+z['false_positive'])+
+      '|----------|-------------|-------------|------------|\n'+
+      '| Actual:  |             |             |            |\n'+
+      '|   UP     |  fn: {0}    |  tp: {1}    |    {2}    |\n'.format(z['false_negative'], z['true_positive'] ,z['false_negative']+z['true_positive'])+
+      '|----------|-------------|-------------|------------|\n'+
+      '           |             |             |\n'+
+      '           |      {0}    |      {1}   |\n'.format(z['true_negative']+z['false_negative'], z['false_positive']+z['true_positive'])+
+      '           |-------------|-------------|\n')
+    # return df
+    return df
+
+# train results
+train_predicted = model_fit.fittedvalues.copy()
+train_actual = train.iloc[num_lag : len(train)]
+
+# graphs
+model_graphs(predicted = train_predicted['price'], actual = train_actual['price'], title = 'Training')
+
+# confusion matrix
+train_confusion = confusion_matrix(predicted = train_predicted['price'], actual = train_actual['price'], title = 'Train')
+
+# test results
+# test_lag contains the last 'num_lag' number of observations of the training data in order to make the forecast for the first "real" test observation
+test_lag = stationary.iloc[len(train) - num_lag :]
+test_predicted = predict(data = test_lag, fitted_model = model_fit, lag_order = num_lag, predict_steps = 1)
+test_actual = stationary.iloc[len(train) :]
+
+# graphs
+model_graphs(predicted = test_predicted['price'], actual = test_actual['price'], title = 'Test')
+
+# confusion matrix
+test_confusion = confusion_matrix(predicted = test_predicted['price'], actual = test_actual['price'], title = 'Test')
+
+# persistent model data over test data
+persistent_predicted = stationary.shift(1)
+persistent_predicted = persistent_predicted.iloc[len(train) : ]
+persistent_actual = test_actual.copy()
+
+# graphs
+model_graphs(predicted = persistent_predicted['price'], actual = persistent_actual['price'], title = 'Persistent')
+
+# confusion matrix
+persistent_confusion = confusion_matrix(predicted = persistent_predicted['price'], actual = persistent_actual['price'], title = 'Persistent')

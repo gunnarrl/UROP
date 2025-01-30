@@ -1,0 +1,206 @@
+compiled_data = {}
+import glob, os, json, platform
+from pprint import pprint
+import pandas as pd
+import numpy as np
+
+
+def save_jsonfile(fn, data):
+    file = fn
+    with open(file, 'w') as outfile:
+        json.dump(data, outfile)
+    print("File saved!", file)
+    
+def create_base(name, actor, sensor, channel):
+    
+    if not name in compiled_data: 
+        compiled_data[name]= {}
+    if not actor in compiled_data[name]:
+        compiled_data[name][actor] = {}
+    if not sensor in compiled_data[name][actor]:
+        compiled_data[name][actor][sensor] = {}
+    if channel:
+        if not channel in compiled_data[name][actor][sensor]:
+            compiled_data[name][actor][sensor][channel] = {}
+    
+
+
+
+
+
+VIDEO_ROOT = "data/video_data/"
+WEB = "web/*.webm"
+RAW = "raw/*.MOV"
+MP4 = "mp4/*.mp4"
+
+import datetime
+
+compiled_data = {}
+def process_video(RAW, MP4):
+    #SKIP PROCESSED FILES
+    #RUN FFMPEG SCRIPT
+    pass
+
+
+def append_data(root, directory, actor, sensor, channel, type):
+    videos = glob.glob(root + directory)
+    for i in videos:
+        if platform.system() == "Darwin":
+            posix_time = os.stat(i).st_birthtime
+            t = datetime.datetime.fromtimestamp(posix_time).strftime(
+                '%Y-%m-%dT%H:%M:%SZ')
+            session = os.path.basename(i).split('.')[0]
+            url = "/" + i
+            
+            create_base(session, actor, sensor, channel)
+            
+            sensor_data = {'url': url, 'timestamp': posix_time, 'c_time': t, 'type': type}
+            compiled_data[session][actor][sensor][channel] = sensor_data
+
+
+append_data(VIDEO_ROOT, RAW, "env", "video", "raw", "link")
+append_data(VIDEO_ROOT, MP4, "env", "video", "mp4", "video")
+append_data(VIDEO_ROOT, WEB, "env", "video", "web", "link")
+
+print(json.dumps(compiled_data, indent=2))
+
+MAXQDA_OUTPUT="codes.csv"
+CODES_ROOT="codes/"
+file = VIDEO_ROOT + CODES_ROOT + MAXQDA_OUTPUT
+print(file)
+df = pd.read_csv(file)
+
+start = pd.to_datetime(df['Begin'])
+end = pd.to_datetime(df['End'])
+t0 = start[0]
+print(t0)
+df['t_i'] = (start - t0).dt.total_seconds().astype(int) # Don't need millisecond precision for hand-coded codes
+df['t_f'] = (end - t0).dt.total_seconds().astype(int)
+df.drop(['Begin', 'End'], 1)
+
+data = {}
+for index, row in df.iterrows():
+    user = row[0]
+    codes = row[1].split("\\")
+    if not user in data: 
+        data[user] = []
+    codes2 = list(map(lambda x: x.lower(), codes[2:]))
+    data[user].append({
+        'codes': codes2,
+        'start': row[4],
+        'end': row[5],
+        'actor': codes[1].lower()
+    })
+    
+for user in data:
+    file = VIDEO_ROOT + CODES_ROOT + user + ".json"
+    save_jsonfile(file, data[user])
+append_data(VIDEO_ROOT, CODES_ROOT + "*.json", "env", "video","codes", "codes_chart")
+print(json.dumps(compiled_data, indent=2))
+
+# Gather sensor files
+SENSOR_ROOT = "data/sensor_data/"
+IMU = "*.json"
+append_data(SENSOR_ROOT, IMU, "iron", "imu", "various", "zip")
+# print(json.dumps(compiled_data, indent=2))
+
+# # DO NOT RUN AGAIN
+# # #Separate channels within IMU
+# imu_files = SENSOR_ROOT + IMU
+
+# videos = glob.glob(imu_files)
+# for i in videos:
+#     if platform.system() == "Darwin":
+#         posix_time = os.stat(i).st_birthtime
+#         t = datetime.datetime.fromtimestamp(posix_time).strftime(
+#             '%Y-%m-%dT%H:%M:%SZ')
+#         name = os.path.basename(i).split('.')[0]
+#         file = {
+#             'name': name,
+#             'timestamp': posix_time,
+#             'c_time': t,
+#             'type': "motion"
+#         }
+        
+        
+#         f = open(i, 'r')
+#         data = json.load(f)
+#         for k in data: 
+#             data[k]['timestamp'] = posix_time
+#             data[k]['c_time'] = t
+#         f.close()
+        
+#         # Re-open file here
+#         f2 = open(i, 'w')
+#         json.dump(data, f2)
+#         f2.close()
+
+BIO_ROOT = "data/bio_data/"
+
+videos = glob.glob(BIO_ROOT + "*")
+
+def grab_and_save_data(user, sensor, name, file, df, columns):
+    timestamp = df.columns[0]
+    sampling_rate = df.iloc[[0]][timestamp][0].astype(int)
+    df = df.iloc[1:]
+    data = {
+        'name': name,
+        'timestamp': int(float(timestamp)),
+        'sampling_rate': int(sampling_rate)
+    }
+
+    for i in range(len(columns)):
+        name = columns[i]
+        data[name] = df.iloc[:,i].values.tolist()
+
+    save_jsonfile(file, data)
+    if user not in compiled_data:
+        compiled_data[user] = {'bio': {}}
+    if 'bio' not in compiled_data[user]:
+        compiled_data[user]['bio'] = {}
+    compiled_data[user]['bio'][sensor] = "/"+file
+        
+for session in videos:
+    bio_data = glob.glob(session + "/*.csv")
+    user = os.path.basename(session)
+    for sensor in bio_data: 
+        sensor_name = name = os.path.basename(sensor).split('.')[0].lower()
+        print(sensor)
+        try: 
+            df = pd.read_csv(sensor)
+        except pd.io.common.EmptyDataError:
+            print("Empty file:", sensor)
+            continue
+        
+        # CONVERT CSV FILES INTO JSON         
+        file = session + "/" + sensor_name + ".json"
+        
+        # SENSOR SPECIFIC PARSING
+        if sensor_name == "temp":
+            grab_and_save_data(user, sensor_name, "Temperature (C)", file, df, ['celsius'])
+        if sensor_name == "tags":
+            pass
+        if sensor_name == "acc":
+            grab_and_save_data(user, sensor_name, "3-Axis Accelerometer (1/64g)", file, df, ['x', 'y', 'z'])
+        if sensor_name == "eda":
+            grab_and_save_data(user, sensor_name, "Electrodermal Activity (μS)", file, df, ['mag'])
+        if sensor_name == "bvp":
+            grab_and_save_data(user, sensor_name, "Blood Volume Pulse (BVP) from PPG", file, df, ['mag'])
+        if sensor_name == "hr":
+            grab_and_save_data(user, sensor_name, "Heart rate", file, df, ['mag'])
+            
+
+
+import json
+COMPILED_DATA = "data/compiled.json"
+save_jsonfile(COMPILED_DATA, compiled_data)
+print(json.dumps(compiled_data, indent=2))
+
+#RUN BASH SCRIPT
+#DO NOT COPY LARGE VIDEO FILES
+import subprocess
+print("start")
+output = subprocess.call("bash transfer.sh", shell=True)
+a = subprocess.Popen("ls",shell=True)
+print(output)
+print("end")

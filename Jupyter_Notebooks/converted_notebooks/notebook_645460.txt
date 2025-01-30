@@ -1,0 +1,150 @@
+import os
+
+extension = ['.wav']
+
+extension = ('.wav')
+
+def get_wav(parentpath, extension, listes = []):
+    ''' 
+    Objectif: elle a pour but de parcourir les dossiers et tant qu'il n'y a plus de dossier il s'arrete .
+    
+    Parameters: Path du dossier racine, liste des extensions a rechercher, listes des fichiers trouver dans le path. 
+    
+    Return: listes des extensions rechercher
+    
+    '''
+    for root, dirs, files in os.walk(parentpath):
+        for name in files:
+            if name.endswith((extension)):
+                listes.append(os.path.join(name))
+    return  listes       
+
+mega = get_wav('data/MEGA/', extension)
+
+emotion_1 = []
+for item in mega:
+    if (item[5:-10]=='02' or item[5:-10]=='06' or item[5:-10]=='06s' or item[5:-10]=='07' or item[5:-10]=='07i' or item[5:-10]=='09' or item[5:-10]=='09i' or item[5:-10]=='10')\
+    and (item[7:-7]=='col' or item[7:-7]=='col1'):
+        emotion_1.append('femme_colere') 
+        
+    if (item[5:-10]=='01' or item[5:-10]=='03' or item[5:-10]=='04' or item[5:-10]=='05' or item[5:-10]=='08' or item[5:-10]=='08c' or item[5:-10]=='08t')\
+    and (item[7:-7]=='col' or item[7:-7]=='col1'):
+        emotion_1.append('homme_colere')
+           
+    if (item[5:-10]=='02' or item[5:-10]=='06' or item[5:-10]=='06s' or item[5:-10]=='07' or item[5:-10]=='07i' or item[5:-10]=='09' or item[5:-10]=='09i' or item[5:-10]=='10')\
+    and item[7:-7]=='peu':
+        emotion_1.append('femme_Peur')
+        
+    if (item[5:-10]=='01' or item[5:-10]=='03' or item[5:-10]=='04' or item[5:-10]=='05' or item[5:-10]=='08' or item[5:-10]=='08c' or item[5:-10]=='08t')\
+    and item[7:-7]=='peu':
+        emotion_1.append('homme_Peur')
+    
+    if (item[5:-10]=='02' or item[5:-10]=='06' or item[5:-10]=='06s' or item[5:-10]=='07' or item[5:-10]=='07i' or item[5:-10]=='09' or item[5:-10]=='09i' or item[5:-10]=='10')\
+    and item[7:-7]=='joi':
+        emotion_1.append('femme_Joie')
+        
+    if (item[5:-10]=='01' or item[5:-10]=='03' or item[5:-10]=='04' or item[5:-10]=='05' or item[5:-10]=='08' or item[5:-10]=='08c' or item[5:-10]=='08t')\
+    and item[7:-7]=='joi':
+        emotion_1.append('homme_Joie')
+
+    
+    if (item[5:-10]=='02' or item[5:-10]=='06' or item[5:-10]=='06s' or item[5:-10]=='07' or item[5:-10]=='07i' or item[5:-10]=='09' or item[5:-10]=='09i' or item[5:-10]=='10')\
+    and (item[7:-7]=='tri' or item[7:-7]=='tri1'):
+        emotion_1.append('femme_Tristesse')
+        
+    if (item[5:-10]=='01' or item[5:-10]=='03' or item[5:-10]=='04' or item[5:-10]=='05' or item[5:-10]=='08' or item[5:-10]=='08c' or item[5:-10]=='08t')\
+    and (item[7:-7]=='tri' or item[7:-7]=='tri1'):
+        emotion_1.append('homme_Tristesse')
+    
+    if (item[5:-10]=='02' or item[5:-10]=='06' or item[5:-10]=='06s' or item[5:-10]=='07' or item[5:-10]=='07i' or item[5:-10]=='09' or item[5:-10]=='09i' or item[5:-10]=='10')\
+    and item[7:-7]=='deg':
+        emotion_1.append('femme_Dégout')
+        
+    if (item[5:-10]=='01' or item[5:-10]=='03' or item[5:-10]=='04' or item[5:-10]=='05' or item[5:-10]=='08' or item[5:-10]=='08c' or item[5:-10]=='08t')\
+    and item[7:-7]=='deg':
+        emotion_1.append('homme_Dégout')
+        
+    if (item[5:-10]=='02' or item[5:-10]=='06' or item[5:-10]=='06s' or item[5:-10]=='07' or item[5:-10]=='07i' or item[5:-10]=='09' or item[5:-10]=='09i' or item[5:-10]=='10')\
+    and item[7:-7]=='sur':
+        emotion_1.append('femme_Surprise')
+        
+    if (item[5:-10]=='01' or item[5:-10]=='03' or item[5:-10]=='04' or item[5:-10]=='05' or item[5:-10]=='08' or item[5:-10]=='08c' or item[5:-10]=='08t')\
+    and item[7:-7]=='sur':
+        emotion_1.append('homme_Surprise')
+
+emotion_1
+
+zenodo= get_wav('data/zenodo/', extension)
+
+emotion_2 = []
+for item in zenodo:
+    if item[6:-16]=='03' and int(item[18:-4])%2==0:
+        emotion_2.append('Femme_Joie')
+    elif item[6:-16]=='03' and int(item[18:-4])%2==1:
+        emotion_2.append('Homme_Joie')
+    elif item[6:-16]=='04' and int(item[18:-4])%2==0:
+        emotion_2.append('Femme_Tristesse')
+    elif item[6:-16]=='04' and int(item[18:-4])%2==1:
+        emotion_2.append('Homme_Tristesse')
+    elif item[6:-16]=='05' and int(item[18:-4])%2==0:
+        emotion_2.append('Femme_Colere')
+    elif item[6:-16]=='05' and int(item[18:-4])%2==1:
+        emotion_2.append('Homme_Colere')
+        
+    elif item[6:-16]=='06' and int(item[18:-4])%2==0:
+        emotion_2.append('Femme_Peur')
+    elif item[6:-16]=='06' and int(item[18:-4])%2==1:
+        emotion_2.append('Homme_Peur')
+        
+    elif item[6:-16]=='07' and int(item[18:-4])%2==0:
+        emotion_2.append('Femme_Dégout')
+    elif item[6:-16]=='07' and int(item[18:-4])%2==1:
+        emotion_2.append('Homme_Dégout')
+    elif item[:1]=='a':
+        emotion_2.append('Homme_Colere')
+    elif item[:1]=='f':
+        emotion_2.append('Homme_Peur')
+    elif item[:1]=='h':
+        emotion_2.append('Homme_Joie')
+    #elif item[:1]=='n':
+        #emotion_2.append('neutral')
+    elif item[:2]=='sa':
+        emotion_2.append('Homme_Tristesse')
+
+emotion_2
+
+tess = get_wav('data/tess_audio/', extension)
+
+emotion_3 = []
+for index,y in enumerate(tess):
+    if 'OAF' and 'angry' in y:
+        emotion_3.append('vieux_colere')
+    elif 'OAF' and 'disgust' in y:
+        emotion_3.append('vieux_Dégout')
+    elif 'OAF' and 'fear' in y:
+        emotion_3.append('vieux_Peur')
+    elif 'OAF' and 'fear' in y:
+        emotion_3.append('vieux_content') 
+    elif 'OAF' and 'sad' in y:
+        emotion_3.append('vieux_Triste')
+    elif 'OAF' and 'ps' in y:
+        emotion_3.append('vieux_suprise')   
+    elif 'YAF' and 'angry' in y:
+        emotion_3.append('jeune_colere')    
+    elif 'YAF' and 'disgust' in y:
+        emotion_3.append('jeune_Dégout')
+    elif 'YAF' and 'fear' in y:
+        emotion_3.append('jeune_Peur')
+    elif 'YAF' and 'happy' in y:
+        emotion_3.append('jeune_content') 
+    elif 'YAF' and 'sad' in y:
+        emotion_3.append('jeune_Triste')
+    elif 'YAF' and 'ps' in y:
+        emotion_3.append('jeune_surprise')
+        
+
+emotion_3
+
+emotions = emotion_1+emotion_2+emotion_3
+#control
+len(emotions) == len(emotion_1+emotion_2+emotion_3)

@@ -1,0 +1,73 @@
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+random_state = 42
+
+data = pd.read_excel('sat.xls')
+data.head()
+
+
+def display_corr_matrix(data):
+    cor_matrix = data.corr().round(2)
+    fig = plt.figure(figsize=(6, 6));
+    sns.heatmap(cor_matrix, annot=True, center=0, cmap = sns.diverging_palette(250, 10, as_cmap=True), ax=plt.subplot(111));
+    plt.show()
+
+display_corr_matrix(data)
+
+from sklearn.model_selection import train_test_split
+X =   data['high_GPA'].values
+y   = data['univ_GPA'].values
+
+X = X.reshape(-1,1)
+y = y.reshape(-1,1)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.2, random_state = random_state)
+print('Train shape', X_train.shape, 'Test Shape', X_test.shape)
+
+def display_gpa(X, y, y_pred = None):
+    plt.figure(figsize= (10,6))
+    plt.scatter(X, y, color = 'blue')
+    if y_pred is not None:
+       plt.plot(X, y_pred, color = 'red' )
+    plt.xlabel('High School GPA', fontsize = 12)
+    plt.ylabel('University GPA', fontsize = 12)
+    plt.show()
+
+display_gpa(X_train, y_train)
+
+
+from sklearn import linear_model
+model =linear_model.LinearRegression()
+model.fit(X_train, y_train)
+
+from sklearn.metrics import mean_squared_error
+y_train_pred = model.predict(X_train)
+mse = mean_squared_error(y_train, y_train_pred)
+rmse = np.sqrt(mse)
+print('Training set RMSE', rmse)
+
+display_gpa(X_train, y_train, y_train_pred)
+print('Equation of fitted line is: y =  {:0.2f}x + {:0.2f}'.format(model.coef_[0][0], model.intercept_[0] ))
+
+y_test_pred = model.predict(X_test)
+mse = mean_squared_error(y_test, y_test_pred)
+rmse = np.sqrt(mse)
+print('Test set RMSE', rmse)
+
+display_gpa(X_test, y_test, y_test_pred)
+
+X =   data[['high_GPA', 'math_SAT', 'verb_SAT']].values
+y   = data['univ_GPA'].values
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.2, random_state = random_state)
+print('Train shape', X_train.shape, 'Test Shape', X_test.shape)
+X_train[:5]
+
+model =linear_model.LinearRegression()
+model.fit(X_train, y_train)
+
+y_test_pred = model.predict(X_test)
+mse = mean_squared_error(y_test, y_test_pred)
+rmse = np.sqrt(mse)
+print('Test set RMSE', rmse)

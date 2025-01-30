@@ -1,0 +1,76 @@
+import dash
+import dash_core_components as dcc
+import dash_html_components as html
+import plotly.graph_objs as go
+import plotly.figure_factory as FF
+from datetime import datetime
+import glob
+import os.path
+import pymysql
+import sqlconfig # From sqlconfig.py
+import pandas as pd
+import sqlalchemy
+import psycopg2
+from tqdm import tqdm
+print("Import Complete")
+
+passwd = sqlconfig.passwd  # From sqlconfig.py
+user = sqlconfig.user  # From sqlconfig.py
+DB = 'NewLab'  #name of databases to activate 
+user
+
+engine = sqlalchemy.create_engine('postgresql+psycopg2://'+user+':'+passwd+'@35.221.58.17/'+DB)
+
+query= ''' 
+SELECT * from cbasnl
+-- where sensor = 'protoCBAS-G' AND
+-- timestamp BETWEEN '2019-09-21 00:00:00' and '2019-09-30 11:59:00'
+ORDER BY timestamp asc;
+'''
+
+
+#place query in CBAStest df
+
+CBAS =  pd.read_sql(query,engine,
+                        index_col=["timestamp"])
+
+CBAS.head()
+
+print(CBAS.sensor.unique())
+# what unique values are in "sensor" column
+print(type(CBAS.index)) # check timestamp is recognized as DatetimeIndex
+print(CBAS.index.min())
+print(CBAS.index.max())
+# min/max index valeus (date range)
+
+print(CBAS.columns)
+# what columns do we have
+
+print(CBAS.Position_HumanReadable.unique())
+# unique values in Position_HumanReadable column
+
+def tz_NYC(d): 
+        d.index = d.index.tz_convert('America/New_York')
+        return d
+
+CBASNYC = tz_NYC(CBAS) # data in db shoudl stay as UTC, only convert just before displaying
+
+CBASNYC.head()
+
+CBASxwind = CBAS.loc[CBAS["Position_HumanReadable"] != '"Wind Tunnel"']
+
+print(CBAStestxwind.Position_HumanReadable.unique())
+
+Aquery= ''' 
+SELECT * 
+FROM cbasnl
+WHERE sensor = 'protoCBAS-A' 
+-- AND timestamp BETWEEN '2019-09-06 00:00:00' and '2019-09-30 11:59:00'
+'''
+
+
+CBASA =  pd.read_sql(Aquery,engine,parse_dates=["timestamp"], index_col=["timestamp"])
+
+CBASA.head()
+
+CBASA.sensor

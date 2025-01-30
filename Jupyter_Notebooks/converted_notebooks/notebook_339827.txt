@@ -1,0 +1,129 @@
+import pandas as pd
+import numpy as np
+from sklearn.decomposition import PCA as pca
+from sklearn.preprocessing import StandardScaler as stscale
+#import scipy.stats as stats
+from scipy import stats, linalg
+
+import diff_classifier.aws as aws
+
+filename = 'ferret_stats.csv'
+folder = 'ferret_tracking'
+#aws.download_s3('{}/{}'.format(folder, filename), filename, bucket_name='ccurtis.data')
+
+fstats = pd.read_csv(filename, index_col='Unnamed: 0')
+fstats_raw = fstats.drop('run', axis=1).as_matrix()
+
+scaler = stscale()
+scaler.fit(fstats_raw)
+fstats_scaled = scaler.transform(fstats_raw)
+
+fstats_scaled.shape
+
+fstats_list = []
+for num in range(0, fstats_scaled.shape[0]):
+    fstats_list.append(fstats_scaled[num, :])
+    
+stats.bartlett(*fstats_list)
+
+#Correlation matrix and the partial covariance matrix.
+corrmatrix = np.corrcoef(fstats_scaled.transpose())
+pcorr = partial_corr(fstats_scaled)
+
+#Calculation of the KMO statistic
+matrix = corrmatrix*corrmatrix
+rows = matrix.shape[0]
+cols = matrix.shape[1]
+rij = 0
+uij = 0
+for row in range(0, rows):
+    for col in range(0, cols):
+        if not row == col:
+            rij = rij + matrix[row, col]
+            uij = uij + pcorr[row, col]
+
+mo = rij/(rij+uij)
+print(mo)
+
+# pca1 = pca(n_components=5)
+# pca1.fit(fstats_raw)
+
+# print(pca1.explained_variance_ratio_) 
+# print(pca1.singular_values_)  
+
+pca1 = pca(n_components=5)
+pca1.fit(fstats_scaled)
+
+print('Largest eigenvalues of covariance matrix: {}'.format(pca1.explained_variance_))
+print('Percent explained variance: {}'.format(pca1.explained_variance_ratio_)) 
+#print(pca1.singular_values_)  
+
+comps = pca1.components_
+pd.DataFrame(comps.transpose())
+
+pd.DataFrame(pca1.transform(fstats_scaled))
+
+fstats
+
+def partial_corr(C):
+    """
+    Returns the sample linear partial correlation coefficients between pairs of variables in C, controlling 
+    for the remaining variables in C.
+
+    Partial Correlation in Python (clone of Matlab's partialcorr)
+
+    This uses the linear regression approach to compute the partial 
+    correlation (might be slow for a huge number of variables). The 
+    algorithm is detailed here:
+
+        http://en.wikipedia.org/wiki/Partial_correlation#Using_linear_regression
+
+    Taking X and Y two variables of interest and Z the matrix with all the variable minus {X, Y},
+    the algorithm can be summarized as
+
+        1) perform a normal linear least-squares regression with X as the target and Z as the predictor
+        2) calculate the residuals in Step #1
+        3) perform a normal linear least-squares regression with Y as the target and Z as the predictor
+        4) calculate the residuals in Step #3
+        5) calculate the correlation coefficient between the residuals from Steps #2 and #4; 
+
+        The result is the partial correlation between X and Y while controlling for the effect of Z
+
+
+    Date: Nov 2014
+    Author: Fabian Pedregosa-Izquierdo, f@bianp.net
+    Testing: Valentina Borghesani, valentinaborghesani@gmail.com
+
+    Parameters
+    ----------
+    C : array-like, shape (n, p)
+        Array with the different variables. Each column of C is taken as a variable
+
+
+    Returns
+    -------
+    P : array-like, shape (p, p)
+        P[i, j] contains the partial correlation of C[:, i] and C[:, j] controlling
+        for the remaining variables in C.
+    """
+    
+    C = np.asarray(C)
+    p = C.shape[1]
+    P_corr = np.zeros((p, p), dtype=np.float)
+    for i in range(p):
+        P_corr[i, i] = 1
+        for j in range(i+1, p):
+            idx = np.ones(p, dtype=np.bool)
+            idx[i] = False
+            idx[j] = False
+            beta_i = linalg.lstsq(C[:, idx], C[:, j])[0]
+            beta_j = linalg.lstsq(C[:, idx], C[:, i])[0]
+
+            res_j = C[:, j] - C[:, idx].dot( beta_i)
+            res_i = C[:, i] - C[:, idx].dot(beta_j)
+            
+            corr = stats.pearsonr(res_i, res_j)[0]
+            P_corr[i, j] = corr
+            P_corr[j, i] = corr
+        
+    return P_corr

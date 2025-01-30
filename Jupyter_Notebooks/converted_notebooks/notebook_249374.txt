@@ -1,0 +1,63 @@
+# Importacion Librerias
+import numpy
+print('numpy Version: ',numpy.__version__)
+import os
+import pandas
+print('Pandas Version: ',pandas.__version__)
+import matplotlib.pyplot as pyplot
+pyplot.rcParams['figure.figsize']= [20,12]
+import matplotlib.patches as patches
+import matplotlib.path as path
+import tensorflow
+print('tensorflow Version: ',tensorflow.__version__)
+# Visualización Dataframes
+from IPython.display import display, HTML
+
+# Acceso repositorio datos Datathon.
+from google.colab import auth
+from google.cloud import bigquery
+
+# Autentificacion BigQuery, generacion resumen verificacion a pegar despues de validacion.
+auth.authenticate_user()
+
+# Hosting solo lectura proyecto datathon-tarragona-2018
+# Creado proyecto compartido team_10 asignado en este kernel
+project_id='datathon-tarragona-2018'
+os.environ["GOOGLE_CLOUD_PROJECT"]=project_id
+
+# Asignar configuracion de la ejecucion de sentencias SQL en BigQuery
+def run_query(query):
+  return pandas.io.gbq.read_gbq(query, project_id=project_id, verbose=True, configuration={'query':{'useLegacySql': True}})
+
+consulta = run_query("SELECT patientunitstayid,activeupondischarge,diagnosisoffset FROM [physionet-data:eicu_crd.diagnosis] WHERE LOWER(diagnosisstring) LIKE '%septic shock%' ORDER BY patientunitstayid,activeupondischarge, diagnosisoffset")
+
+consulta
+
+# Scatter Plot de correlacion entre eje x, eje y, de ejemplo crude data
+consulta.plot(figsize = [20,16], kind='scatter',x='patientunitstayid',y='diagnosisoffset' )
+
+consulta = run_query("SELECT patientunitstayid,activeupondischarge,diagnosisoffset FROM [physionet-data:eicu_crd.diagnosis] WHERE LOWER(diagnosisstring) LIKE '%septic shock%' AND diagnosisoffset > 4000 ORDER BY patientunitstayid,activeupondischarge,diagnosisoffset")
+
+consulta
+
+# Scatter Plot de correlacion entre eje x, eje y, eliminados pacientes de los que no tenemos datos de tres dias
+consulta.plot(figsize = [20,16], kind='scatter',x='patientunitstayid',y='diagnosisoffset' )
+
+consulta = run_query("SELECT patientunitstayid FROM [physionet-data:eicu_crd.diagnosis] WHERE LOWER(diagnosisstring) LIKE '%septic shock%' AND diagnosisoffset > 4000 GROUP BY patientunitstayid  ORDER BY patientunitstayid")
+
+
+consulta
+
+consulta = run_query("SELECT patientunitstayid,nettotal,intakeoutputentryoffset FROM [physionet-data:eicu_crd.intakeoutput] ORDER BY patientunitstayid")
+
+consulta
+
+# Scatter Plot exploratorio para detectar eventos con valores imposibles a eliminar.
+consulta.plot(figsize = [19,15], kind='scatter',x='patientunitstayid',y='nettotal' )
+
+consulta = run_query("SELECT f.patientunitstayid , f.nettotal, f.intakeoutputentryoffset FROM [physionet-data:eicu_crd.intakeoutput] AS f WHERE (f.nettotal < 5000) AND (f.nettotal > -5000) ORDER BY f.patientunitstayid, f.intakeoutputentryoffset") 
+
+consulta
+
+# Scatter Plot exploratorio de la topologia del balance de fluidos por estancia del paciente
+consulta.plot(figsize = [19,15], kind='scatter',x='f_patientunitstayid',y='f_intakeoutputentryoffset' )

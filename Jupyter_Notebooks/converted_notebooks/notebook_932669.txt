@@ -1,0 +1,117 @@
+import slippy.surface as S
+import numpy as np
+
+flat = S.FlatSurface()
+flat.height(1,1)
+
+incline = S.FlatSurface(slope = (1,1))
+print(incline.height(0,0), incline.height(1,0))
+
+try:
+    incline.show()
+except AttributeError:
+    print('Surface cannot be shown until the extent is set\n')
+
+print('Setting extent:')
+incline.extent=(1,1)
+print('Surface can now be shown:')
+incline.show()
+print('The surface has not been permanently changed: ', incline.profile is None)
+print('No more attibutes of the surface have been set: ', incline.grid_spacing is None)
+
+print('Translating or rotating a surface object:')
+incline.shift((1,2)) # shift 1 in the x direction and 2 in the y direction
+incline.rotate(1) # rotate one radian
+incline.show()
+
+print('Shifting a surface on instantiation:')
+new_flat_surface = S.FlatSurface(slope=(1,0.1), rotation=2, shift=(5,1), extent=(1,1))
+new_flat_surface.show()
+
+registry = S._AnalyticalSurface._analytic_subclass_registry
+for item in registry:
+    print(item.__name__)
+
+import matplotlib.pyplot as plt
+
+fig = plt.figure(figsize=(15, 10))
+
+# A round surface
+round_surface = S.RoundSurface((1,1,1), extent = (0.3,0.3))
+ax_0 = fig.add_subplot(221, projection='3d')
+round_surface.show('profile', 'surface', ax_0)
+ax_0.set_title('Round Surface')
+
+# A pyramid surface
+p_surface = S.PyramidSurface((1,1,1), extent = (0.3,0.3))
+ax_1 = fig.add_subplot(222, projection='3d')
+p_surface.show('profile', 'surface', ax_1)
+ax_1.set_title('Pyramid Surface')
+
+# A discrete frequency based surface
+df_surface = S.DiscFreqSurface([2, 4, 6], [0.05, 0.025, 0.0125], [0, 0, 0], extent = (0.3,0.3))
+ax_2 = fig.add_subplot(223, projection='3d')
+df_surface.show('profile', 'surface', ax_2)
+ax_2.set_title('Discrete frequency Surface')
+
+# A hurst fractal surface
+hf_surface = S.HurstFractalSurface(1, 0.2, shape = (128,128), grid_spacing = 1, generate = True)
+ax_3 = fig.add_subplot(224, projection='3d')
+hf_surface.show('profile', 'surface', ax_3)
+_ = ax_3.set_title('Hurst Fractal Surface')
+
+comb_1 = round_surface+p_surface
+comb_1.show()
+
+comb_2 = comb_1+df_surface
+comb_2.show()
+print(repr(comb_2))
+
+from slippy.surface import _AnalyticalSurface
+import numpy as np
+
+class SlottedSurface(_AnalyticalSurface):
+    """ A flat surface with recessed slots:
+           <-> flat_width
+    ___    ___    ___    ___    ____
+       |  |   |  |   |  |   |  |    ^
+       |  |   |  |   |  |   |  |    | slot_depth
+       |__|   |__|   |__|   |__|    v
+        <> slot_width
+    """
+    
+    def __init__(self, slot_depth: float, slot_width: float, flat_width: float, 
+                 rotation: float = None, shift: tuple = None,
+                 generate: bool = False, grid_spacing: float = None, 
+                 extent: tuple = None, shape: tuple = None):
+        if any([slot_depth <= 0, slot_width<=0, flat_width<=0]):
+            raise ValueError('All inputs must be greater than zero')
+        self.slot_depth = slot_depth
+        self.slot_width = slot_width
+        self.flat_width = flat_width
+        super().__init__(generate=generate, rotation=rotation, shift=shift,
+                         grid_spacing=grid_spacing, extent=extent, shape=shape)
+        
+    def __repr__(self):
+        # repr helper sorts out the grid spacing etc.
+        string = self._repr_helper()
+        return ('SlottedSurface(slot_depth=' + repr(self.slot_depth) + 
+                ', slot_width=' + repr(self.slot_width) + 
+                ', flat_width=' + repr(self.flat_width) + string + ')')
+    
+    def _height(self, x_mesh, y_mesh):
+        z = np.zeros_like(x_mesh)
+        z[x_mesh%(self.slot_width+self.flat_width)<self.slot_width] = -1*self.slot_depth
+        return z
+
+my_slotted_surface = SlottedSurface(1,1,3, extent = (20,20))
+my_slotted_surface.show()
+
+my_slotted_surface.rotate(2)
+my_slotted_surface.show(n_pts=500)
+
+big_round = S.RoundSurface((20,20,20), shift = (-10,-10))
+comb_3 = my_slotted_surface + big_round
+comb_3.show(n_pts=1000)
+
+my_slotted_surface

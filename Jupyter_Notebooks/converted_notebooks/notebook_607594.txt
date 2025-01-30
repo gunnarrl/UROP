@@ -1,0 +1,341 @@
+import numpy as np
+from keras.models import Model
+from keras.layers import Input
+from keras.layers.recurrent import SimpleRNN
+from keras import backend as K
+import json
+from collections import OrderedDict
+
+def format_decimal(arr, places=6):
+    return [round(x * 10**places) / 10**places for x in arr]
+
+DATA = OrderedDict()
+
+data_in_shape = (3, 6)
+rnn = SimpleRNN(4, activation='tanh')
+
+layer_0 = Input(shape=data_in_shape)
+layer_1 = rnn(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+weights = []
+for i, w in enumerate(model.get_weights()):
+    np.random.seed(3400 + i)
+    weights.append(2 * np.random.random(w.shape) - 1)
+model.set_weights(weights)
+weight_names = ['W', 'U', 'b']
+for w_i, w_name in enumerate(weight_names):
+    print('{} shape:'.format(w_name), weights[w_i].shape)
+    print('{}:'.format(w_name), format_decimal(weights[w_i].ravel().tolist()))
+
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['recurrent.SimpleRNN.0'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'weights': [{'data': format_decimal(w.ravel().tolist()), 'shape': w.shape} for w in weights],
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+data_in_shape = (8, 5)
+rnn = SimpleRNN(5, activation='sigmoid')
+
+layer_0 = Input(shape=data_in_shape)
+layer_1 = rnn(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+weights = []
+for i, w in enumerate(model.get_weights()):
+    np.random.seed(3500 + i)
+    weights.append(2 * np.random.random(w.shape) - 1)
+model.set_weights(weights)
+weight_names = ['W', 'U', 'b']
+for w_i, w_name in enumerate(weight_names):
+    print('{} shape:'.format(w_name), weights[w_i].shape)
+    print('{}:'.format(w_name), format_decimal(weights[w_i].ravel().tolist()))
+
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['recurrent.SimpleRNN.1'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'weights': [{'data': format_decimal(w.ravel().tolist()), 'shape': w.shape} for w in weights],
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+data_in_shape = (7, 6)
+rnn = SimpleRNN(4, activation='tanh', return_sequences=True)
+
+layer_0 = Input(shape=data_in_shape)
+layer_1 = rnn(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+weights = []
+for i, w in enumerate(model.get_weights()):
+    np.random.seed(3600 + i)
+    weights.append(2 * np.random.random(w.shape) - 1)
+model.set_weights(weights)
+weight_names = ['W', 'U', 'b']
+for w_i, w_name in enumerate(weight_names):
+    print('{} shape:'.format(w_name), weights[w_i].shape)
+    print('{}:'.format(w_name), format_decimal(weights[w_i].ravel().tolist()))
+
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['recurrent.SimpleRNN.2'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'weights': [{'data': format_decimal(w.ravel().tolist()), 'shape': w.shape} for w in weights],
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+data_in_shape = (7, 6)
+rnn = SimpleRNN(4, activation='tanh', return_sequences=False, go_backwards=True)
+
+layer_0 = Input(shape=data_in_shape)
+layer_1 = rnn(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+weights = []
+for i, w in enumerate(model.get_weights()):
+    np.random.seed(3700 + i)
+    weights.append(2 * np.random.random(w.shape) - 1)
+model.set_weights(weights)
+weight_names = ['W', 'U', 'b']
+for w_i, w_name in enumerate(weight_names):
+    print('{} shape:'.format(w_name), weights[w_i].shape)
+    print('{}:'.format(w_name), format_decimal(weights[w_i].ravel().tolist()))
+
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['recurrent.SimpleRNN.3'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'weights': [{'data': format_decimal(w.ravel().tolist()), 'shape': w.shape} for w in weights],
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+data_in_shape = (7, 6)
+rnn = SimpleRNN(4, activation='tanh', return_sequences=True, go_backwards=True)
+
+layer_0 = Input(shape=data_in_shape)
+layer_1 = rnn(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+weights = []
+for i, w in enumerate(model.get_weights()):
+    np.random.seed(3800 + i)
+    weights.append(2 * np.random.random(w.shape) - 1)
+model.set_weights(weights)
+weight_names = ['W', 'U', 'b']
+for w_i, w_name in enumerate(weight_names):
+    print('{} shape:'.format(w_name), weights[w_i].shape)
+    print('{}:'.format(w_name), format_decimal(weights[w_i].ravel().tolist()))
+
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['recurrent.SimpleRNN.4'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'weights': [{'data': format_decimal(w.ravel().tolist()), 'shape': w.shape} for w in weights],
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+data_in_shape = (7, 6)
+rnn = SimpleRNN(4, activation='tanh', return_sequences=False, go_backwards=False, stateful=True)
+
+layer_0 = Input(batch_shape=(1, *data_in_shape))
+layer_1 = rnn(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+weights = []
+for i, w in enumerate(model.get_weights()):
+    np.random.seed(3800 + i)
+    weights.append(2 * np.random.random(w.shape) - 1)
+model.set_weights(weights)
+weight_names = ['W', 'U', 'b']
+for w_i, w_name in enumerate(weight_names):
+    print('{} shape:'.format(w_name), weights[w_i].shape)
+    print('{}:'.format(w_name), format_decimal(weights[w_i].ravel().tolist()))
+
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['recurrent.SimpleRNN.5'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'weights': [{'data': format_decimal(w.ravel().tolist()), 'shape': w.shape} for w in weights],
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+data_in_shape = (7, 6)
+rnn = SimpleRNN(4, activation='tanh', return_sequences=True, go_backwards=False, stateful=True)
+
+layer_0 = Input(batch_shape=(1, *data_in_shape))
+layer_1 = rnn(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+weights = []
+for i, w in enumerate(model.get_weights()):
+    np.random.seed(3810 + i)
+    weights.append(2 * np.random.random(w.shape) - 1)
+model.set_weights(weights)
+weight_names = ['W', 'U', 'b']
+for w_i, w_name in enumerate(weight_names):
+    print('{} shape:'.format(w_name), weights[w_i].shape)
+    print('{}:'.format(w_name), format_decimal(weights[w_i].ravel().tolist()))
+
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['recurrent.SimpleRNN.6'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'weights': [{'data': format_decimal(w.ravel().tolist()), 'shape': w.shape} for w in weights],
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+data_in_shape = (7, 6)
+rnn = SimpleRNN(4, activation='tanh', return_sequences=False, go_backwards=True, stateful=True)
+
+layer_0 = Input(batch_shape=(1, *data_in_shape))
+layer_1 = rnn(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+weights = []
+for i, w in enumerate(model.get_weights()):
+    np.random.seed(3820 + i)
+    weights.append(2 * np.random.random(w.shape) - 1)
+model.set_weights(weights)
+weight_names = ['W', 'U', 'b']
+for w_i, w_name in enumerate(weight_names):
+    print('{} shape:'.format(w_name), weights[w_i].shape)
+    print('{}:'.format(w_name), format_decimal(weights[w_i].ravel().tolist()))
+
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['recurrent.SimpleRNN.7'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'weights': [{'data': format_decimal(w.ravel().tolist()), 'shape': w.shape} for w in weights],
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+data_in_shape = (7, 6)
+rnn = SimpleRNN(4, activation='tanh', use_bias=False, return_sequences=True, go_backwards=True, stateful=True)
+
+layer_0 = Input(batch_shape=(1, *data_in_shape))
+layer_1 = rnn(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+weights = []
+for i, w in enumerate(model.get_weights()):
+    np.random.seed(3830 + i)
+    weights.append(2 * np.random.random(w.shape) - 1)
+model.set_weights(weights)
+weight_names = ['W', 'U']
+for w_i, w_name in enumerate(weight_names):
+    print('{} shape:'.format(w_name), weights[w_i].shape)
+    print('{}:'.format(w_name), format_decimal(weights[w_i].ravel().tolist()))
+
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['recurrent.SimpleRNN.8'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'weights': [{'data': format_decimal(w.ravel().tolist()), 'shape': w.shape} for w in weights],
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+import os
+
+filename = '../../../test/data/layers/recurrent/SimpleRNN.json'
+if not os.path.exists(os.path.dirname(filename)):
+    os.makedirs(os.path.dirname(filename))
+with open(filename, 'w') as f:
+    json.dump(DATA, f)
+
+print(json.dumps(DATA))

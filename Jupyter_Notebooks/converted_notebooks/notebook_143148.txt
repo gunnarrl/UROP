@@ -1,0 +1,142 @@
+def division_sum(r):
+    x = 0
+    for i in range(1,r):
+        if (r % i == 0):
+            x = i + x
+    return x
+
+# Testing Cell
+division_sum(6)
+
+def aliquot(r,max_iteration):
+    rlist = [r]
+    for i in range(max_iteration):
+        r = division_sum(r)
+        if r in rlist:
+            break
+        else:
+            rlist.append(r)
+    return rlist
+
+# Test
+aliquot(24,20)
+
+def fibonacci1(r):
+    if r == 1: # Base Case 1
+        xlist = [1]
+    elif r == 2: # Base Case 2
+            xlist = [1,1]
+    else:
+            #Initialization
+            xnminus1 = 1
+            xnminus2 = 1
+            xlist = [1,1]
+            
+            #Loop
+            for i in range(r-2):
+                x = xnminus1 + xnminus2
+                xlist.append(x)
+                xnminus2 = xnminus1
+                xnminus1 = x
+    return xlist
+
+# Fibonacci Number (Recursion with List)
+def fibonacci_recpair(r):
+    # Base case
+    if r==1:
+        return (0,1)
+    elif r==2:
+        return (1,1)
+    
+    # Recursive Step
+    else:
+        pair = fibonacci_recpair(r-1)
+        return (pair[1], pair[0]+pair[1])
+
+# Fibonacci Function
+def fibonaccir(r):
+    return fibonacci_recpair(r) [1]
+
+# Recursion
+def fibonacci2(r):
+    # Base Case
+    if r==1:
+        return [1]
+    elif r==2:
+        return [1,1]
+    
+    # Recursive Step
+    else:
+        xlist = fibonacci2(r-1)
+        xlist.append(xlist[(r-1)-1] + xlist[(r-2)-1])
+        return xlist
+
+# Setup
+from sympy import symbols, Function, rsolve
+n, k = symbols('n k') # For defining variables 'n' and 'k'
+f = Function('f') # For defining functions
+
+# Defining recurrence relation and solve it
+relation = f(n) - f(n-1) - f(n-2)  # Write the recurrence relation as '...' = 0 and let the input be '...'
+sol = rsolve(relation, f(n), {f(1):1, f(2):1}) # Initial Condition is given as dictionary with key 'f(n)'
+print(sol)
+
+# Fibonacci Function
+def fibonacci3(r):
+    xlist = [int(sol.evalf(subs={n:i})) for i in range(1,r+1)]
+    return xlist
+
+# Input process_time from time module. This is for finding running time of a process
+from time import process_time
+
+r = 30
+
+# Version 1 (Iteration)
+start1 = process_time()
+a = fibonacci1(r)
+end1 = process_time()
+print(a)
+print(end1 - start1)
+
+# Version R (Recursion of List)
+tuplef = fibonaccir(r)
+print(tuplef)
+
+# Version 2 (Recursion)
+start2 = process_time()
+b = fibonacci2(r)
+end2 = process_time()
+print(b)
+print(end2 - start2)
+
+# Version 3 (Solution)
+start3 = process_time()
+c = fibonacci3(r)
+end3 = process_time()
+print(c)
+print(end3 - start3)
+
+# Check Consistency
+print(a==b and b==c)
+
+def golden(r):
+    flist = fibonacci1(r)
+    ratio = [flist[i]/flist[i-1] for i in range(1,r)] 
+    return ratio
+
+print(golden(40))
+
+def hailstone(n, max_iterations):
+    thelist = [n]
+    for i in range(max_iterations):
+        if n%2 == 0:
+            n = n//2
+        else:
+            n = 3*n + 1
+        thelist.append(n)
+        if n == 1:
+            break
+    return(thelist)
+
+# Test
+hailstone(7,20)

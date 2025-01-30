@@ -1,0 +1,142 @@
+#import libraries
+import numpy as np
+import cv2 as cv
+from matplotlib import pyplot as plt
+import skimage 
+from skimage import io
+
+img = io.imread('dm3.jpg')
+plt.imshow(img)
+
+dst = cv.fastNlMeansDenoisingColored(img,None,7,10,6,21)
+
+fig, axes = plt.subplots(ncols = 2, figsize = (10,5))
+
+axes[0].imshow(img)
+axes[0].axis('off')
+
+axes[1].imshow(dst)
+axes[1].axis('off')
+
+edges = cv.Canny(dst,200,250)
+plt.imshow(edges)
+
+kernel = np.ones((5,5),np.uint8)
+dilation = cv.morphologyEx(edges, cv.MORPH_DILATE, kernel)
+closing = cv.morphologyEx(dilation, cv.MORPH_CLOSE, kernel)
+erode = cv.morphologyEx(closing,cv.MORPH_ERODE, kernel)
+
+
+fig, axes = plt.subplots(ncols = 3, figsize = (10,5))
+
+axes[0].imshow(dilation)
+axes[0].axis('off')
+
+axes[1].imshow(closing)
+axes[1].axis('off')
+
+axes[2].imshow(erode)
+axes[2].axis('off')
+
+dest = cv.inpaint(dst,erode,6000,cv.INPAINT_TELEA)
+
+dest5 = cv.inpaint(dst,erode,5,cv.INPAINT_NS)
+
+def img_restoration(img):
+    dst = cv.fastNlMeansDenoisingColored(img,None,7,10,6,21)
+    edges = cv.Canny(dst,200,250)
+    kernel = np.ones((5,5),np.uint8)
+    dilation = cv.morphologyEx(edges, cv.MORPH_DILATE, kernel)
+    closing = cv.morphologyEx(dilation, cv.MORPH_CLOSE, kernel)
+    erode = cv.morphologyEx(closing,cv.MORPH_ERODE, kernel)
+    dest5 = cv.inpaint(dst,erode,5,cv.INPAINT_NS)
+    fig, axes = plt.subplots(ncols = 3, figsize = (10,5))
+    axes[0].imshow(img)
+    axes[0].axis('off')
+
+    axes[1].imshow(dst)
+    axes[1].axis('off')
+    
+    axes[2].imshow(dest5)
+    axes[2].axis('off')
+
+
+def process_images(img_list):
+    for item in img_list:
+        img = io.imread(item)
+        img_restoration(img)
+
+imgs = ['dm1.jpg','dm3.jpg','dm4.jpg','dm5.jpg','dm6.jpg','dm7.jpg','dm8.jpg','dm9.jpg','dm10.jpg','dm11.jpg','dm12.jpg']
+#imgs = ['dm1.jpg','dm3.jpg']
+process_images(imgs)
+
+def img_restoration2(img):
+    dst = cv.fastNlMeansDenoisingColored(img,None,7,10,6,21)
+    edges = cv.Canny(dst,200,250)
+    kernel = np.ones((5,5),np.uint8)
+    dilation = cv.morphologyEx(edges, cv.MORPH_DILATE, kernel)
+    closing = cv.morphologyEx(dilation, cv.MORPH_CLOSE, kernel)
+    erode = cv.morphologyEx(closing,cv.MORPH_ERODE, kernel)
+    dest5 = cv.inpaint(dst,closing,5,cv.INPAINT_NS)
+    alpha = 0.5
+    final = dest5.copy()
+    #cv.addWeighted(dest5, alpha, final, 1 - alpha,0, final)
+    cv.addWeighted(dst, alpha, final, 1 - alpha,0, final)
+    fig, axes = plt.subplots(ncols = 4, figsize = (15,5))
+    axes[0].imshow(img)
+    axes[0].axis('off')
+
+    axes[1].imshow(dst)
+    axes[1].axis('off')
+    
+    axes[2].imshow(dest5)
+    axes[2].axis('off')
+    
+    axes[3].imshow(final)
+    #axes[3].imshow(bg2)
+    axes[3].axis('off')
+
+def img_restoration3(img):
+    dst = cv.fastNlMeansDenoisingColored(img,None,7,10,6,21)
+    edges = cv.Canny(dst,200,250)
+    kernel = np.ones((5,5),np.uint8)
+    dilation = cv.morphologyEx(edges, cv.MORPH_DILATE, kernel)
+    closing = cv.morphologyEx(dilation, cv.MORPH_CLOSE, kernel)
+    #erode = cv.morphologyEx(closing,cv.MORPH_ERODE, kernel)
+    dest5 = cv.inpaint(dst,closing,5,cv.INPAINT_NS)
+    #alpha = 0.7
+    final = dest5.copy()
+    #cv.addWeighted(dest5, alpha, final, 1 - alpha,0, final)
+    #cv.addWeighted(dst, alpha, final, 1 - alpha,0, final)
+    #final2 = cv.bitwise_and(final,final,mask = dest5)
+    img2gray = cv.cvtColor(dst,cv.COLOR_BGR2GRAY)
+    ret, mask = cv.threshold(img2gray, 100, 255, cv.THRESH_BINARY_INV)
+    bg1 = cv.bitwise_and(dst,dst,mask = mask)
+    mask_inv = cv.bitwise_not(mask)
+    bg2 = cv.bitwise_and(final,final,mask = mask_inv)
+    final2 = cv.add(bg1,bg2)
+    fig, axes = plt.subplots(ncols = 4, figsize = (15,5))
+    axes[0].imshow(img)
+    axes[0].axis('off')
+
+    axes[1].imshow(dst)
+    axes[1].axis('off')
+    
+    axes[2].imshow(dest5)
+    axes[2].axis('off')
+    
+    axes[3].imshow(final2)
+    #axes[3].imshow(bg2)
+    axes[3].axis('off')
+
+def process_images2(img_list):
+    for item in img_list:
+        img = io.imread(item)
+        img_restoration2(img)
+
+img = io.imread('dm1.jpg')
+img_restoration2(img)
+
+imgs = ['dm1.jpg','dm3.jpg','dm4.jpg','dm5.jpg','dm6.jpg','dm7.jpg','dm8.jpg','dm9.jpg','dm10.jpg','dm11.jpg','dm12.jpg']
+#imgs = ['dm1.jpg','dm3.jpg']
+process_images2(imgs)

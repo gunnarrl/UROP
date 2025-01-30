@@ -1,0 +1,172 @@
+import pandas as pd
+import os
+
+data_folder = '../Dataset'
+
+dataset_names = ['demographics', 'geographic', 'green_trips', 'mta_trips',
+            'uber_trips_2014', 'uber_trips_2015', 'weather', 'yellow_trips', 'zones']
+datasets = {}
+for dataset_name in dataset_names:
+    filename = f"{dataset_name}.csv"
+    filepath = os.path.join(data_folder, filename)
+    datasets[dataset_name] = pd.read_csv(filepath, dtype = { 'line_name': str }) if dataset_name == 'mta_trips' else pd.read_csv(filepath)
+    print(f"loaded: {filepath}")
+
+print('All datasets loaded!')
+
+name_to_explore = 'demographics'
+
+datasets[name_to_explore].head()
+
+datasets['uber_trips_2014'].head()
+
+datasets['zones_demographics'] = pd.merge(datasets['zones'], datasets['demographics'], how = 'left')
+datasets['zones_demographics'].head()
+
+uber_2015 = pd.merge(datasets['uber_trips_2015'], datasets['zones_demographics'], how = 'left', left_on = ['pickup_location_id'], right_on = ['location_id'])
+
+uber_2015.head()
+
+uber_2015['pickup_datetime'] = pd.to_datetime(datasets['uber_trips_2015']['pickup_datetime'])
+
+uber_2015.head()
+
+from shapely.geometry import MultiPoint
+
+geo_df = datasets['geographic']
+rows, cols = geo_df.shape
+
+# Build a hash with the location_id as key and Polygon as value
+geo_polygons = {}
+for location_id in geo_df.columns:
+    poly_points = geo_df[location_id]
+
+    half_range = range(int(rows / 2))
+    coordinates = [(poly_points[i * 2], poly_points[i * 2 + 1]) for i in half_range]
+    poly = MultiPoint(coordinates).convex_hull
+    geo_polygons[location_id] = poly
+
+location_id = 'BX59'
+geo_polygons[location_id]
+
+import matplotlib.pyplot as plt
+from descartes import PolygonPatch
+
+fig = plt.figure(figsize = (12, 16))
+
+for key, value in geo_polygons.items():
+    x, y = value.exterior.xy
+    
+    ax = fig.add_subplot(111)
+    ax.plot(x, y, color = 'blue', alpha = 0.7, linewidth = 0.5)
+
+#     ring = PolygonPatch(value)
+#     ax.add_patch(ring)
+
+for i, row in datasets['uber_trips_2014'].head(1000).iterrows():
+    x, y = row['pickup_longitude'], row['pickup_latitude']
+    ax = fig.add_subplot(111)
+    ax.scatter(x = x, y = y, linewidth = 0.1, alpha = 0.1, color = 'black')
+
+for i, row in datasets['green_trips'][datasets['green_trips']['pickup_latitude'] != 0].head(1000).iterrows():
+    x, y = row['pickup_longitude'], row['pickup_latitude']
+    ax = fig.add_subplot(111)
+    ax.scatter(x = x, y = y, linewidth = 0.1, alpha = 0.1, color = 'green')
+
+from shapely.geometry import Point
+
+def find_location_id(row):
+    latitude = row['pickup_latitude']
+    longitude = row['pickup_longitude']
+    
+    point = Point(longitude, latitude)
+    trip_location_id = None
+    for location_id in list(geo_polygons.keys()):
+        polygon = geo_polygons[location_id]
+        if point.within(polygon):
+            trip_location_id = location_id
+            break
+    return trip_location_id
+
+new_uber_2014 = uber_2014.copy()
+result = uber_2014.apply(find_location_id, axis = 1)
+result.head()
+
+new_uber_2014['location_id'] = result.map(lambda x: None if x == string.empty else x)
+new_uber_2014.head()
+
+
+import json
+geo_json_path = '../Dataset/geo_json.json'
+
+alpha = 0.2
+radius = 20
+sample_size = 1000
+
+geo_json = {}
+with open(geo_json_path, 'r') as reader:
+    geo_json = json.loads(reader.read())
+
+fig = plt.figure(figsize = (16, 16))
+for geo_info in geo_json['features']:
+    coordinates = geo_info['geometry']['coordinates'][0]
+    if len(coordinates) == 1:
+        coordinates = coordinates[0]
+    x = [coord[0] for coord in coordinates]
+    y = [coord[1] for coord in coordinates]
+
+    ax = fig.add_subplot(111)
+    ax.plot(x, y, color = 'blue', alpha = 0.7, linewidth = 0.5)
+
+for i, row in datasets['uber_trips_2014'].sample(sample_size).iterrows():
+    x, y = row['pickup_longitude'], row['pickup_latitude']
+    ax = fig.add_subplot(111)
+    ax.scatter(x = x, y = y, s = radius, alpha = alpha, color = 'black')
+
+for i, row in datasets['green_trips'][datasets['green_trips']['pickup_latitude'] != 0].sample(sample_size).iterrows():
+    x, y = row['pickup_longitude'], row['pickup_latitude']
+    ax = fig.add_subplot(111)
+    ax.scatter(x = x, y = y, s = radius, alpha = alpha, color = 'green')
+
+for i, row in datasets['yellow_trips'][datasets['yellow_trips']['pickup_latitude'] != 0].sample(sample_size).iterrows():
+    x, y = row['pickup_longitude'], row['pickup_latitude']
+    ax = fig.add_subplot(111)
+    ax.scatter(x = x, y = y, s = radius, alpha = alpha, color = 'red')
+
+import folium
+
+folium_map = folium.Map(location = [40.738, -73.98],
+                        zoom_start = 10,
+                        tiles = 'OpenStreetMap')
+
+for i, row in datasets['uber_trips_2014'].sample(2000).iterrows():
+    longitude, latitude = row['pickup_longitude'], row['pickup_latitude']
+    marker = folium.CircleMarker(location = [latitude, longitude], radius = 3, color = 'black', fill = True, stroke = False)
+    marker.add_to(folium_map)
+
+folium_map
+
+folium_map = folium.Map(location = [40.738, -73.98],
+                        zoom_start = 10,
+                        tiles = 'Stamen Terrain')
+
+for geo_info in geo_json['features']:
+    coordinates = geo_info['geometry']['coordinates'][0]
+    if len(coordinates) == 1:
+        coordinates = coordinates[0]
+    coordinates = [[coord[1], coord[0]] for coord in coordinates]
+
+    polygon = folium.Polygon(locations = coordinates, weight = 1, fill = True, color = 'blue')
+    polygon.add_to(folium_map)
+
+def embed_map(m):
+    from IPython.display import IFrame
+
+    m.save('../Dataset/map.html')
+    return IFrame('../Dataset/map.html', width='100%', height='750px')
+
+embed_map(folium_map)
+
+datasets['mta_trips'].groupby('station')[['latitude', 'longitude']].first()
+
+datasets['yellow_trips']

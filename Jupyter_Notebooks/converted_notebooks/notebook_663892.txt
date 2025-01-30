@@ -1,0 +1,111 @@
+import torch
+from torch import nn
+import matplotlib.pyplot as plt
+import numpy as np
+
+torch.manual_seed(666)
+np.random.seed(666)
+
+num_inputs = 2
+num_examples = 1000
+true_w = [2, -3.4]
+true_b = 4.2
+# torch.randn(*size) 生成标准正太分布的随机数 
+features = torch.randn(num_examples, num_inputs, dtype=torch.float32)
+labels = true_w[0] * features[:, 0] + true_w[1] * features[:, 1] + true_b
+labels += torch.tensor(np.random.normal(0, 0.01, size=labels.size()),
+                       dtype=torch.float32)
+
+import torch.utils.data as Data
+
+batch_size = 10
+
+# 将训练数据的特征和标签组合
+dataset = Data.TensorDataset(features, labels)
+
+# 把 dataset 放入 DataLoader
+data_iter = Data.DataLoader(
+    dataset=dataset,         # torch TensorDataset format
+    batch_size=batch_size,   # mini batch size
+    shuffle=True,            # 是否打乱数据
+    num_workers=2,           # 多线程读取数据
+)
+
+for X, y in data_iter:
+    print(X, '\n', y)
+    break
+
+class LinearNet(nn.Module):
+    def __init__(self, n_features):
+        super(LinearNet, self).__init__()
+        self.linear = nn.Linear(n_features, 1)
+        
+    def forward(self, x):
+        y = self.linear(x)
+        return y
+
+net = LinearNet(num_inputs)
+print(net)
+
+# 写法一
+net = nn.Sequential(
+    nn.Linear(num_inputs, 1)
+    # 后面还可传入其他层
+)
+
+# 写法二
+net = nn.Sequential()
+net.add_module('linear', nn.Linear(num_inputs, 1))
+# net.add_module() ...
+
+# 写法三
+from collections import OrderedDict
+net = nn.Sequential(OrderedDict([
+    ('linear', nn.Linear(num_inputs, 1))
+    # ...
+]))
+print(net)
+print(net[0])
+
+for param in net.parameters():
+    print(param)
+
+from torch.nn import init
+
+init.normal_(net[0].weight, mean=0.0, std=0.01)
+init.constant_(net[0].bias, val=0.0) # 也可直接修改bias的data, net[0].bias.data.fill_(0)
+
+for param in net.parameters():
+    print(param)
+
+loss = nn.MSELoss()
+
+import torch.optim as optim
+
+optimzer = optim.SGD(net.parameters(), lr=0.03)
+print(optimzer)
+
+# 不同的子网设置不同的学习率
+# optimzer = optim.SGD([
+#     {'params': net.subnet1.parameters()}, #lr=0.03
+#     {'params': net.subnet2.parameters(), lr=0.01}
+#     ], lr=0.03)
+
+# for param_group in optimizer.param_groups:
+#     param_group['lr'] *= 0.1 # 学习率为之前的0.1倍
+
+num_epochs = 3
+for epoch in range(num_epochs):
+    for X, y in data_iter:
+        output = net(X)
+        # 此处后面的1是确定要和output的保持一样
+        # 即labels是1维,这里就是(num, 1)
+        l = loss(output, y.view(-1, 1))
+        optimzer.zero_grad() # 梯度清零，等价于 net.zero_grad()
+        l.backward()
+        optimzer.step()
+    print('epoch %d, loss: %f' % (epoch, l.item()))
+
+dense = net[0]
+print(true_w, dense.weight.data)
+print(true_b, dense.bias.data)

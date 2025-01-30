@@ -1,0 +1,70 @@
+type(1) == type(2)
+
+type(1.0) == type(2)
+
+type(2)
+
+type(1.0)
+
+type("1")
+
+type("Hello")
+
+type(True)
+
+type([1, 2])
+
+oneType = type("1")
+
+type(type(1))
+
+type(type(type(1)))
+
+class Apple(object):
+    pass
+
+type(Apple)
+
+apple1 = Apple()
+
+type(apple1)
+
+apple1.weight = 3
+apple1.cost = 45
+print(apple1.weight)
+
+class Basket(object):
+    def __init__(self):
+        self.weight = 0
+    def add_content(self, item):
+        self.weight = self.weight + item
+    def get_content(self):
+        return self.weight
+
+my_basket = Basket()
+my_basket.add_content(4)
+my_basket.add_content(1)
+print(my_basket.get_content())
+print(my_basket.get_content() + 3)
+
+if 1 == 2:
+    print("Impossible!")
+else:
+    print("You knew this would happen, right?")
+
+for item in [1, 2, 3, 4]:
+    print(item*2)
+
+x = 1
+while x < 100:
+    print(x)
+    x = x * 2
+
+import basket
+basket1 = basket.Basket()
+basket1.add_content(5)
+basket1.add_content(10)
+print(basket1.get_content())
+
+import imp
+imp.reload(basket)

@@ -1,0 +1,111 @@
+import math
+
+import fiona
+import geopandas as gpd
+import pycountry
+
+COUNTRIES = [
+    "Austria",
+    "Belgium",
+    "Bulgaria",
+    "Croatia",
+    "Cyprus",
+    "Czech Republic",
+    "Denmark",
+    "Estonia",
+    "Finland",
+    "France",
+    "Germany",
+    "Greece",
+    "Hungary",
+    "Ireland",
+    "Italy",
+    "Latvia",
+    "Lithuania",
+    "Luxembourg",
+    "Malta",
+    "Netherlands",
+    "Poland",
+    "Portugal",
+    "Romania",
+    "Slovakia",
+    "Slovenia",
+    "Spain",
+    "Sweden",
+    "United Kingdom",
+    "Norway",
+    "Switzerland"
+]
+
+COUNTRIES_ISO_ALPHA_3 = [pycountry.countries.lookup(country).alpha_3 for country in COUNTRIES]
+BBOX_EUROPE = (-12, 20, 40, 79)
+
+with fiona.open("../build/raw-wdpa-jan2018/WDPA_Jan2018-shapefile-points.shp") as f_points:
+    rep_area_points = sum([rec[1]["properties"]["REP_AREA"] 
+                           for rec in f_points.items(bbox=BBOX_EUROPE)
+                           if rec[1]["properties"]["ISO3"] in COUNTRIES_ISO_ALPHA_3
+                           if rec[1]["properties"]["STATUS"] == 'Designated'
+                          ])
+    rep_m_area_points = sum([rec[1]["properties"]["REP_M_AREA"] 
+                             for rec in f_points.items(bbox=BBOX_EUROPE)                             
+                             if rec[1]["properties"]["ISO3"] in COUNTRIES_ISO_ALPHA_3
+                             if rec[1]["properties"]["STATUS"] == 'Designated'
+                            ])
+
+print("Reported area of points:        {:.2f} km^2".format(rep_area_points))
+print("Reported marine area of points: {:.2f} km^2".format(rep_m_area_points))
+
+with fiona.open("../build/raw-wdpa-jan2018/WDPA_Jan2018-shapefile-polygons.shp") as f_polygon:
+    rep_area_polygons = sum([rec[1]["properties"]["REP_AREA"] 
+                             for rec in f_polygon.items(bbox=BBOX_EUROPE)                           
+                             if rec[1]["properties"]["ISO3"] in COUNTRIES_ISO_ALPHA_3
+                             if rec[1]["properties"]["STATUS"] == 'Designated'
+                            ])
+    rep_m_area_polygons = sum([rec[1]["properties"]["REP_M_AREA"] 
+                               for rec in f_polygon.items(bbox=BBOX_EUROPE)
+                               if rec[1]["properties"]["ISO3"] in COUNTRIES_ISO_ALPHA_3
+                               if rec[1]["properties"]["STATUS"] == 'Designated'
+                              ])
+
+print("Reported area of polygons:        {:.2f} km^2".format(rep_area_polygons))
+print("Reported marine area of polygons: {:.2f} km^2".format(rep_m_area_polygons))
+
+fraction_points = rep_area_points / (rep_area_points + rep_area_polygons)
+print("Fraction of area reported as points: {:.1f}%".format(fraction_points * 100))
+
+fraction_m_points = rep_m_area_points / (rep_m_area_points + rep_m_area_polygons)
+print("Fraction of marine area reported as points: {:.1f}%".format(fraction_m_points * 100))
+
+with fiona.open("../build/raw-wdpa-jan2018/WDPA_Jan2018-shapefile-points.shp") as f_points:
+    points_in_europe = list(rec for rec in f_points.items(bbox=BBOX_EUROPE)
+                            if rec[1]["properties"]["ISO3"] in COUNTRIES_ISO_ALPHA_3
+                           )
+
+types = set(point[1]["geometry"]["type"] for point in points_in_europe)
+print(types)
+
+n_coordinates = set(len(point[1]["geometry"]["coordinates"]) for point in points_in_europe)
+print(n_coordinates)
+
+# from http://spatialreference.org/ref/sr-org/22/
+GALL_PETERS_PROJ4 = "+proj=cea +lon_0=0 +lat_ts=45 +x_0=0 +y_0=0 +ellps=WGS84 +units=m +no_defs "
+
+points = gpd.read_file("../build/raw-wdpa-jan2018/WDPA_Jan2018-shapefile-points.shp")
+points_in_europe = points.cx[-12:40, 20:79].loc[points.ISO3.isin(COUNTRIES_ISO_ALPHA_3)].copy()
+original_crs = points_in_europe.crs
+
+# convert points to circles
+points_in_europe = points_in_europe.to_crs(GALL_PETERS_PROJ4)
+def radius_meter(area_squarekilometer):
+    area_squaremeter = area_squarekilometer * 1e6
+    return math.sqrt(area_squaremeter / math.pi)
+points_in_europe.geometry = [rec[1].geometry.buffer(radius_meter(rec[1]["REP_AREA"])) 
+                             for rec in points_in_europe.iterrows()]
+
+# test area size (error must be smaller 1%)
+area_size_calculated = points_in_europe.area.sum() / 1e6
+area_size_reported = points_in_europe.REP_AREA.sum()
+assert abs(area_size_calculated - area_size_reported) < area_size_reported / 100
+
+# project back to original CRS
+points_in_europe = points_in_europe.to_crs(original_crs)

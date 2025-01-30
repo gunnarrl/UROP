@@ -1,0 +1,116 @@
+import pandas as pd
+import numpy as np
+import re
+
+arx_uk=pd.read_csv("filepath/data//creative_subset_new_uk.csv", dtype={'article_id':str})
+
+
+arx_uk
+
+list(arx_uk)
+
+arx_uk['Flag'].sum()
+
+arx_uk['Flag'].shape
+
+#Replace the nans with 0
+arx_uk['Flag']=arx_uk['Flag'].fillna(0)
+
+creative_categories=['kw_n_advertising_and_marketing','kw_n_architecture',
+ 'kw_n_immersive_games','kw_n_design','kw_n_film,_tv,_video,_radio_and_photography',
+ 'kw_n_museums,_galleries_and_libraries','kw_n_music,_performing_and_visual_arts',
+ 'kw_n_publishing']
+
+table = pd.pivot_table(arx_uk, index=['Flag'], values=creative_categories, aggfunc=np.sum)
+
+#Converts it into a dataframe
+table= pd.DataFrame(table)
+table
+
+arx=pd.read_csv("filepath//data/processed//deep_learning.csv", dtype={'article_id':str})
+
+
+#File that contains the AI ids that are matched to the arx article_ids
+
+ai_path = 'filepath//data//dl_paper_ids.csv'
+
+ml_ids = pd.read_csv(ai_path,dtype={'paper_id':str})
+
+ml_ids.shape
+
+ml_ids_set = set(list(ml_ids.loc[ml_ids['is_AI']==True,'paper_id']))
+
+
+arx['ai'] = [x in ml_ids_set for x in arx['article_id']]
+
+def vfxsearch(x):
+ vfxcategory=['visual effects','vfx', 'visual_effects','visual-effects','visualeffects']
+ regex = re.compile("|".join(word for word in vfxcategory), re.IGNORECASE)
+ if regex.search(x['summary'] or x['title'] ):
+    return 1
+ else:
+    return 0
+
+
+def gamesearch(x):
+ gamecategory=['computer games', 'video games', 'video-games', 'computer-games', 'mmorpg', 'nintendo', 'playstation']
+ regex = re.compile("|".join(word for word in gamecategory), re.IGNORECASE)
+ if regex.search(x['summary'] or x['title'] ):
+    return 1
+ else:
+    return 0
+
+def immersivesearch(x):
+ immersivecategory=['virtual reality', 'augmented reality',  r"\bar\b",  r"\bar\b", 'virtual-reality',
+                    'augmented-reality', "Oculus Rift","Magic Leap"]
+ regex = re.compile("|".join(word for word in immersivecategory), re.IGNORECASE)
+ if regex.search(x['summary'] or x['title'] ):
+    return 1
+ else:
+    return 0
+
+def adsearch(x):
+ adcategory=['advertising', 'adverts']
+ regex = re.compile("|".join(word for word in adcategory), re.IGNORECASE)
+ if regex.search(x['summary'] or x['title'] ):
+    return 1
+ else:
+    return 0
+
+def artsearch(x):
+ artcategory=['artistic','creative']
+ regex = re.compile("|".join(word for word in artcategory), re.IGNORECASE)
+ if regex.search(x['summary'] or x['title'] ):
+    return 1
+ else:
+    return 0
+
+#List of the functions to loop through
+art_categories=[immersivesearch, adsearch, gamesearch, artsearch, vfxsearch]
+
+#Applies the functions
+for  elem in art_categories: #The _name_ extracts the function name
+   arx[elem.__name__]=arx.apply(elem, axis=1)
+
+
+list(arx)
+
+#Creates a category that is not captured by the others
+
+arx['other']=np.where(((arx['vfxsearch']==0) & (arx['adsearch']==0) & (arx['immersivesearch']==0) & (arx['gamesearch']==0) & (arx['artsearch']==0)), 1,0)
+
+#Turns function names into list
+create_categories=[elem.__name__ for elem in art_categories]
+create_categories
+
+ai_table = pd.pivot_table(arx, index=['ai'], values=create_categories, aggfunc=np.sum)
+
+#Converts it into a dataframe
+ai_table= pd.DataFrame(ai_table)
+ai_table
+
+by_country = pd.pivot_table(arx[arx['ai']==True], index=['institute_country'], values=create_categories, aggfunc=np.sum)
+
+#Converts it into a dataframe
+table_country= pd.DataFrame(by_country)
+table_country.sort_values(by=['immersivesearch'], ascending=False).head(n=10)

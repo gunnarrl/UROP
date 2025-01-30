@@ -1,0 +1,268 @@
+# Do an initial test of Spark to make sure it works.
+import findspark
+findspark.init()
+import pyspark
+sc = pyspark.SparkContext('local[*]')
+# do something to prove it works
+rdd = sc.parallelize(range(1000))
+rdd.takeSample(False, 5)
+sc.stop()
+
+from pyspark.sql import SQLContext
+from pyspark.sql.functions import regexp_replace, trim, col, lower 
+from pyspark.ml.feature import StopWordsRemover
+from pyspark.ml.feature import Tokenizer
+#Comment and uncomment the following line as necessary
+#sc = pyspark.SparkContext('local[*]')
+sqlContext = SQLContext(sc)
+df = sqlContext.read.format('com.databricks.spark.csv').options(header='true', inferschema='true').load('160558090672531_facebook_statuses.csv')
+df.show()
+# Drop the null crap 
+df = df.na.drop(subset=["status_message"])
+# Remove punctation from status messages
+df2 = df.select(regexp_replace("status_message", "\p{Punct}", "").alias("status_message"), "status_id")
+df2.show()
+messages = df2
+# Tokenize and remove stop words
+tokenizer = Tokenizer(inputCol="status_message", outputCol="filtered")
+filterw = tokenizer.transform(messages)
+filterw.show()
+remover = StopWordsRemover(inputCol="filtered", outputCol="filtered1")
+filtered_final = remover.transform(filterw)
+filtered_final.show()
+messages = filtered_final.select("filtered1")
+messages2 = filtered_final.select("status_id","status_message").rdd
+# We will use this to create our inverted index later in the file
+doc_index = messages2.collectAsMap()
+#Convert to RDD
+message_rdd=messages.rdd
+
+
+# WordCount with RDD. Normally this would be used in conjunction with NLP to extract trending topics.
+from operator import add
+import matplotlib.pyplot as plt
+import numpy as np
+def plot_histogram(indexes, values):
+    indexes2 = np.arange(len(indexes))
+    values = np.asarray(values)
+    plt.bar(indexes2, values)
+    bar_width = 2
+    plt.xticks(indexes2 + bar_width*.2, indexes)
+    plt.show()
+# Prints the WordCount of words that appear more than 25 times and appends them to indexes and values.
+def print_word_count(output, indexes, values):
+    for (word, count) in output:
+        if count > 25 and word is not "":
+            # append to indexes
+            indexes.append(word)
+            values.append(count)
+            print("%s: %i" % (word, count))
+    
+    
+
+statuses = message_rdd.flatMap(lambda x: x)
+words = statuses.flatMap(lambda x: x)
+#se = statuses.flatMap(String)
+counts = words.flatMap(lambda x: x.split(' ')) \
+                  .map(lambda x: (x, 1)) \
+                  .reduceByKey(add)               
+
+
+output1 = counts.sortByKey().collectAsMap()
+wordsMap = counts.collectAsMap()
+#ouput1.saveAsTextFile("keys.txt")
+# Get just the most popular words 
+output = counts.takeOrdered(9, key = lambda x: -x[1])
+indexes = []
+values = []
+print("The top words are:")
+print_word_count(output, indexes, values)
+plot_histogram(indexes,values)
+
+def make_document_index(raw_status):
+    status = raw_status.flatMap(lambda x : x)
+    doc_index = status.zipWithIndex()
+    doc_index = doc_index.map(lambda y: (y[1], y[0])).collectAsMap()
+    return doc_index
+def inverted_index(documents):
+    #Invert to (status_id, terms[]) and then flatMapValues in order to get (status_id, term)
+    documents = documents.map(lambda x: (x[1],x[0])).flatMapValues(lambda x: x)
+    #Undo to (term, status_id) and reduce to get (term, status_ids[])
+    documents = documents.map(lambda x: (x[1],[x[0]])).reduceByKey(lambda a,b: a+b)
+    print("inverted index sucessfully created")
+    return documents 
+messages = filtered_final.select("filtered1","status_id").rdd
+status_inverted_index = inverted_index(messages)
+inverted_map = status_inverted_index.collectAsMap() 
+
+# Load file
+def get_word_count(some_dict, aRDD):
+    return aRDD.filter(lambda x: x in list(some_dict.keys())).map(lambda key: (key, some_dict[key]))
+names = sc.textFile("rivers.txt")
+riverNames = names.flatMap(lambda x: x.split("\n"))
+r = get_word_count(wordsMap, riverNames)
+#r = riverNames.filter(lambda x : x in list(wordsMap.keys())).map(lambda key: (key, wordsMap[key]))
+r.collect()
+
+# Let's try to make things a little more interactive
+from ipywidgets import interact, interactive, fixed
+import ipywidgets as widgets
+from IPython.display import display
+value_search = widgets.Text() 
+display(value_search)
+value_search2 = widgets.Text() 
+display(value_search2)
+
+def find_key(sender):
+    text = value_search.value
+    if text in output1: 
+        print(text + " occurs " + str(output1[text]) + " times in the file")
+# Todo clean up sloppy method
+def mini_search(sender):
+    text = value_search2.value.strip(" ")
+    if text in inverted_map:
+        l = inverted_map[text]
+        for i in l:
+            if i in doc_index:
+                l = i 
+                print(doc_index[i])
+value_search.on_submit(find_key)
+value_search2.on_submit(mini_search)
+
+
+
+#Wordcloud example 
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud, STOPWORDS
+def makeWordCloud(words):
+    stopwords = set(STOPWORDS)
+    stopwords.add("thank")
+    wordcloud = WordCloud(stopwords=stopwords, background_color='black').generate(" ".join(wordlist))
+    plt.figure(figsize=(15,10))
+    plt.imshow(wordcloud)
+    plt.axis('off')
+    plt.show()
+wordlist = output1.keys()
+makeWordCloud(words)
+
+
+# Filter to extract known names of rivers and get useful URLS 
+df2 = df.na.drop(subset=["status_link"])
+df3 = df2.select("status_link")
+df2.show()
+
+#Now let's try to use these urls to get their the respective images or videos 
+from pyspark.sql import SparkSession
+from lxml import html
+import requests
+from IPython.display import Image
+spark = SparkSession \
+    .builder \
+    .appName("Python Spark SQL basic example") \
+    .config("spark.some.config.option", "some-value") \
+    .getOrCreate()
+df2.createOrReplaceTempView("posts")
+sqlDF = spark.sql("SELECT * FROM posts WHERE status_link LIKE '%photo%'")
+sqlDF.show()
+statusRDD = sqlDF.select('status_link').rdd
+urls = statusRDD.flatMap(lambda x: x)
+print(urls.take(3))
+#Now let's save the images possibly for a Computer Vision application
+urls2 = urls.collect()
+
+#for url in urls2:
+    #page = requests.get(url)
+    #tree = html.fromstring(page.content)
+    #imageUrl = tree.xpath('//img[@class="spotlight"]/@src')
+
+# This section remains buggy and prone to jams run at your own risk!
+from pyspark.mllib.clustering import LDA, LDAModel
+from pyspark.mllib.feature import IDF
+from pyspark.ml.feature import CountVectorizer
+from pyspark.mllib.linalg import Vectors
+#vectorize tags array for each user
+vectorizer = CountVectorizer(inputCol="filtered1", outputCol="features").fit(filtered_final)
+countVectors = vectorizer.transform(filtered_final).select("status_id", "features")
+countVectors.show()
+#find TF-IDF coefficients for each tag
+print("begin")
+frequencyVectors = countVectors.rdd.map(lambda vector: vector[1])
+frequencyDenseVectors = frequencyVectors.map(lambda vector: Vectors.dense(vector))
+idf = IDF().fit(frequencyDenseVectors)
+print('fitting complete')
+tfidf = idf.transform(frequencyDenseVectors)
+print("tf idf complete")
+#prepare corpus for LDA
+corpus = tfidf.map(lambda x: [1, x]).cache()
+print("entering lda phase")
+#train LDA
+ldaModel = LDA.train(corpus, k = 15, maxIterations=100, optimizer="online", docConcentration=2.0, topicConcentration=3.0)
+print("lda model complete")
+
+
+#ldaModel.save(sc, "ldaModel")
+from operator import itemgetter
+topics = ldaModel.topicsMatrix()
+#for topic in range(3):
+    #print("Topic " + str(topic) + ":")
+    #for word in range(0, ldaModel.vocabSize()):
+        #print(" " + str(topics[word][topic]))
+# Now lets get the words back
+topicIndices = ldaModel.describeTopics(maxTermsPerTopic=5)
+vocablist = vectorizer.vocabulary
+topicsRDD = sc.parallelize(topicIndices)
+termsRDD = topicsRDD.map(lambda topic: (zip(itemgetter(*topic[0])(vocablist), topic[1])))
+
+indexedTermsRDD = termsRDD.zipWithIndex()
+termsRDD = indexedTermsRDD.flatMap(lambda term: [(t[0], t[1], term[1]) for t in term[0]])
+termDF = termsRDD.toDF(['term', 'probability', 'topicId'])
+termDF.orderBy('topicID').show()
+
+
+
+spark = SparkSession \
+    .builder \
+    .appName("Python Spark SQL basic example") \
+    .config("spark.some.config.option", "some-value") \
+    .getOrCreate()
+t2 = termDF
+
+t2.createOrReplaceTempView("topics")
+
+terms=spark.sql("SELECT * FROM topics WHERE probability>.0001")
+terms.show()
+
+
+import pyLDAvis
+import pyLDAvis.graphlab
+import graphlab as gl
+pyLDAvis.prepare(ldaModel.topicsMatrix(),vocabList,)
+
+from pyspark.ml.feature import Word2Vec
+from pyspark.sql import SparkSession
+
+
+# Learn a mapping from words to Vectors.
+word2Vec = Word2Vec(vectorSize=3, minCount=0, inputCol="filtered1", outputCol="result")
+model = word2Vec.fit(filtered_final)
+result = model.transform(filtered_final)
+for feature in result.select("result").take(3):
+    print(feature)
+
+topN = 13
+synonymsDF = model.findSynonyms('boat', topN).toPandas()
+synonymsDF
+synonymsDF = model.findSynonyms('whitewater', topN).toPandas()
+synonymsDF
+
+# More Natural Language Processing using NLP. Lemmatization, Chunking, and Tagging. 
+import nltk
+from nltk.stem.wordnet import WordNetLemmatizer
+messages = filtered_final.select("filtered")
+message_rdd=messages.rdd
+message_rdd = message_rdd.flatMap(lambda x:x)
+print(message_rdd.first())
+pos_statuses = message_rdd.map(nltk.pos_tag)
+print(pos_statuses.take(5))
+# Todo get lemmatization working
+

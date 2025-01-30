@@ -1,0 +1,182 @@
+#Habilitar intellisense
+%config IPCompleter.greedy = True
+%autosave 60
+
+import os
+import pandas as pd
+from xgboost.sklearn import XGBClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, confusion_matrix, precision_score, recall_score, f1_score
+
+df = pd.read_csv(os.path.join('../Datasets/diabetes.csv'))
+df.head()
+
+feature_cols = ['Pregnancies', 'Insulin', 'BMI', 'Age','Glucose','BloodPressure','DiabetesPedigreeFunction']
+X = df[feature_cols]
+Y = df['Outcome']
+X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.3, random_state=1) # 70% training, 30% test
+
+#https://github.com/conda-forge/hyperopt-feedstock
+from hyperopt import fmin, tpe, hp, STATUS_OK,Trials
+
+space ={
+    'n_estimators':hp.quniform('n_estimators',100,1000,1),  
+    'learning_rate':hp.quniform('learning_rate',0.025,0.5,0.025),
+    'max_depth':hp.quniform('max_depth',1,13,1),
+    'subsample': hp.quniform('subsample',0.5,1,0.05),
+    'colsample_bytree':hp.quniform('colsample_bytree',0.5,1,0.05),
+    'nthread':6,
+    'silent':1
+}
+
+def objective(params):
+    params['n_estimators'] = int(params['n_estimators'])
+    params['max_depth'] = int(params['max_depth'])  
+    classifier = XGBClassifier(**params)
+    classifier.fit(X_train,Y_train)   
+    accuracy = accuracy_score(Y_test, classifier.predict(X_test))
+    return {'loss': 1-accuracy, 'status': STATUS_OK}
+
+trials=Trials()
+best=fmin(objective,space,algo=tpe.suggest,trials=trials,max_evals=20)
+print(best)
+
+best['n_estimators']=int(best['n_estimators'])
+best['max_depth']=int(best['max_depth'])
+
+tree_v5 = XGBClassifier(**best)
+tree_v5
+
+tree_v5.fit(X_train, Y_train)
+
+# métricas de desempeño
+# accuracy
+print('accuracy del clasificador - version 5 : {0:.2f}'.format(accuracy_score(Y_test, tree_v5.predict(X_test))))
+# confusion matrix
+print('matriz de confusión del clasificador - version 5: \n {0}'.format(confusion_matrix(Y_test, tree_v5.predict(X_test))))
+# precision 
+print('precision del clasificador - version 5 : {0:.2f}'.format(precision_score(Y_test, tree_v5.predict(X_test))))
+# precision 
+print('recall del clasificador - version 5 : {0:.2f}'.format(recall_score(Y_test, tree_v5.predict(X_test))))
+# f1
+print('f1 del clasificador - version 5 : {0:.2f}'.format(f1_score(Y_test, tree_v5.predict(X_test))))
+
+import pickle
+
+# Cree la carpeta 'clasificador' en el folder donde está el notebook
+ruta_archivo_clasificador = os.path.join('tree_v5.pkl')
+# Abrir el archivo para escribir contenido binario
+archivo_clasificador = open(ruta_archivo_clasificador, 'wb')
+# Guardar el clasificador
+pickle.dump(tree_v5, archivo_clasificador)
+# Cerrar el archivo
+archivo_clasificador.close()
+
+#Abrir el archivo en modo lectura de contenido binario y cargar el clasificdor
+archivo_clasificador = open(ruta_archivo_clasificador, "rb")
+tree_v6 = pickle.load(archivo_clasificador)
+archivo_clasificador.close()
+
+# métricas de desempeño
+# accuracy
+print('accuracy del clasificador - version 6 : {0:.2f}'.format(accuracy_score(Y_test, tree_v6.predict(X_test))))
+# confusion matrix
+print('matriz de confusión del clasificador - version 6: \n {0}'.format(confusion_matrix(Y_test, tree_v6.predict(X_test))))
+# precision 
+print('precision del clasificador - version 6 : {0:.2f}'.format(precision_score(Y_test, tree_v6.predict(X_test))))
+# precision 
+print('recall del clasificador - version 6 : {0:.2f}'.format(recall_score(Y_test, tree_v6.predict(X_test))))
+# f1
+print('f1 del clasificador - version 6 : {0:.2f}'.format(f1_score(Y_test, tree_v6.predict(X_test))))
+
+tree_v6.n_estimators = 700
+# Volver a entrenar el clasificador con los nuevos parámetros
+tree_v6.fit(X_train,Y_train)
+
+# Guardar el nuevo clasificador
+ruta_archivo_clasificador = os.path.join('tree_v6.pkl')
+archivo_clasificador = open(ruta_archivo_clasificador, "wb")
+pickle.dump(tree_v6, archivo_clasificador)
+archivo_clasificador.close()
+
+# http://flask.palletsprojects.com/en/1.1.x/quickstart/#quickstart
+from flask import Flask, request, jsonify
+import os
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+import pickle
+
+app = Flask(__name__)
+
+classifier_filepath = os.path.join("tree_v6.pkl")
+classifier_file = open(classifier_filepath, "rb")
+classifier = pickle.load(open(classifier_filepath, "rb"))
+classifier_file.close()
+
+# Desactiva el API /predict del clasificador.
+# retorna {"message": "/predict disabled"}, 200 OK
+@app.route('/disable', methods=['GET'])
+def disable():
+    global ACTIVATED
+    ACTIVATED = False
+    return {'message': '/predict disabled'}, 200
+
+# Activa el API /predict del clasificador.
+# retorna {"message": "/predict enabled"}, 200 OK
+@app.route('/enable', methods=['GET'])
+def enable():
+    global ACTIVATED
+    ACTIVATED = True
+    return {'message': '/predict enabled'}, 200
+
+# Entrena el modelo con los nuevos hyper-parámetros y retorna la nueva exactitud. Por ejemplo, {"accuracy": 0.81}, 200 OK
+# Se pueden enviar los siguiente hyper-parámetros: { "n_estimators": 10, "criterion": "gini", "max_depth": 7 }
+# "criterion" puede ser "gini" o "entropy", "n_estimators" y "max_depth" son un número entero positivo
+# Unicamente "max_depth" es opcional en cuyo caso se deberá emplear None. Si los otros hyper-parámetros no están presentes se retorna:
+# {"message": "missing hyper-parameter"}, 404 BAD REQUEST
+# Finalmente, sólo se puede ejecutar este endpoint después de ejecutar GET /disable. En otro caso retorna {"message": "can not reset an enabled classifier"}, 400 BAD REQUEST
+@app.route('/reset', methods=['POST'])
+def reset():
+    if ACTIVATED:
+        return {"message": "can not reset an enabled classifier"}, 400
+    json_request = request.get_json(force=True)
+    if 'criterion' not in json_request or 'n_estimators' not in json_request:
+        return {"message": "missing hyper-parameter"}, 400
+
+    classifier.n_estimators = json_request.get('n_estimators')
+    classifier.criterion = json_request.get('criterion')
+    classifier.max_depth = json_request.get('max_depth')
+ 
+    df = pd.read_csv(os.path.join("diabetes.csv"))
+    feature_cols = ['Pregnancies', 'Insulin', 'BMI', 'Age',
+                    'Glucose', 'BloodPressure', 'DiabetesPedigreeFunction']
+    X = df[feature_cols]
+    Y = df["Outcome"]
+    X_train, X_test, Y_train, Y_test = train_test_split(
+        X, Y, test_size=0.3, random_state=1)
+
+    classifier.fit(X_train, Y_train)
+    return {'accuracy': accuracy_score(Y_test, classifier.predict(X_test))}, 200
+
+# Recibe una lista de observaciones y retorna la clasificación para cada una de ellas.
+# Los valores en cada observación se corresponden con la siguientes variables:
+#['Pregnancies', 'Insulin', 'BMI', 'Age', 'Glucose', 'BloodPressure', 'DiabetesPedigreeFunction']
+# Por ejemplo: para estas observaciones:
+# [
+#	[7,135,26.0,51,136,74,0.647],
+#	[9,175,34.2,36,112,82,0.260]
+# ]
+@app.route('/predict', methods=['POST'])
+def predict():
+    if not ACTIVATED:
+        return {"message": "classifier is not enabled"}, 400
+    predict_request = request.get_json(force=True)
+    predict_response = classifier.predict(predict_request)
+    return {'cases': predict_request,
+            'diabetes': predict_response.tolist()}
+
+
+if __name__ == '__main__':
+    app.run(port=8080, debug=True)

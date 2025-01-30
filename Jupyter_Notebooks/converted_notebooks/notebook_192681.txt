@@ -1,0 +1,92 @@
+import math
+import pandas as pd
+import numpy as np
+from quetzal.model import stepmodel
+
+input_path = '../input/level_of_service/'
+output_path = '../output/'
+model_path = '../model/'
+
+# Loading StepModel with LOS table...
+sm = stepmodel.read_zip(model_path + 'bw_los.zip')
+
+def monetary_cost(length, rf, vc, ac, al, ec, el, sf):
+    """ calculate monetary cost of travelling one O-D realtion within the LoS table
+    :param length: length of main leg in meter
+    :param df: regression factor for length (to be calibrated beforehand)
+    :param vc: distance-specific transport cost
+    :param ac: access cost
+    :param al: access link length (m)
+    :param ec: egress cost
+    :param el: egress link length (m)
+    :param sf: sharing factor (e.g. occupancy factor of a car)
+    :return: monetary cost"""
+    return (math.pow(length, rf) * vc + ac * al + ec * el) / sf
+
+# Load list of cost elements
+cars = pd.read_csv(input_path + 'ADAC_2019_autokostenuebersicht_47085.csv')
+cars.head()
+
+# Elements of the cost function
+vc_car = cars['var_cost'].astype(int).mean() / (15000000/12) # in EUR/m
+print(vc_car)
+sf_car = 1.5
+parking_cost = {1: 5, 2: 1, 3: 0} # cost depending on urbanisation degree
+
+sm.analysis_car_length() # generate length columns
+sm.car_los['price'] = sm.car_los.apply(lambda df: monetary_cost(df['in_vehicle_length'], 1, vc_car,
+                                                                0,0, #parking_cost[sm.zones.loc[df['origin']]['urbanisation']], 1,
+                                                                0,0, #parking_cost[sm.zones.loc[df['destination']]['urbanisation']], 1,
+                                                                sf_car),
+                                      axis=1)
+
+sm.car_los.head()
+
+# Load list of distance-related cost
+c = pd.read_csv(input_path + 'DB_2020_preisliste_fahrplanjahr_2020.csv')
+c.head(3)
+
+# Use second class single trip prices
+# Choose a fit for a distance range up to 1000 km (longer trips are rare)
+rf_pt = 0.703
+c['regression'] = c['km'].apply(lambda km: math.pow(km, rf_pt))
+c.loc[0:1000, ['km', 'single_trip_second_class', 'regression']].set_index('km').plot()
+
+# Local transport trips are free but get a fare assigned in LOS table
+sm.links['price'] = 0
+
+# Long distance rail links
+sm.links.loc[sm.links['route_type']=='rail_long_distance', 'price'] = \
+    sm.links['length'].apply(lambda l: monetary_cost(l/1000, rf_pt, 1,
+                                                     0, 0, 0, 0, 1))
+
+# Short distance rail links
+sm.links.loc[sm.links['route_type']=='rail_short_distance', 'price'] = \
+    sm.links['length'].apply(lambda l: monetary_cost(l/1000, rf_pt, 1,
+                                                     0, 0, 0, 0, 1))
+
+# Sum up prices in LOS table based on link fares
+sm.pt_los['price'] = sm.pt_los['link_path'].apply(
+    lambda l: sum([sm.links.loc[link, 'price'] for link in l]))
+# Add a fare for local transport services
+sm.pt_los.loc[sm.pt_los['route_types'].apply(
+    lambda t: 'short_distance_traffic' in t), 'price'] = \
+    sm.pt_los['price'] + 3.5
+
+# Generate length columns: in_vehicle_length, access_length, footpath_length
+sm.analysis_pt_length(walk_on_road=False)
+
+print(sm.pt_los.columns)
+sm.pt_los.loc[~sm.pt_los['all_walk']]
+
+# Mean distance by foot
+sm.pt_los['footpath_length'].mean()
+
+# Combine tables again
+sm.los = pd.concat([sm.pt_los, sm.car_los]).reset_index(drop=True)
+
+print(sm.los.shape)
+sm.los.head()
+
+# Saving model...
+sm.to_zip(model_path + r'bw_los.zip')

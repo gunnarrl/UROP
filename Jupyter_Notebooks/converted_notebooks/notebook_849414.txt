@@ -1,0 +1,371 @@
+from bs4 import BeautifulSoup
+from urllib.request import urlopen
+from pprint import pprint
+import pandas as pd
+
+URL_BASE = 'https://farmtogether.fandom.com'
+url = 'https://farmtogether.fandom.com/wiki/Harvestables'
+
+html = urlopen(url)
+
+bs = BeautifulSoup(html)
+
+lista_as = bs.find_all('a', class_='image-thumbnail')
+print(lista_as[0])
+
+
+tipos_colheitas = {}
+for a_colheita in lista_as:
+    tipo = a_colheita['title']
+    link = a_colheita['href']
+    tipos_colheitas[tipo] = URL_BASE+link
+
+# LISTA DOS LINKS DOS TIPOS DE COLHEITAS
+print(tipos_colheitas)
+
+link_teste = tipos_colheitas['Crops']
+html = urlopen(link_teste)
+bs = BeautifulSoup(html)
+
+tabelas = bs.select('table.article-table')
+
+itens_por_categoria = {}
+for tabela in tabelas:
+    cat_nome = tabela.select('tr th h3 span b')[0].get_text()
+    
+    itens = {}
+    cat_as = tabela.select('tr td span a')
+    for item in cat_as:
+        nome = item.get('title')
+        link = item.get('href')
+        link = URL_BASE + link
+        
+        itens[nome] = link
+    
+    itens_por_categoria[cat_nome] = itens
+pprint(itens_por_categoria)
+
+link_teste = itens_por_categoria['Vegetables']['Carrot']
+html = urlopen(link_teste)
+bs = BeautifulSoup(html)
+
+dict_item = {'nome': 'Carrot'}
+tabela = bs.select('table.infobox')[0]
+nome = tabela.select('th h3 span')[0].get_text()
+linhas_propriedades = tabela.select('tr')
+
+propriedades = {}
+for linha in linhas_propriedades:
+    if('<th' in str(linha)):
+        propriedade = linha.select('th')[0]
+        if('Buy' in str(propriedade)):
+            propriedade = 'custo'
+            valor = float(linha.select('td')[0].get_text())
+            propriedades[propriedade] = valor
+        elif('Plant on' in str(propriedade)):
+            propriedade = 'estacoes'
+            estacoes = []
+            if('Fall' in str(linha)):
+                estacoes.append('fall')
+            if('Spring' in str(linha)):
+                estacoes.append('spring')
+            if('Winter' in str(linha)):
+                estacoes.append('winter')
+            if('Summer' in str(linha)):
+                estacoes.append('summer')
+            propriedades[propriedade] = estacoes
+        elif('Harvest' in str(propriedade) and not 'Info' in str(propriedade) and not 'each' in str(propriedade)):
+            propriedade = 'xp'
+            tds = linha.select('td')
+            _, xp = tds[0].get_text().split()
+            xp = float(xp)
+            propriedades[propriedade] = xp
+        elif('Harvest each' in str(propriedade)):
+            propriedade = 'tempo'
+            tempo_total = 0
+            tempos = linha.select('td')[0].get_text().split()
+            for i in tempos:
+                if('m' in i):
+                    tempo = int(i.replace('m', ''))
+                elif('h' in i):
+                    tempo = int(i.replace('h', ''))
+                    tempo = tempo * 60
+                elif('d' in i):
+                    tempo = int(i.replace('d', ''))
+                    tempo = tempo * 24 * 60
+                tempo_total += tempo
+            propriedades[propriedade] = tempo_total
+        elif('Resource' in str(propriedade)):
+            propriedade = 'tipo_recurso'
+            tipo_recurso = linha.select('img')[0].get('alt')
+            propriedades[propriedade] = tipo_recurso
+        elif('Farm Level' in str(propriedade)):
+            propriedade = 'farm_level'
+            level = int(linha.select('td')[0].get_text().strip())
+            propriedades[propriedade] = level
+
+pprint(propriedades)
+dict_item.update(propriedades)
+
+tabela = bs.select('table.article-table')[0]
+linhas = tabela.select('tr')
+dict_ganhos = {}
+chaves = [1] + [ i*25 for i in range(1, 9, 1)]
+ganhos = []
+for linha in linhas:
+    if('Standard' in str(linha)):
+        colunas = linha.select('td')
+        for valor in colunas:
+            valor = valor.get_text().replace('\n', '')
+            if(valor):
+                ganhos.append(int(valor))
+
+for i in range(len(chaves)):
+    dict_ganhos[str(chaves[i])] = ganhos[i]
+pprint(dict_ganhos)
+dict_item['ganhos'] = dict_ganhos
+
+pprint(dict_item)
+
+link = 'https://farmtogether.fandom.com/wiki/Shasta_Daisy'
+html = urlopen(link)
+bs = BeautifulSoup(html, features='html.parser')
+
+dict_item = {}
+
+#COLETANDO DADOS DA TABELA DE CABECALHO
+tabela_ok = True
+try:
+    tabela = bs.select('table.infobox')[0]
+    linhas_propriedades = tabela.select('tr')
+except IndexError:
+    tabela_ok = False
+
+propriedades = {}
+ganho_coletado = False
+if(tabela_ok):
+    url_img = tabela.select('a.image')[0].get('href')
+    propriedades['url_img'] = url_img
+    for linha in linhas_propriedades:
+        if('<th' in str(linha)):
+            propriedade = linha.select('th')[0]
+            if('Buy' in str(propriedade)):
+                propriedade = 'custo'
+
+                valor = linha.select('td')[0].get_text()
+                if(',' in str(valor)):
+                    valor = valor.replace(',', '.')
+                if(' ' in str(valor)):
+                    valor = valor.split()[0]
+                if('k' in str(valor) or 'K' in str(valor)):
+                    valor = valor.replace('k','')
+                    valor = valor.replace('K','')
+                    valor = float(valor) * 1000
+                if(not str(valor).strip()):
+                    valor = 0
+                valor = float(valor)
+
+                propriedades[propriedade] = valor
+            elif('Harvest' in str(propriedade) and not 'Info' in str(propriedade) and not 'each' in str(propriedade)):
+                tds = linha.select('td')
+                if(tds[0].get_text().strip()):
+                    try:
+                        ganho, xp = tds[0].get_text().split()
+                    except:
+                        xp = tds[0].get_text().split()[0]
+                else:
+                    xp = 0
+
+                ganho = linha.select('td')[0].get_text()
+                if(',' in str(ganho)):
+                    ganho = ganho.replace(',', '.')
+                if(' ' in str(ganho)):
+                    ganho = ganho.split()[0]
+                if('k' in str(ganho) or 'K' in str(ganho)):
+                    ganho = ganho.replace('k','')
+                    ganho = ganho.replace('K','')
+                    ganho = float(ganho) * 1000
+                if(not str(ganho).strip()):
+                    ganho = 0
+
+                if('Diamonds' in str(propriedade)):
+                    moeda = 'diamantes'
+                else:
+                    moeda = 'dinheiro'
+                xp = float(xp)
+                ganho = float(ganho)
+                propriedades['xp'] = xp
+                propriedades['ganho_base'] = ganho
+                propriedades['moeda_ganho'] = moeda
+            elif('Resource' in str(propriedade)):
+                propriedade = 'tipo_recurso'
+                tipo_recurso = linha.select('img')[0].get('alt')
+                propriedades[propriedade] = tipo_recurso
+            elif('Harvest each' in str(propriedade)):
+                    propriedade = 'tempo'
+                    tempo_total = 0
+                    tempos = linha.select('td')[0].get_text().split()
+                    for i in tempos:
+                        if('m' in i):
+                            tempo = int(i.replace('m', ''))
+                        elif('hours' in tempos):
+                            tempo = float(tempos[0]) * 60
+                            tempo_total += tempo
+                            break
+                        elif('h' in i):
+                            tempo = int(i.replace('h', ''))
+                            tempo = tempo * 60
+                        elif('d' in i):
+                            tempo = int(i.replace('d', ''))
+                            tempo = tempo * 24 * 60
+                        tempo_total += tempo
+                    propriedades[propriedade] = tempo_total
+else:
+    propriedades['custo'] = 0
+    propriedades['estacoes'] = []
+    propriedades['xp'] = 0
+    propriedades['tipo_recurso'] = 0
+    propriedades['tempo'] = 0
+
+
+pprint(propriedades)
+
+#Colunas de cada tipo de colheita
+COLUNAS_CROPS = ['custo', 'ganho_base', 'moeda_ganha', 'tempo', 'tipo_recurso', 'xp', 'estacoes']
+COLUNAS_TREES = ['custo', 'ganho_base', 'moeda_ganha', 'tipo_recurso', 'xp', 'estacoes']
+COLUNAS_FLOWERS = ['custo', 'ganho_base', 'moeda_ganha', 'tempo', 'tipo_recurso', 'xp']
+COLUNAS_PONDS = ['custo', 'moeda_ganha', 'tempo', 'tipo_recurso', 'xp', 'ganho_grande', 'ganho_pequeno', 'p_pesca']
+COLUNAS_ANIMALS = ['custo', 'ganho_base', 'moeda_ganha', 'tempo', 'tipo_recurso', 'xp', 'comida_tempo', 'comida_custo', 'comida_vezes', 'comida_total']
+
+DICT_COLUNAS_COLHEITAS = {
+    'Crops': COLUNAS_CROPS,
+    'Trees': COLUNAS_TREES,
+    'Flowers': COLUNAS_FLOWERS,
+    'Ponds': COLUNAS_PONDS,
+    'Animals': COLUNAS_ANIMALS
+    }
+
+def coletar_dados_item(tipo_colheita, link):
+    colunas_validas = DICT_COLUNAS_COLHEITAS[tipo_colheita]
+    print(colunas_validas)
+
+    html = urlopen(link)
+    bs = BeautifulSoup(html, features='html.parser')
+
+    dict_item = {}
+
+    #COLETANDO DADOS DA TABELA DE CABECALHO
+    tabela_ok = True
+    try:
+        tabela = bs.select('table.infobox')[0]
+        linhas_tabela = tabela.select('tr')
+    except IndexError:
+        tabela_ok = False
+
+    propriedades = {}
+    ganho_coletado = False
+    if(tabela_ok):
+        url_img = tabela.select('a.image')[0].get('href')
+        propriedades['url_img'] = url_img
+        for linha in linhas_tabela:
+            if('<th' in str(linha)):
+                propriedade = linha.select('th')[0]
+                if('Buy' in str(propriedade) and 'custo' in colunas_validas):
+                    propriedade = 'custo'
+
+                    valor = linha.select('td')[0].get_text()
+                    if(',' in str(valor)):
+                        valor = valor.replace(',', '.')
+                    if(' ' in str(valor)):
+                        valor = valor.split()[0]
+                    if('k' in str(valor) or 'K' in str(valor)):
+                        valor = valor.replace('k','')
+                        valor = valor.replace('K','')
+                        valor = float(valor) * 1000
+                    if(not str(valor).strip()):
+                        valor = 0
+                    valor = float(valor)
+
+                    propriedades[propriedade] = valor
+                elif('Plant on' in str(propriedade) and 'estacoes' in colunas_validas):
+                    propriedade = 'estacoes'
+                    estacoes = []
+                    if('Fall' in str(linha)):
+                        estacoes.append('fall')
+                    if('Spring' in str(linha)):
+                        estacoes.append('spring')
+                    if('Winter' in str(linha)):
+                        estacoes.append('winter')
+                    if('Summer' in str(linha)):
+                        estacoes.append('summer')
+                    propriedades[propriedade] = estacoes
+                elif('Harvest' in str(propriedade) and not 'Info' in str(propriedade) and not 'each' in str(propriedade) and 'ganho_base' in colunas_validas):
+                    tds = linha.select('td')
+                    if(tds[0].get_text().strip()):
+                        try:
+                            ganho, xp = tds[0].get_text().split()
+                        except:
+                            xp = tds[0].get_text().split()[0]
+                    else:
+                        xp = 0
+
+                    ganho = linha.select('td')[0].get_text()
+                    if(',' in str(ganho)):
+                        ganho = ganho.replace(',', '.')
+                    if(' ' in str(ganho)):
+                        ganho = ganho.split()[0]
+                    if('k' in str(ganho) or 'K' in str(ganho)):
+                        ganho = ganho.replace('k','')
+                        ganho = ganho.replace('K','')
+                        ganho = float(ganho) * 1000
+                    if(not str(ganho).strip()):
+                        ganho = 0
+
+                    if('Diamonds' in str(propriedade)):
+                        moeda = 'diamantes'
+                    else:
+                        moeda = 'dinheiro'
+                    xp = float(xp)
+                    ganho = float(ganho)
+                    propriedades['xp'] = xp
+                    propriedades['ganho_base'] = ganho
+                    propriedades['moeda_ganho'] = moeda
+                elif('Harvest each' in str(propriedade) and 'tempo' in colunas_validas):
+                    propriedade = 'tempo'
+                    tempo_total = 0
+                    tempos = linha.select('td')[0].get_text().split()
+                    for i in tempos:
+                        if('m' in i):
+                            tempo = int(i.replace('m', ''))
+                        elif('hours' in tempos):
+                            tempo = float(tempos[0]) * 60
+                            tempo_total += tempo
+                            break
+                        elif('h' in i):
+                            tempo = int(i.replace('h', ''))
+                            tempo = tempo * 60
+                        elif('d' in i):
+                            tempo = int(i.replace('d', ''))
+                            tempo = tempo * 24 * 60
+                        tempo_total += tempo
+                    propriedades[propriedade] = tempo_total
+                elif('Resource' in str(propriedade)):
+                    propriedade = 'tipo_recurso'
+                    if(not tipo_colheita == 'Ponds'):
+                        tipo_recurso = linha.select('img')[0].get('alt')
+                    else:
+                        tipo_recurso = 'Fish'
+                    propriedades[propriedade] = tipo_recurso
+    else:
+        propriedades['custo'] = 0
+        propriedades['estacoes'] = []
+        propriedades['xp'] = 0
+        propriedades['tipo_recurso'] = 0
+        propriedades['tempo'] = 0
+
+    pprint(propriedades)
+
+tipo_colheita = 'Trees'
+link = 'https://farmtogether.fandom.com/wiki/Mango'
+
+coletar_dados_item(tipo_colheita, link)

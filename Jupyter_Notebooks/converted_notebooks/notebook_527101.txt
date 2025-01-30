@@ -1,0 +1,46 @@
+def vol(rad):
+    pass
+
+# Check
+vol(2)
+
+def ran_check(num,low,high):
+    pass
+
+# Check
+ran_check(5,2,7)
+
+def ran_bool(num,low,high):
+    pass
+
+ran_bool(3,1,10)
+
+def up_low(s):
+    pass
+
+s = 'Hello Mr. Rogers, how are you this fine Tuesday?'
+up_low(s)
+
+def unique_list(lst):
+    pass
+
+unique_list([1,1,1,1,2,2,3,3,3,3,4,5])
+
+def multiply(numbers):  
+    pass
+
+multiply([1,2,3,-4])
+
+def palindrome(s):
+    pass
+
+palindrome('helleh')
+
+import string
+
+def ispangram(str1, alphabet=string.ascii_lowercase):
+    pass
+
+ispangram("The quick brown fox jumps over the lazy dog")
+
+string.ascii_lowercase

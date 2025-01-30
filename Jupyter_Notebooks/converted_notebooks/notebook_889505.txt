@@ -1,0 +1,109 @@
+import os
+from glob import glob
+from datetime import datetime
+
+import numpy as np
+
+import tensorflow as tf
+from tensorflow.keras import layers
+
+from tensorflow.keras import datasets 
+
+import matplotlib.pyplot as plt
+
+%matplotlib inline
+
+num_epochs = 20
+batch_size = 32
+
+learning_rate = 0.001
+
+dropout_rate = 0.5
+
+input_shape = (32, 32, 3)
+num_classes = 10
+
+inputs = layers.Input(input_shape)
+
+net = layers.Conv2D(32, (3, 3), padding='SAME')(inputs)
+net = layers.Activation('relu')(net)
+net = layers.Conv2D(32, (3, 3), padding='SAME')(net)
+net = layers.Activation('relu')(net)
+net = layers.MaxPooling2D(pool_size=(2, 2))(net)
+net = layers.Dropout(dropout_rate)(net)
+
+net = layers.Conv2D(64, (3, 3), padding='SAME')(net)
+net = layers.Activation('relu')(net)
+net = layers.Conv2D(64, (3, 3), padding='SAME')(net)
+net = layers.Activation('relu')(net)
+net = layers.MaxPooling2D(pool_size=(2, 2))(net)
+net = layers.Dropout(dropout_rate)(net)
+
+net = layers.Flatten()(net)
+net = layers.Dense(512)(net)
+net = layers.Activation('relu')(net)
+net = layers.Dropout(dropout_rate)(net)
+net = layers.Dense(num_classes)(net)
+net = layers.Activation('softmax')(net)
+
+model = tf.keras.Model(inputs=inputs, outputs=net, name='Basic_CNN')
+
+# Model is the full model w/o custom layers
+model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate),  # Optimization
+              loss='sparse_categorical_crossentropy',  # Loss Function 
+              metrics=['accuracy'])  # Metrics / Accuracy
+
+train_paths = glob('dataset/cifar/train/*.png')[:1000]
+test_paths = glob('dataset/cifar/test/*.png')[:1000]
+
+len(train_paths)
+
+def get_class_name(path):
+    return path.split('_')[-1].replace('.png', '')
+
+train_labels = [get_class_name(path) for path in train_paths]
+class_names = np.unique(train_labels)
+
+def get_label(path):
+    fname = tf.strings.split(path, '_')[-1]
+    lbl_name = tf.strings.regex_replace(fname, '.png', '')
+    onehot = tf.cast(lbl_name == class_names, tf.uint8)
+    return tf.argmax(onehot)  # 이번에는 onehot이 아닌 label 번호로
+
+def load_image_label(path):
+    gfile = tf.io.read_file(path)
+    image = tf.io.decode_image(gfile)
+    image = tf.cast(image, tf.float32) / 255.  # rescale
+    
+    label = get_label(path)
+    return image, label
+
+def image_preprocess(image, label):
+    image = tf.image.random_flip_up_down(image)
+    image = tf.image.random_flip_left_right(image)
+    return image, label
+
+AUTOTUNE = tf.data.experimental.AUTOTUNE
+
+train_dataset = tf.data.Dataset.from_tensor_slices(train_paths)
+train_dataset = train_dataset.map(load_image_label, num_parallel_calls=AUTOTUNE)
+train_dataset = train_dataset.map(image_preprocess, num_parallel_calls=AUTOTUNE)
+train_dataset = train_dataset.batch(batch_size)
+train_dataset = train_dataset.shuffle(buffer_size=len(train_paths))
+train_dataset = train_dataset.repeat()
+
+test_dataset = tf.data.Dataset.from_tensor_slices(test_paths)
+test_dataset = test_dataset.map(load_image_label, num_parallel_calls=AUTOTUNE)
+test_dataset = test_dataset.batch(batch_size)
+test_dataset = test_dataset.repeat()
+
+steps_per_epoch = len(train_paths) // batch_size
+validation_steps = len(test_paths) // batch_size
+
+model.fit_generator(
+    train_dataset,
+    steps_per_epoch=steps_per_epoch,
+    validation_data=test_dataset,
+    validation_steps=validation_steps,
+    epochs=num_epochs
+)

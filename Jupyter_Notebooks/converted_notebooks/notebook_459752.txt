@@ -1,0 +1,99 @@
+import sys
+sys.path.append("./MICCAI19-MedVQA")
+
+import argparse
+import torch
+from torch.utils.data import DataLoader
+import dataset_RAD
+import base_model
+import utils
+import pandas as pd
+import os
+import json
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+
+from bunch import Bunch
+
+data_RAD = './MICCAI19-MedVQA/data_RAD'
+model_path = './MICCAI19-MedVQA/BAN_MEVF'
+batch_size = 1
+constructor = 'build_BAN'
+rnn = 'LSTM'
+
+torch.backends.cudnn.benchmark = True
+device = torch.device("cuda")
+
+dictionary = dataset_RAD.Dictionary.load_from_file(os.path.join(data_RAD , 'dictionary.pkl'))
+
+args = Bunch()
+args.RAD_dir = data_RAD
+args.autoencoder = True
+args.maml = False
+args.autoencoder = True
+args.feat_dim = 64
+args.op = 'c'
+args.num_hid = 1024
+args.rnn = rnn
+args.gamma = 2
+args.ae_model_path = 'pretrained_ae.pth'
+args.maml_model_path = 'pretrained_maml.weights'
+args.activation = 'relu'
+args.dropout = 0.5
+args.maml = True
+args.eps_cnn = 1e-5
+args.momentum_cnn = 0.05
+
+# There is a dataset implementation that handles the pipeline (including tokenization and tensor formatting)
+eval_dset = dataset_RAD.VQAFeatureDataset('test', args, dictionary)
+
+model = base_model.build_BAN(eval_dset, args)
+
+# Get a dataloader for the dataset
+eval_loader = DataLoader(eval_dset, batch_size, shuffle=False, num_workers=0, pin_memory=True, collate_fn=utils.trim_collate)
+
+dataloader_sample = next(iter(eval_loader))
+dataloader_sample
+
+def convert_to_plaintext(dset, sample):
+    text = ''
+    for token in sample[1][0].numpy():   
+        if token == 1177: # pad token
+            break
+        text += f'{dset.dictionary.idx2word[token]} '
+    print(text)
+    return text
+
+def show_image(sample):
+    plt.imshow(sample[0][1].reshape(128,128).numpy())
+
+show_image(dataloader_sample)
+convert_to_plaintext(eval_dset, dataloader_sample)
+
+model_path = 'MICCAI19-MedVQA/saved_models/BAN_MEVF/model_epoch19.pth'
+model_data = torch.load(model_path)
+
+model = model.to(device)
+model.load_state_dict(model_data.get('model_state', model_data))
+
+model.train(False)
+
+v, q, a, ans_type, q_types, p_type = dataloader_sample
+
+# Add channel
+v[0] = v[0].reshape(v[0].shape[0], 84, 84).unsqueeze(1).to(device)   # MAML
+v[1] = v[1].reshape(v[1].shape[0], 128, 128).unsqueeze(1).to(device) # Autoencoder
+
+q = q.to(device)
+a = a.to(device)
+
+features, _ = model(v, q)
+
+logits = model.classifier(features)
+prediction = torch.max(logits, 1)[1].data #argmax
+
+eval_dset.label2ans[prediction.item()]
+
+eval_dset.ae_images_data.shape
+
+plt.imshow(eval_dset.ae_images_data[0].squeeze(2).numpy())

@@ -1,0 +1,112 @@
+import numpy as np
+import emcee
+import pyDOE2
+import matplotlib.pyplot as plt
+import ARTsampler as ARTsampler
+%matplotlib inline
+
+#Plot configurations
+plt.rc("text", usetex=True)
+plt.rc("font", size=24, family="serif")
+
+#True mean and covariance
+true_means = np.array([100.0, 0.0])
+stddevs = np.array([50.0, 0.1]) #standard deviations
+rho = -0.99 #correlation
+true_cov = np.array([[stddevs[0]**2, rho*stddevs[0]*stddevs[1]],
+                    [rho*stddevs[0]*stddevs[1], stddevs[1]]])
+true_samples = np.random.multivariate_normal(mean=true_means, cov=true_cov, size=10000).T
+args = {"true_mean": true_means, "true_covariance": true_cov}
+plt.scatter(true_samples[0], true_samples[1], marker='.', c='b', alpha=0.2, s=0.5)
+plt.xlabel(r"$x$")
+plt.ylabel(r"$y$")
+
+def true_log_likelihood(params, args):
+    #Params is a 2D array containing the two parameters (labeled x and y in figures)
+    mu = args["true_mean"]
+    C = args["true_covariance"]
+    D = mu - params
+    return -0.5 * np.dot(D, np.linalg.solve(C, D))
+
+#Our guess for the mean and covariance
+guess_mean = np.array([20.0, 0.5]) #Note: parameter y is 5sigma away from the true mean
+guess_cov = np.array([[30.**2, 0],[0, 0.08**2]])
+
+#Make a method for subsampling the Gaussian chain with a LH method.
+def make_training_points(guess_mean, guess_cov, Nsamples=100):
+    #Create LH training samples
+    x = pyDOE2.lhs(len(guess_mean), samples=Nsamples,
+                   criterion="center", iterations=5)
+        
+    #Transform them correctly
+    x -= 0.5 #center the training points
+    s = 8 #scale
+    w, RT = np.linalg.eig(guess_cov)
+    R = RT.T
+
+    return np.dot(s*x[:]*np.sqrt(w), R.T)[:] + guess_mean
+
+training_points = make_training_points(guess_mean, guess_cov)
+plt.scatter(true_samples[0], true_samples[1], marker='.', c='b', alpha=0.2, s=0.5)
+plt.scatter(training_points[:,0], training_points[:,1], c='k', s=10)
+plt.xlabel(r"$x$")
+plt.ylabel(r"$y$")
+
+lnlikes = np.array([true_log_likelihood(p, args) for p in training_points])
+
+art = ARTsampler.ARTstage(guess_mean, guess_cov, training_points, lnlikes)
+
+#Run a test where we draw from the predicted likelihood surface
+initial = guess_mean
+ndim, nwalkers = len(initial), 16
+sampler = emcee.EnsembleSampler(nwalkers, ndim, art.predict)
+print("Running first burn-in")
+p0 = initial + 1e-4*np.random.randn(nwalkers, ndim)
+p0, lp, _ = sampler.run_mcmc(p0, 100)
+print("Running second burn-in")
+p0 = p0[np.argmax(lp)] + 1e-4*np.random.randn(nwalkers, ndim)
+p0, lp, _ = sampler.run_mcmc(p0, 100)
+sampler.reset()
+print("Running production...")
+sampler.run_mcmc(p0, 2000)
+testchain = sampler.flatchain;
+
+plt.scatter(true_samples[0], true_samples[1], marker='.', c='b', alpha=0.2, s=0.5)
+plt.scatter(training_points[:,0], training_points[:,1], c='k', s=10)
+plt.scatter(testchain[:,0], testchain[:,1], marker='.', c='r', alpha=0.2, s=0.5)
+plt.xlabel(r"$x$")
+plt.ylabel(r"$y$")
+plt.savefig("single_iteration.png", dpi=300, bbox_inches="tight")
+
+guess_mean = np.mean(testchain, 0)
+guess_cov = np.cov(testchain.T)
+training_points = make_training_points(guess_mean, guess_cov)
+
+lnlikes = np.array([true_log_likelihood(p, args) for p in training_points])
+art = ARTsampler.ARTstage(guess_mean, guess_cov, training_points, lnlikes)
+
+initial = guess_mean
+ndim, nwalkers = len(initial), 16
+sampler = emcee.EnsembleSampler(nwalkers, ndim, art.predict)
+print("Running first burn-in")
+p0 = initial + 1e-4*np.random.randn(nwalkers, ndim)
+p0, lp, _ = sampler.run_mcmc(p0, 100)
+print("Running second burn-in")
+p0 = p0[np.argmax(lp)] + 1e-4*np.random.randn(nwalkers, ndim)
+p0, lp, _ = sampler.run_mcmc(p0, 100)
+sampler.reset()
+print("Running production...")
+sampler.run_mcmc(p0, 2000)
+testchain = sampler.flatchain;
+
+plt.scatter(true_samples[0], true_samples[1], marker='.', c='b', alpha=0.2, s=0.5)
+plt.scatter(training_points[:,0], training_points[:,1], c='k', s=10)
+plt.scatter(testchain[:,0], testchain[:,1], marker='.', c='r', alpha=0.2, s=0.5)
+plt.xlabel(r"$x$")
+plt.ylabel(r"$y$")
+
+print("True means:  ", true_means)
+print("2iter means: ", np.mean(testchain, 0))
+
+print("True cov:  \n", true_cov)
+print("2iter cov: \n", np.cov(testchain.T))

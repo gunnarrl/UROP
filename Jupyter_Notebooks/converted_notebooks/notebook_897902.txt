@@ -1,0 +1,152 @@
+from sklearn.metrics import r2_score
+%run helper_functions.py
+%run prophet_helper.py #this runs the TS models for features
+%run regression_ts_model.py #nested TS script 
+%run btc_info_df.py #helps loan jup new BTC data
+%autosave 120
+%matplotlib inline
+plt.style.use('fivethirtyeight')
+plt.rcParams["figure.figsize"] = (15,10)
+plt.rcParams["xtick.labelsize"] = 16
+plt.rcParams["ytick.labelsize"] = 16
+plt.rcParams["axes.labelsize"] = 20
+plt.rcParams['legend.fontsize'] = 20
+plt.style.use('fivethirtyeight')
+pd.set_option('display.max_colwidth', -1)
+
+df = unpickle_object("FINAL_DATAFRAME_PROJ_5.pkl")
+df.head()
+
+def linear_extrapolation(df, window):
+    pred_lst = []
+    true_lst = []
+
+    cnt = 0
+
+    all_rows = df.shape[0]
+
+    while cnt < window:
+        start = df.iloc[cnt:all_rows-window+cnt, :].index[0].date()
+        end = df.iloc[cnt:all_rows-window+cnt, :].index[-1].date()
+        predicting = df.iloc[all_rows-window+cnt, :].name.date()
+
+        print("---- Running model from {} to {} and predicting on {} ----".format(start,end,predicting))
+
+        training_df = df.iloc[cnt:all_rows-window+cnt, :]
+
+        testing_df = df.iloc[all_rows-window+cnt, :]
+        
+        true_val = testing_df[-1]
+        
+        first_row_value = training_df.iloc[0, :]['mkt_price']
+        first_row_date = training_df.iloc[0, :].name
+        
+        last_row_value = training_df.iloc[-1, :]['mkt_price']
+        last_row_date = training_df.iloc[-1, :].name
+        
+        alpha = (last_row_value-first_row_value)/90
+        
+        prediction = last_row_value + alpha
+        
+        pred_lst.append(prediction)
+        
+        true_lst.append(true_val)
+        
+        
+        cnt += 1
+        
+    return pred_lst, true_lst
+
+pred_lst, true_lst = linear_extrapolation(df, 30)
+
+r2_score(true_lst, pred_lst)
+
+df = unpickle_object("FINAL_DATAFRAME_PROJ_5.pkl")
+df.head()
+
+df.corr()
+
+plot_corr_matrix(df)
+
+beta_values, pred, true = master(df, 30)
+
+r2_score(true, pred)#blows our Prophet TS only model away!
+
+plt.plot(pred)
+plt.plot(true)
+plt.legend(["Prediction", 'Actual'], loc='upper left')
+plt.xlabel("Prediction #")
+plt.ylabel("Price")
+plt.title("Nested TS - Price Prediction");
+
+fig, ax = plt.subplots()
+ax.scatter(true, pred, edgecolors=(0, 0, 0))
+ax.plot([min(true), max(true)], [min(true), max(true)], 'k--', lw=3)
+ax.set_xlabel('Actual')
+ax.set_ylabel('Predicted')
+
+plotting_dict_1 = {"eth_price": [], "pos_sent": [], "neg_sent": [], "unique_addr": [], "gold_price": [], "tot_num_trans": [], "mempool_trans":[], "hash_rate": [], "avg_trans_per_block":[]}
+
+for index, sub_list in enumerate(beta_values):
+    for tup in sub_list:
+        plotting_dict_1[tup[0]].append(tup[1])
+
+plot_key(plotting_dict_1, "pos_sent")# here we say the effect of positive sentiment through time!
+plt.title("Positive Sentiment Effect on BTC Price")
+plt.ylabel("Beta Value")
+plt.xlabel("Model #")
+plt.tight_layout()
+
+plot_key(plotting_dict_1, "gold_price")
+plt.title("Gold Price Effect on BTC Price")
+plt.ylabel("Beta Value")
+plt.xlabel("Model #")
+plt.tight_layout()
+
+plot_key(plotting_dict_1, "avg_trans_per_block")
+plt.title("Avg. Trans per Block Effect on BTC Price")
+plt.ylabel("Beta Value")
+plt.xlabel("Model #")
+plt.tight_layout()
+
+df_pct = df.copy(deep=True)
+df_pct = df_pct.pct_change()
+df_pct.rename(columns={"mkt_price": "percent_change"}, inplace=True)
+df_pct = df_pct.iloc[1:, :] #first row is all NaN's
+df_pct.head()
+
+beta_values_p, pred_p, true_p = master(df_pct, 30)
+
+r2_score(true_p, pred_p) # this is expected due to the range of values on the y-axis!
+
+#very good!
+plt.plot(pred_p)
+plt.plot(true_p)
+plt.legend(["Prediction", 'Actual'], loc='upper left')
+plt.xlabel("Prediction #")
+plt.ylabel("Price")
+plt.title("Nested TS - % Change Prediction");
+
+fig, ax = plt.subplots()
+ax.scatter(true_p, pred_p, edgecolors=(0, 0, 0))
+ax.plot([min(true), max(true)], [min(true), max(true)], 'k--', lw=3)
+ax.set_xlabel('Actual')
+ax.set_ylabel('Predicted');
+
+df.set_index('date', inplace=True)
+prices_to_be_multiplied = df.loc[pd.date_range(start="2017-01-23", end="2017-02-21"), "mkt_price"]
+forecast_price_lst = []
+for index, price in enumerate(prices_to_be_multiplied):
+    predicted_percent_change = 1+float(pred_p[index])
+    forecasted_price = (predicted_percent_change)*price
+    forecast_price_lst.append(forecasted_price)
+ground_truth_prices = df.loc[pd.date_range(start="2017-01-24", end="2017-02-22"), "mkt_price"]
+ground_truth_prices = list(ground_truth_prices)
+r2_score(ground_truth_prices, forecast_price_lst)
+
+plt.plot(forecast_price_lst)
+plt.plot(ground_truth_prices)
+plt.legend(["Prediction", 'Actual'], loc='upper left')
+plt.xlabel("Prediction #")
+plt.ylabel("Price")
+plt.title("Nested TS - % Change Prediction");

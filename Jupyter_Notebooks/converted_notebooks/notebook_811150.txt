@@ -1,0 +1,205 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+%matplotlib inline
+
+titanic_df = pd.read_csv('./train.csv') # 트레인 데이서 읽기
+titanic_df.head()
+
+print(titanic_df.info())
+
+# NULL 컬럼들에 대한 처리
+print(titanic_df.isnull().sum()) # 각 칼럼에 대한 null 개수
+print(titanic_df.isnull().sum().sum()) # null의 총 개수
+
+# NaN 값 채우기
+titanic_df.Age.fillna(titanic_df.Age.mean(), inplace=True) # inplace : 원본 데이터 수정
+titanic_df.Cabin.fillna('N',inplace=True) # inplace : 원본 데이터 수정
+titanic_df.Embarked.fillna('N',inplace=True) # inplace : 원본 데이터 수정
+
+# 변환 작업 후 
+print(titanic_df.isnull().sum()) # 각 칼럼에 대한 null 개수
+print(titanic_df.isnull().sum().sum()) # null의 총 개수
+
+# 컬럼 데이터 분포 확인
+print(titanic_df['Sex'].value_counts(), '\n') # 남자가 더 많음
+print(titanic_df['Cabin'].value_counts(), '\n') # N이 가장 많음, 여러 개의 선실을 가진 경우도 있음
+print(titanic_df['Embarked'].value_counts(), '\n') # S가 가장 많음
+
+# Cabin 데이터 전처리
+titanic_df['Cabin'] = titanic_df['Cabin'].str[:1]
+print(titanic_df['Cabin'].head())
+titanic_df['Cabin'].value_counts()
+
+# 성별 별 생존 데이터 분석
+rst = titanic_df.groupby(['Sex','Survived'])['Survived'].count()
+print(rst)
+
+# 성별 별 생존률 시각화
+sns.barplot(data=titanic_df, x='Sex', y='Survived')
+
+# Pclass 별, 성별 별 생존 데이터 분석
+titanic_df.groupby(['Pclass','Sex','Survived'])['Survived'].count()
+# pclass가 높은 여성은 굉장히 높은 생존률을 보임
+
+# Pclass 별, 성별 별 생존률 시각화
+sns.barplot(data = titanic_df, x = 'Pclass', y = 'Survived', hue='Sex')
+# pclass가 높은 여성은 굉장히 높은 생존률을 보임, 특히 1, 여성의 경우 1에 가까운 생존률을 보임
+
+# 나이를 구간에 따라 범주화 하는 함수
+# lambda를 활용하여 Age의 모든 컬럼에 get_category 함수 적용 후 신규 컬럼 생성
+def get_category(age):
+    cat = ''
+    if age <= -1: cat = 'Unknown'
+    elif age <= 5: cat = 'Baby'
+    elif age <= 12: cat = 'Child'
+    elif age <= 18: cat = 'Teenager'
+    elif age <= 25: cat = 'Student'
+    elif age <= 35: cat = 'Young Adult'
+    elif age <= 60: cat = 'Adult'
+    else : cat = 'Elderly'
+    
+    return cat
+
+titanic_df['Age_cat'] = titanic_df['Age'].apply(get_category)
+titanic_df.head()
+
+# 막대그래프의 크기 figure를 더 크게 설정 
+plt.figure(figsize=(10,6))
+
+#X축의 값을 순차적으로 표시하기 위한 설정 
+group_names = ['Unknown', 'Baby', 'Child', 'Teenager', 'Student', 'Young Adult', 'Adult', 'Elderly']
+
+# Seaborn을 활용하여 데이터 시각화
+sns.barplot(x='Age_cat', y = 'Survived', hue='Sex', data=titanic_df, order = group_names)
+titanic_df.drop('Age_cat', axis=1, inplace=True)
+
+from sklearn import preprocessing
+# Cabin, Sex, Embarked 컬럼에 대해 Label Encoding 수행
+def encode_features(df):
+  features = ['Cabin','Sex','Embarked']
+  for feature in features:
+    le = preprocessing.LabelEncoder()
+    le = le.fit(df[feature])
+    df[feature] = le.transform(df[feature])
+
+  return df
+
+titanic_df = encode_features(titanic_df)
+titanic_df.head()
+
+from sklearn.preprocessing import LabelEncoder
+
+# 데이터 전처리 기능 모듈화
+# Null 처리 함수
+def fillna(df):
+  df.Age.fillna(df.Age.mean(), inplace=True) # inplace : 원본 데이터 수정
+  df.Cabin.fillna('N',inplace=True) # inplace : 원본 데이터 수정
+  df.Embarked.fillna('N',inplace=True) # inplace : 원본 데이터 수정
+  return df
+
+# 불필요한 속성 제거 함수
+def drop_features(df):
+  df.drop(['PassengerId','Name','Ticket'], axis=1, inplace=True)
+  return df
+
+# 레이블 인코딩 함수
+def format_features(df):
+  df['Cabin'] = df['Cabin'].str[:1]
+  features = ['Cabin','Sex','Embarked']
+  for feature in features:
+    le = preprocessing.LabelEncoder()
+    le = le.fit(df[feature])
+    df[feature] = le.transform(df[feature])
+  return df
+
+# 앞에서 설정한 Data Preprocessing 함수 호출
+def transform_features(df):
+  df = fillna(df)
+  df = drop_features(df)
+  df = format_features(df)
+  return df
+
+# 원본 데이터 후 transform_features 함수 호출하여 전처리 
+titanic_df = pd.read_csv('./train.csv')
+
+y_titanic_df = titanic_df['Survived']
+X_titanic_df = titanic_df.drop('Survived', axis=1)
+
+X_titanic_df = transform_features(X_titanic_df)
+X_titanic_df.head()
+
+from sklearn.model_selection import train_test_split
+
+X_train, X_test, y_train, y_test = train_test_split(X_titanic_df, y_titanic_df, test_size=0.2, random_state=11)
+
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+
+# 3개의 분류 모델을 사용하여 학습
+dt_clf = DecisionTreeClassifier(random_state=11)
+rf_clf = RandomForestClassifier(random_state=11)
+lr_clf = LogisticRegression(max_iter=300)
+
+# 결정 트리
+dt_clf.fit(X_train, y_train)
+dt_pred = dt_clf.predict(X_test)
+print('DecisionTreeClassfies 정확도 : {0:.4f}'.format(accuracy_score(y_test,dt_pred)))
+
+# 랜덤 포레스트
+rf_clf.fit(X_train, y_train)
+rf_pred = rf_clf.predict(X_test)
+print('DecisionTreeClassfies 정확도 : {0:.4f}'.format(accuracy_score(y_test,rf_pred)))
+
+# 로지스틱 리그레션
+lr_clf.fit(X_train, y_train)
+lr_pred = lr_clf.predict(X_test)
+print('DecisionTreeClassfies 정확도 : {0:.4f}'.format(accuracy_score(y_test,lr_pred)))
+
+from sklearn.model_selection import KFold
+
+# k-Fold 교차 검증 함수
+def exec_kfold(clf, folds=5):
+    kfold = KFold(n_splits=folds)
+    scores = []
+    
+    for iter_count , (train_index, test_index) in enumerate(kfold.split(X_titanic_df)):
+        X_train, X_test = X_titanic_df.values[train_index], X_titanic_df.values[test_index]
+        y_train, y_test = y_titanic_df.values[train_index], y_titanic_df.values[test_index]
+        
+        clf.fit(X_train, y_train) 
+        predictions = clf.predict(X_test)
+        accuracy = accuracy_score(y_test, predictions)
+        scores.append(accuracy)
+        print("교차 검증 {0} 정확도: {1:.4f}".format(iter_count, accuracy))     
+    
+    mean_score = np.mean(scores)
+    print("평균 정확도: {0:.4f}".format(mean_score)) 
+
+exec_kfold(dt_clf , folds=5) 
+
+from sklearn.model_selection import cross_val_score
+
+# cross_val_score 사용하여 교차 검증 수행
+cv = cross_val_score(dt_clf, X_titanic_df, y_titanic_df, cv = 5)
+cv
+
+from sklearn.model_selection import GridSearchCV
+
+parameters = {'max_depth':[2,3,5,10],
+             'min_samples_split':[2,3,5], 'min_samples_leaf':[1,5,8]}
+
+# GridSearchCV 활용한 모델 학습
+grid_dclf = GridSearchCV(dt_clf, param_grid=parameters, scoring='accuracy', cv=5)
+grid_dclf.fit(X_train, y_train)
+
+print('best_params_:', grid_dclf.best_params_)
+print('best_score_:', grid_dclf.best_score_)
+
+best_dclf = grid_dclf.best_estimator_
+pred = best_dclf.predict(X_test)
+print('accuracy:', accuracy_score(y_test, pred))
+

@@ -1,0 +1,148 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+df = pd.read_csv('D:/tmp/coe-bidding-results/coe-results.csv', # fix to your path
+                 usecols=['quota', 'premium'])
+df.describe()
+
+from sklearn.preprocessing import StandardScaler
+
+X = df.loc[:, ['quota', 'premium']]
+
+scaler = StandardScaler()
+
+X_scaled = scaler.fit_transform(X)
+
+print(X_scaled.shape)
+
+# left and right plot limits
+# (x_ just denotes horizontal axis on the plot, unrelated to X)
+
+x_min, x_max = X_scaled[:, 0].min() - 1, X_scaled[:, 0].max() + 1
+
+print('plot left limit: %.3f, plot right limit: %.3f' %(x_min, x_max))
+
+# upper and lower plot limits
+# (y_ just denotes vertical axis on the plot, unrelated to our labels)
+
+y_min, y_max = X_scaled[:, 1].min() - 1, X_scaled[:, 1].max() + 1
+
+print('plot lower limit: %.3f, plot upper limit: %.3f' %(y_min, y_max))
+
+step = .05
+
+xx, yy = np.meshgrid(np.arange(x_min, x_max, step),
+                     np.arange(y_min, y_max, step))
+
+# a. flatten xx using ravel into [xx0, xx1, .., xxN]
+# b. flatten yy using ravel into [yy0, yy1, .., yyN]
+# c. column stack into a 2-D array
+#    (turn xx, yy into column vectors and then stack column-wise)
+#
+#   [[xx0, yy0],
+#    [xx1, yy1],
+#    ..
+#    [xxN, yyN]]
+#
+
+mesh = np.column_stack((xx.ravel(), yy.ravel()))
+mesh
+
+# this also works, but easy to forget what it does
+# mesh = np.c_[xx.ravel(), yy.ravel()]
+
+mesh.shape
+
+from sklearn.cluster import KMeans
+
+# first, fit on our dataset (note: not the mesh)
+kmeans = KMeans(n_clusters=5)
+kmeans.fit(X_scaled)
+
+# next, predict on our mesh
+clusters = kmeans.predict(mesh)
+clusters
+
+fig, ax = plt.subplots()
+
+# convert to 2D array for image
+clusters_image = clusters.reshape(xx.shape)
+
+ax.imshow(clusters_image, interpolation='nearest',
+          extent=(xx.min(), xx.max(), yy.min(), yy.max()),
+          cmap=plt.cm.Pastel2,
+          aspect='auto', # image aspect ratio
+          origin='lower') # origin of image is bottom left
+
+ax.set(title='COE dataset K-means boundary plot (k=%d)' % kmeans.n_clusters,
+       xlim=(x_min, x_max), ylim=(y_min, y_max),
+       xticks=(), yticks=())
+
+plt.show()
+
+fig, ax = plt.subplots()
+
+ax.imshow(clusters_image, interpolation='nearest',
+          extent=(xx.min(), xx.max(), yy.min(), yy.max()),
+          cmap=plt.cm.Pastel2,
+          aspect='auto',
+          origin='lower')
+
+ax.plot(X_scaled[:, 0], X_scaled[:, 1], 'k.', markersize=4)
+
+centroids = kmeans.cluster_centers_
+
+ax.scatter(centroids[:, 0], centroids[:, 1],
+           marker='x', s=169, linewidths=3,
+           color='red', zorder=10, label='centroids')
+
+ax.set(title='COE dataset K-means boundary plot (k=%d)' % kmeans.n_clusters,
+       xlim=(x_min, x_max), ylim=(y_min, y_max),
+       xticks=(), yticks=())
+ax.legend()
+plt.show()
+
+import numpy as np
+
+def plot_decision_boundaries(ax, title, kmeans_model, data):
+    """Plots the decision boundaries for a fitted k-means model
+    Args:
+        ax: subplot axis
+        title: subplot title
+        kmeans_model: a fitted sklearn.cluster.KMeans model
+        data: 2-dimensional input data to cluster and plot
+ 
+    Based on: http://scikit-learn.org/stable/auto_examples/cluster/plot_kmeans_digits.html
+    """
+    # Step size of the mesh. Decrease to increase the quality of the VQ.
+    h = .02     # point in the mesh [x_min, x_max]x[y_min, y_max].
+
+    # Plot the decision boundary. For that, we will assign a color to each
+    x_min, x_max = data[:, 0].min() - 1, data[:, 0].max() + 1
+    y_min, y_max = data[:, 1].min() - 1, data[:, 1].max() + 1
+    xx, yy = np.meshgrid(np.arange(x_min, x_max, h), np.arange(y_min, y_max, h))
+
+    # Obtain labels for each point in mesh using the trained model.
+    Z = kmeans_model.predict(np.c_[xx.ravel(), yy.ravel()])
+
+    # Put the result into a color plot
+    Z = Z.reshape(xx.shape)
+
+    ax.imshow(Z, interpolation='nearest',
+              extent=(xx.min(), xx.max(), yy.min(), yy.max()),
+              cmap=plt.cm.Pastel2,
+              aspect='auto', origin='lower')
+
+    ax.plot(data[:, 0], data[:, 1], 'k.', markersize=4)
+
+    # Plot the centroids as a red X
+    centroids = kmeans.cluster_centers_
+
+    ax.scatter(centroids[:, 0], centroids[:, 1],
+               marker='x', s=169, linewidths=3,
+               color='red', zorder=10, label='centroids')
+    ax.set(title=title,
+           xlim=(x_min, x_max), ylim=(y_min, y_max),
+           xticks=(), yticks=())
+    ax.legend()

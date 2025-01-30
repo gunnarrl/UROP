@@ -1,0 +1,85 @@
+import numpy as np
+import pandas as pd
+import pycamhd as camhd
+dbcamhd = pd.read_json('dbcamhd.json', orient='records', lines=True)
+dbcamhd.tail()
+
+fileindex = 2064
+filename = dbcamhd.filename[fileindex]
+timestamp = dbcamhd.timestamp[fileindex]
+frame_count = dbcamhd.frame_count[fileindex]
+n_images = 4000
+frame_numbers = np.linspace(750,frame_count-6000, n_images, dtype=np.int64())
+filename
+
+from datetime import datetime
+timestamps = []
+for i in range(len(frame_numbers)):
+    timestamps.append(datetime.fromtimestamp(dbcamhd.timestamp[fileindex] + frame_numbers[i]/29.95))
+timestamps[0:5]
+
+from dask import delayed
+import dask.array as da
+import xarray as xr
+
+delayed_frames = []
+moov_atom = camhd.get_moov_atom(filename)
+for frame_number in frame_numbers:
+    delayed_frames.append(da.from_delayed(
+                            delayed(camhd.get_frame)(filename, frame_number, 'rgb24', moov_atom),
+                            shape=(1080, 1920, 3), dtype=np.uint8)[None,:,:,:])
+delayed_frames[0]
+
+ds_rutgers = xr.DataArray(da.concatenate(delayed_frames, axis=0), dims=['time', 'y', 'x', 'channel'],
+                  coords={'time': timestamps}
+                 ).to_dataset(name='video')
+ds_rutgers
+
+from dask_kubernetes import KubeCluster
+cluster = KubeCluster(n_workers=32)
+cluster
+
+from dask.distributed import Client
+client = Client(cluster)
+client
+
+%%time
+mean_image = ds_rutgers.video.mean(dim='time').load()
+
+mean_image.astype('i8').plot.imshow();
+
+blob_urls = []
+for frame_number in frame_numbers:
+    blob_urls.append('https://camhd.blob.core.windows.net/prores/%i-%08.0f' % (timestamp, frame_number))
+blob_urls[0]
+
+import requests
+def azure_get_frame(blob_url):
+    blob = requests.get(blob_url)
+    return camhd.decode_frame_data(blob.content, 'rgb24')
+
+test = azure_get_frame(blob_urls[0])
+
+type(test)
+
+%matplotlib inline
+import matplotlib.pyplot as plt
+
+plt.imshow(test)
+
+delayed_frames = []
+for blob_url in blob_urls:
+    delayed_frames.append(da.from_delayed(
+                            delayed(azure_get_frame)(blob_url),
+                            shape=(1080, 1920, 3), dtype=np.uint8)[None,:,:,:])
+delayed_frames[0]
+
+ds_azure = xr.DataArray(da.concatenate(delayed_frames, axis=0), dims=['time', 'y', 'x', 'channel'],
+                  coords={'time': timestamps}
+                 ).to_dataset(name='video')
+ds_azure
+
+%%time
+mean_image = ds_azure.video.mean(dim='time').load()
+
+mean_image.astype('i8').plot.imshow();

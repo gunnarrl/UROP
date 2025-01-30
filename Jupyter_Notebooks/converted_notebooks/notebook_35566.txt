@@ -1,0 +1,160 @@
+import os,collections
+from tf.fabric import Fabric
+
+versions = ['4', '4b', '4c']
+locations = {
+    '4': '~/github/text-fabric-data-legacy',
+    '4b': '~/github/text-fabric-data-legacy',
+    '4c': '~/github/text-fabric-data', 
+}
+
+preVersion = dict(((v, versions[i]) for (i,v) in enumerate(versions[1:])))
+preVersion
+
+TF = {}
+api = {}
+for v in versions:
+    omap = '' if v == '4' else 'omap@{}-{}'.format(preVersion[v], v)
+    TF[v] = Fabric(locations=locations[v], modules='hebrew/etcbc{}'.format(v))
+    api[v] = TF[v].load('''
+        {} lex
+    '''.format(omap))
+
+A4 = api['4']
+A4b = api['4b']
+A4c = api['4c']
+
+STRONG = 'hebrew/strong'
+strongDir = '{}/{}'.format(os.path.expanduser(locations['4c']), STRONG)
+strongFile = '{}/{}'.format(strongDir, 'MonadStrong.csv')
+strongs = {}
+
+strongs['4'] = {}
+first = True
+with open(strongFile, encoding='utf-16') as fh:
+    for line in fh:
+        if first:
+            first = False
+            continue
+        (slot, strong) = line.rstrip().split(',', 1)
+        strongs['4'][int(slot)] = strong
+
+def checkConsistency(v):
+    strongFromLex = collections.defaultdict(set)
+    lexFromStrong = collections.defaultdict(set)
+
+    for n in api[v].F.otype.s('word'):
+        if n in strongs[v]:
+            strongFromLex[api[v].F.lex.v(n)].add(strongs[v][n])
+            lexFromStrong[strongs[v][n]].add(api[v].F.lex.v(n))
+
+
+    multipleStrongs = set()
+    for (lx, strongset) in strongFromLex.items():
+        if len(strongset) > 1:
+            multipleStrongs.add(lx)
+
+    multipleLexs = set()
+    for (st, lexset) in lexFromStrong.items():
+        if len(lexset) > 1:
+            multipleLexs.add(lx)
+
+    print('{} lexemes with multiple Strong numbers'.format(len(multipleStrongs)))
+    print('{} Strong numbers with multiple lexemes'.format(len(multipleStrongs)))
+    for lx in sorted(multipleStrongs)[0:10]:
+        print('{}: {}'.format(lx, ', '.join(sorted(strongFromLex[lx]))))
+
+checkConsistency('4')
+
+strongs['4b'] = {}
+for (n, s) in strongs['4'].items():
+    for m in A4b.Es('omap@4-4b').f(n):
+        strongs['4b'][m] = s
+
+strongs['4c'] = {}
+for (n, s) in strongs['4b'].items():
+    for m in A4c.Es('omap@4b-4c').f(n):
+        strongs['4c'][m] = s
+
+checkConsistency('4b')
+
+checkConsistency('4c')
+
+nodeFeatures = {}
+provenance = dict(
+    source='Strong numbers provided by https://github.com/openscriptures/HebrewLexicon',
+    author='Compiled for ETCBC by Stephen Ku; transferred across versions by Dirk Roorda',
+)
+
+for v in versions:
+    metaData = {
+        '': provenance,
+        'otext@strong': {
+            'about': 'Provides Strong numbers to Hebrew Words',
+            'see': 'https://github.com/ETCBC/text-fabric/blob/master/Versions/strong.ipynb',
+            'fmt:lex-strong-plain': '{strong} ',
+        },
+        'strong': {
+            'valueType': 'str',
+        },
+    }
+    nodeFeatures = dict(strong=strongs[v])
+    TF[v].save(
+        module='hebrew/strong/{}'.format(v),
+        nodeFeatures=nodeFeatures,
+        metaData=metaData,
+    )
+
+TF = Fabric(modules=['hebrew/etcbc4c', 'hebrew/strong/4c'])
+api = TF.load('''
+        g_word_utf8
+        lex strong
+''')
+api.makeAvailableIn(globals())
+
+(book, chapter) = ('Genesis', 1)
+
+for verse in range(1,4):
+    vn = T.nodeFromSection((book, chapter, verse))
+    words = L.d(vn, otype='word')
+    for fmt in ('lex-trans-plain', 'lex-strong-plain'):
+        print('{} {}:{} ({})\n\t{}'.format(
+            book, chapter, verse, fmt,
+            T.text(words, fmt=fmt)
+        ))
+
+strongLex = collections.defaultdict(lambda: collections.defaultdict(set))
+lexStrong = collections.defaultdict(lambda: collections.defaultdict(set))
+
+indent(reset=True)
+info('Gathering lexemes and Strongs')
+for n in F.otype.s('word'):
+    lex = F.lex.v(n)
+    sng = F.strong.v(n)
+    if sng != None:
+        strongLex[sng][lex].add(n)
+        lexStrong[lex][sng].add(n)
+info('Done: {} lexemes and {} Strongs'.format(len(lexStrong), len(strongLex)))
+
+lexRanked = sorted(lexStrong, key=lambda x: -len(lexStrong[x]))
+sngRanked = sorted(strongLex, key=lambda x: -len(strongLex[x]))
+
+def inspectTop(dataRanked, data, amount):
+    for d in dataRanked[0:amount]:
+        print(d)
+        related = data[d]
+        for r in related:
+            occs = sortNodes(related[r])
+            print('\t{} ({} occs)'.format(r, len(occs)))
+            n = occs[0]
+            s = L.u(n, otype='sentence')[0]
+            ws = L.d(s, otype='word')
+            print('\t\te.g. {} {}:{} - {} in {}'.format(
+                *T.sectionFromNode(n),
+                F.g_word_utf8.v(n),
+                T.text(ws, fmt='text-orig-full'),
+            ))
+
+inspectTop(lexRanked, lexStrong, 10)
+
+inspectTop(sngRanked, strongLex, 10)

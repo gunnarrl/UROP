@@ -1,0 +1,104 @@
+### Standard Magic and startup initializers.
+
+# Load Numpy
+import numpy as np
+# Load MatPlotLib
+import matplotlib
+import matplotlib.pyplot as plt
+# Load Pandas
+import pandas as pd
+
+# This lets us show plots inline and also save PDF plots if we want them
+%matplotlib inline
+from matplotlib.backends.backend_pdf import PdfPages
+matplotlib.style.use('fivethirtyeight')
+# Seaborn is a plotting package for Pandas that we'll try out...
+import seaborn as sns
+
+# These two things are for Pandas, it widens the notebook and lets us display data easily.
+from IPython.core.display import display, HTML
+display(HTML("<style>.container { width:95% !important; }</style>"))
+
+# Define a simple function.
+
+def my_func(x, y):
+    if x > y:
+        return x
+    else:
+        return y
+
+my_func(1,2)
+
+def my_func(x, y):
+    return (x-1, y+2)
+
+
+# What is in scope here?
+(a, b) = my_func(1, 2)
+
+print(a)
+
+print(b)
+
+a = [1, 2, 4, 'a']
+a
+
+# len: returns the number of items of an enumerable object
+len(['c', 'm', 's', 'c', 3, 2, 0])
+
+
+# range: returns an iterable object
+list( range(10) )
+
+
+# enumerate: returns iterable tuple (index, element) of a list
+a = enumerate( ['311', '320', '330'] )
+print(a)
+
+# Recall here that Python3 does lazy evaluation for these iterators.  We have to manually expand it.
+list(a)
+
+a = enumerate( ['311', '320', '330'] )
+for i,j in a:
+    print(i,j)
+
+## Map and Filter
+
+# map: apply a function to a sequence or iterable
+
+arr = [1, 2, 3, 4, 5]
+out = map(lambda x: x**2, arr)
+print(list(out))
+print(arr)
+
+new_arr = [x**2 for x in arr]
+
+new_arr
+
+# What happened here??
+arr = [1, 2, 3, 4, 5]
+out = map(lambda x: x**2, arr)
+# Remember again lazy evaluation!
+print(list(out))
+
+# filter: returns a list of elements for which a predicate is true
+
+arr = [1, 2, 3, 4, 5, 6, 7]
+out = filter(lambda x: x % 2 == 0, arr)
+print(out)
+
+# Remember again that we have to explicitly evaluate the iterator.
+print(list(out))
+
+# A more pythonic way: list comprehension...
+x = [i for i in arr if i % 2 == 0]
+x
+
+# List comprehensions are the best!
+P = [ 2**x for x in range(17) ]
+
+
+# Can also do dictionaries...
+D = {x:['no'] for x in range(10)}
+
+D

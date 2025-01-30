@@ -1,0 +1,247 @@
+import numpy as np
+from keras.models import Model
+from keras.layers import Input
+from keras.layers.pooling import AveragePooling1D
+from keras import backend as K
+import json
+from collections import OrderedDict
+
+def format_decimal(arr, places=6):
+    return [round(x * 10**places) / 10**places for x in arr]
+
+DATA = OrderedDict()
+
+data_in_shape = (6, 6)
+L = AveragePooling1D(pool_size=2, strides=None, padding='valid')
+
+layer_0 = Input(shape=data_in_shape)
+layer_1 = L(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+np.random.seed(250)
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['pooling.AveragePooling1D.0'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+data_in_shape = (6, 6)
+L = AveragePooling1D(pool_size=2, strides=1, padding='valid')
+
+layer_0 = Input(shape=data_in_shape)
+layer_1 = L(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+np.random.seed(251)
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['pooling.AveragePooling1D.1'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+data_in_shape = (6, 6)
+L = AveragePooling1D(pool_size=2, strides=3, padding='valid')
+
+layer_0 = Input(shape=data_in_shape)
+layer_1 = L(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+np.random.seed(252)
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['pooling.AveragePooling1D.2'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+data_in_shape = (6, 6)
+L = AveragePooling1D(pool_size=2, strides=None, padding='same')
+
+layer_0 = Input(shape=data_in_shape)
+layer_1 = L(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+np.random.seed(253)
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['pooling.AveragePooling1D.3'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+data_in_shape = (6, 6)
+L = AveragePooling1D(pool_size=2, strides=1, padding='same')
+
+layer_0 = Input(shape=data_in_shape)
+layer_1 = L(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+np.random.seed(254)
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['pooling.AveragePooling1D.4'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+data_in_shape = (6, 6)
+L = AveragePooling1D(pool_size=2, strides=3, padding='same')
+
+layer_0 = Input(shape=data_in_shape)
+layer_1 = L(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+np.random.seed(255)
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['pooling.AveragePooling1D.5'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+data_in_shape = (6, 6)
+L = AveragePooling1D(pool_size=3, strides=None, padding='valid')
+
+layer_0 = Input(shape=data_in_shape)
+layer_1 = L(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+np.random.seed(256)
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['pooling.AveragePooling1D.6'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+data_in_shape = (7, 7)
+L = AveragePooling1D(pool_size=3, strides=1, padding='same')
+
+layer_0 = Input(shape=data_in_shape)
+layer_1 = L(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+np.random.seed(257)
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['pooling.AveragePooling1D.7'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+data_in_shape = (7, 7)
+L = AveragePooling1D(pool_size=3, strides=3, padding='same')
+
+layer_0 = Input(shape=data_in_shape)
+layer_1 = L(layer_0)
+model = Model(inputs=layer_0, outputs=layer_1)
+
+# set weights to random (use seed for reproducibility)
+np.random.seed(258)
+data_in = 2 * np.random.random(data_in_shape) - 1
+result = model.predict(np.array([data_in]))
+data_out_shape = result[0].shape
+data_in_formatted = format_decimal(data_in.ravel().tolist())
+data_out_formatted = format_decimal(result[0].ravel().tolist())
+print('')
+print('in shape:', data_in_shape)
+print('in:', data_in_formatted)
+print('out shape:', data_out_shape)
+print('out:', data_out_formatted)
+
+DATA['pooling.AveragePooling1D.8'] = {
+    'input': {'data': data_in_formatted, 'shape': data_in_shape},
+    'expected': {'data': data_out_formatted, 'shape': data_out_shape}
+}
+
+import os
+
+filename = '../../../test/data/layers/pooling/AveragePooling1D.json'
+if not os.path.exists(os.path.dirname(filename)):
+    os.makedirs(os.path.dirname(filename))
+with open(filename, 'w') as f:
+    json.dump(DATA, f)
+
+print(json.dumps(DATA))

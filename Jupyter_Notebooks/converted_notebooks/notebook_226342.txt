@@ -1,0 +1,341 @@
+# Imports here
+import torch
+from torchvision import transforms,datasets, models
+from collections import OrderedDict
+from torch import nn, optim
+import time
+from PIL import Image
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+
+data_dir = 'flowers'
+train_dir = data_dir + '/train'
+valid_dir = data_dir + '/valid'
+test_dir = data_dir + '/test'
+
+def set_data(path,type_transform) :
+    result = datasets.ImageFolder(path, transform=type_transform)
+    return result
+
+
+def set_loader(data,batch_size):
+    result = torch.utils.data.DataLoader(data, batch_size=batch_size, shuffle=True)
+    return result
+
+# TODO: Define your transforms for the training, validation, and testing sets
+
+# constant variable of means and standard deviations for generalisation
+means = [0.485, 0.456, 0.406]
+standard_deviations = [0.229, 0.224, 0.225]
+
+
+train_transforms = transforms.Compose([
+                                        transforms.RandomRotation(30),
+                                        transforms.RandomResizedCrop(224),
+                                        transforms.RandomHorizontalFlip(),
+                                        transforms.ToTensor(),
+                                        transforms.Normalize(means,standard_deviations)
+                                    ])
+
+
+test_validation_struct = transforms.Compose([
+                                        transforms.Resize(256),
+                                        transforms.CenterCrop(224),
+                                        transforms.ToTensor(),
+                                        transforms.Normalize(means,standard_deviations)
+                                    ])
+
+validation_transform = test_validation_struct
+test_transform = test_validation_struct
+
+print("train_transform : {}".format(train_transforms))
+print("validation_transform : {}".format(validation_transform))
+print("test_transform : {}".format(test_transform))
+print("---------------------------------------------")
+
+# # TODO: Load the datasets with ImageFolder
+train_data = set_data(train_dir,train_transforms)
+validation_data = set_data(valid_dir,validation_transform)
+test_data = set_data(test_dir,test_transform)
+
+print("train_data : {}".format(train_data))
+print("validation_data : {}".format(validation_data))
+print("test_data : {}".format(test_data))
+print("---------------------------------------------")
+
+# # TODO: Using the image datasets and the trainforms, define the dataloaders
+trainloader = set_loader(train_data,64)
+vloader = set_loader(validation_data,32)
+testloader = set_loader(test_data,20)
+
+import json
+
+with open('cat_to_name.json', 'r') as f:
+    cat_to_name = json.load(f)
+    
+print(cat_to_name)
+
+# TODO: Build and train your network
+
+# LOAD a pre-trained-network
+model = models.vgg16(pretrained=True)
+
+# Freeze parameters so we don't backprop through them
+for param in model.parameters():
+    param.requires_grad = False
+
+input_size = model.classifier[0].in_features
+
+classifier = nn.Sequential(OrderedDict([ # use sequential to save time 
+                          ('fc1', nn.Linear(input_size, 500)),
+                          ('dropout', nn.Dropout(p=0.6)),
+                          ('relu1', nn.ReLU()),
+                          ('fc2', nn.Linear(500, 102)),
+                          ('output', nn.LogSoftmax(dim=1))
+                          ]))
+        
+model.classifier = classifier
+model
+
+criterion = nn.NLLLoss()
+optimizer = optim.Adam(model.classifier.parameters(), lr=0.001)
+
+epochs = 3
+print_every = 10
+steps = 0
+
+# change to cuda
+model.to('cuda') # use cuda
+
+
+start = time.time()
+print('Starting training')
+
+for e in range(epochs):
+    running_loss = 0
+    for ii, (inputs, labels) in enumerate(trainloader): # 0 = train
+        steps += 1 
+        
+        inputs, labels = inputs.to('cuda'), labels.to('cuda') # use cuda
+        
+        optimizer.zero_grad()
+        
+        # Forward and backward passes
+        outputs = model.forward(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+        
+        running_loss += loss.item()
+        
+        if steps % print_every == 0:
+            model.eval()
+            valloss = 0
+            accuracy=0
+        
+            for ii, (inputs2,labels2) in enumerate(vloader): # 1 = validation 
+                    optimizer.zero_grad()
+
+                    inputs2, labels2 = inputs2.to('cuda') , labels2.to('cuda') # use cuda
+                    model.to('cuda:0') # use cuda
+                    with torch.no_grad():    
+                        outputs = model.forward(inputs2)
+                        valloss = criterion(outputs,labels2)
+                        ps = torch.exp(outputs).data
+                        equality = (labels2.data == ps.max(1)[1])
+                        accuracy += equality.type_as(torch.FloatTensor()).mean()
+
+            valloss = valloss / len(vloader)
+            accuracy = accuracy /len(vloader)
+
+            print("Epoch: {}/{}... ".format(e+1, epochs),
+                  "Training Loss: {:.4f}".format(running_loss/print_every),
+                  "Validation Loss {:.4f}".format(valloss),
+                  "Accuracy: {:.4f}".format(accuracy),
+                 )
+
+            running_loss = 0
+            
+time_elapsed = time.time() - start
+print("\nTime spent training: {:.0f}m {:.0f}s".format(time_elapsed//60, time_elapsed % 60))
+
+# TODO: Do validation on the test set
+def check_accuracy(testloader):    
+    correct = 0
+    total = 0
+    test_loss = 0
+    model.to('cuda')
+    with torch.no_grad():
+        for data in testloader:
+            images, labels = data
+#             print("images : {}".format(images))
+#             print("labels : {}".format(labels))
+            
+            images, labels = images.to('cuda'), labels.to('cuda')
+#             print("images cuda : {}".format(images))
+#             print("labels cuda : {}".format(labels))
+            
+            
+            #forward
+            output = model.forward(images)
+            test_loss += criterion(output, labels).item()
+
+            #tensor with probability, tensor with index of flower category
+            prob = torch.exp(output) #tensor with prob. of each flower category
+#             print("prob : {}".format(prob))
+            
+            pred = prob.max(dim=1) #tensor giving us flower label most likely
+#             print("pred : {}".format(pred))
+
+            #calculate number correct
+            matches = (pred[1] == labels.data)
+            correct += matches.sum().item()
+            total += labels.size(0)
+
+    
+    print('Accuracy of the network on the test images: %d %%' % (100 * correct / total))
+
+check_accuracy(testloader)
+
+# TODO: Save the checkpoint
+
+model.class_to_idx = train_data.class_to_idx
+
+checkpoint = {'input_size': input_size,
+              'output_size': 102,
+              'arch': 'vgg16',
+              'classifier' : classifier,
+              'learning_rate': 0.001,
+              'epochs': epochs,
+              'class_to_idx': model.class_to_idx,
+              'state_dict': model.state_dict(),
+              'optimizer': optimizer.state_dict(),
+             }
+
+torch.save(checkpoint, 'checkpoint.pth')
+
+# TODO: Write a function that loads a checkpoint and rebuilds the model
+
+def load_checkpoint(filepath):
+    checkpoint = torch.load(filepath)
+    model = models.vgg16(pretrained = True)
+    model.classifier = checkpoint['classifier']
+    learning_rate = checkpoint['learning_rate']
+    model.epochs = checkpoint['epochs']
+    model.optimizer = checkpoint['optimizer']
+    model.load_state_dict(checkpoint['state_dict'])
+    model.class_to_idx = checkpoint['class_to_idx']
+    
+    return model
+
+
+
+model = load_checkpoint('checkpoint.pth')  
+print(model)
+
+def process_image(image):
+    ''' Scales, crops, and normalizes a PIL image for a PyTorch model,
+        returns an Numpy array
+    '''
+    
+    # TODO: Process a PIL image for use in a PyTorch model
+    img_pil = Image.open(image)
+    img_transforms = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=means,std=standard_deviations)
+    ])
+    
+    image = img_transforms(img_pil)
+    
+    return image
+
+img = (test_dir + '/1/image_06764.jpg')
+img = process_image(img)
+print(img.shape)
+
+def imshow(image, ax=None, title=None):
+    """Imshow for Tensor."""
+    if ax is None:
+        fig, ax = plt.subplots()
+    
+    # PyTorch tensors assume the color channel is the first dimension
+    # but matplotlib assumes is the third dimension
+    image = image.numpy().transpose((1, 2, 0))
+    
+    # Undo preprocessing
+    mean = np.array(means)
+    std = np.array(standard_deviations)
+    image = std * image + mean
+    
+    # Image needs to be clipped between 0 and 1 or it looks like noise when displayed
+    image = np.clip(image, 0, 1)
+    
+    ax.imshow(image)
+    
+    return ax
+
+imshow(process_image(test_dir + "/1/image_06752.jpg"))
+
+def predict(image_path, model, topk=5):
+    ''' Predict the class (or classes) of an image using a trained deep learning model.
+    '''
+    
+    # TODO: Implement the code to predict the class from an image file
+    model.to('cuda')
+    model.eval()
+    img = process_image(image_path)
+    img = img.numpy()
+    img = torch.from_numpy(np.array([img])).float()
+
+    with torch.no_grad():
+        output = model.forward(img.cuda())
+        
+    probability = torch.exp(output).data
+    
+    return probability.topk(topk)
+
+img = (test_dir + "/1/image_06752.jpg") 
+probs, classes = predict(img, model)
+print("prob : {}".format(probs))
+print("classes : {}".format(classes))
+
+
+def sanity_checking(index,path) :
+    plt.rcdefaults()
+    fig, ax = plt.subplots()
+
+    ps = predict(path, model)
+    image = process_image(path)
+
+    ax1 = imshow(image, ax = plt)
+    ax1.axis('off')
+    ax1.title(cat_to_name[str(index)])
+
+
+    a = np.array(ps[0][0])
+    b = [cat_to_name[str(index+1)] for index in np.array(ps[1][0])]
+
+    fig,ax2 = plt.subplots(figsize=(5,5))
+
+
+    y_pos = np.arange(5)
+    ax2.set_yticks(y_pos)
+    ax2.set_yticklabels(b)
+    ax2.set_xlabel('Probability')
+    ax2.invert_yaxis()
+    ax2.barh(y_pos, a)
+
+    plt.show()
+
+# TODO: Display an image along with the top 5 classes
+
+title_mapping = 1
+sanity_img_path = (test_dir +'/' + str(title_mapping) + '/image_06752.jpg') # pink primrose test
+sanity_checking(title_mapping,sanity_img_path)
+
+# for the GPU, parser.add_argument('-a', action="store_true", default=False)
+

@@ -1,0 +1,68 @@
+import pandas as pd
+from report_manager import project, dataset, report
+from analytics_core.viz import viz as plots
+import networkx as nx
+from networkx.readwrite import json_graph
+from plotly.offline import init_notebook_mode, iplot
+import plotly.graph_objs as go
+from scipy.stats import zscore
+init_notebook_mode(connected=True)
+%matplotlib inline
+import ipywidgets as widgets
+from ipywidgets import interact, interact_manual
+
+import warnings
+warnings.filterwarnings('ignore')
+import logging
+logger = logging.getLogger()
+logger.setLevel(logging.CRITICAL)
+
+my_project = project.Project(identifier='P0000001', datasets={}, report={})
+my_project.load_project_data()
+my_project.load_project_report()
+
+my_project.list_datasets()
+
+proteomics_dataset = my_project.get_dataset('proteomics')
+
+my_project.get_dataset('proteomics').list_dataframes()
+
+my_project.get_dataset('proteomics').get_dataframe('go annotation')
+
+proteomics_dataset = my_project.get_dataset('proteomics')
+processed_df = proteomics_dataset.get_dataframe('processed')
+
+processed_df.head()
+
+processed_df = processed_df.drop(['sample', 'subject'], axis=1).set_index('group').apply(zscore).reset_index()
+
+proteomics_report = my_project.get_dataset('proteomics').report
+proteomics_report.list_plots()
+
+correlation_net_dict = proteomics_report.get_plot('16~correlation_correlation~network')[0]
+
+correlation_net = json_graph.node_link_graph(correlation_net_dict['net_json'])
+
+correlation_df = pd.DataFrame.from_dict(correlation_net.nodes(data=True))
+correlation_df = correlation_df[0].to_frame().join(correlation_df[1].apply(pd.Series))
+
+correlation_df.columns = ['identifier', 'degree', 'radius', 'color', 'cluster']
+
+min_val = processed_df._get_numeric_data().min().min().round()
+max_val = processed_df._get_numeric_data().max().max().round()
+processed_df = processed_df[list(correlation_df.identifier) + ['group']]
+
+from IPython.core.display import display, HTML
+
+@interact
+def plot_parallel_plot(cluster=correlation_df.cluster.unique()):
+    cluster_colors = dict(zip(correlation_df.cluster, correlation_df.color))
+    clusters = correlation_df.groupby('cluster')
+    identifiers = clusters.get_group(cluster)['identifier'].tolist()
+    title= "Parallel plot cluster: {}".format(cluster)
+    df = processed_df.set_index('group')[identifiers].reset_index()
+    figure = plots.get_parallel_plot(df, identifier=cluster, args={'color':cluster_colors[cluster],'group':'group', 
+                                                                          'title':title,
+                                                                          'zscore':False})
+    display(HTML("<p>{}</p>".format(",".join(identifiers))))
+    iplot(figure.figure)

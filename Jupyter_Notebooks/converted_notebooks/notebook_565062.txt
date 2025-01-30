@@ -1,0 +1,63 @@
+# Basic imports
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+import datetime as dt
+import scipy.optimize as spo
+import sys
+
+%matplotlib inline
+
+%pylab inline
+pylab.rcParams['figure.figsize'] = (20.0, 10.0)
+
+%load_ext autoreload
+%autoreload 2
+
+sys.path.append('../')
+
+from sklearn.model_selection import TimeSeriesSplit
+num_samples = 30
+dims = 2
+
+X = np.random.random((num_samples,dims))
+y = np.array(range(num_samples))
+tscv = TimeSeriesSplit(n_splits=3)
+print(tscv)  
+TimeSeriesSplit(n_splits=3)
+for train_index, test_index in tscv.split(X):
+    print("TRAIN_indexes:", train_index, "TEST_indexes:", test_index)
+    X_train, X_test = X[train_index], X[test_index]
+    y_train, y_test = y[train_index], y[test_index]
+
+data_df = pd.read_pickle('../../data/data_df.pkl')
+print(data_df.shape)
+data_df.head(10)
+
+num_test_samples = 252 * 2
+
+data_train_val_df, data_test_df = data_df.unstack().iloc[:-num_test_samples], data_df.unstack().iloc[-num_test_samples:] 
+
+def show_df_basic(df):
+    print(df.shape)
+    print('Starting value: %s\nEnding value: %s' % (df.index.get_level_values(0)[0], df.index.get_level_values(0)[-1]))
+    print(df.head())
+
+show_df_basic(data_train_val_df)
+
+show_df_basic(data_test_df)
+
+data_test_df.loc[slice(None),(slice(None),'Close')].head()
+
+data_test_df.xs('Close', level=1, axis=1).head()
+
+data_train_val_df = data_train_val_df.swaplevel(0, 1, axis=1).stack().unstack()
+show_df_basic(data_train_val_df)
+data_test_df = data_test_df.swaplevel(0, 1, axis=1).stack().unstack()
+show_df_basic(data_test_df)
+
+data_train_val_df['Close']
+
+data_train_val_df.to_pickle('../../data/data_train_val_df.pkl')
+data_test_df.to_pickle('../../data/data_test_df.pkl')

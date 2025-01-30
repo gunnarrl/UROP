@@ -1,0 +1,203 @@
+import os
+import sys
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import matplotlib
+#matplotlib.use("Agg")
+#matplotlib.use('qt5agg')
+from matplotlib.animation import FuncAnimation
+import scipy.io as spio
+import folium
+
+overdoseAll = pd.read_excel('overdose_data_1999-2015.xls',sheetname='Online',skiprows =6)
+#source: https://www.drugabuse.gov/related-topics/trends-statistics/overdose-death-rates
+
+overdoseAll
+
+def get_data(table,rownum,title):
+    data = pd.DataFrame(table.loc[rownum][2:]).astype(float)
+    data.columns = {title}
+    return data
+def augment(xold,yold,numsteps):
+    xnew = []
+    ynew = []
+    for i in range(len(xold)-1):
+        difX = xold[i+1]-xold[i]
+        stepsX = difX/numsteps
+        difY = yold[i+1]-yold[i]
+        stepsY = difY/numsteps
+        for s in range(numsteps):
+            xnew = np.append(xnew,xold[i]+s*stepsX)
+            ynew = np.append(ynew,yold[i]+s*stepsY)
+    return xnew,ynew
+
+%matplotlib notebook
+title = 'Opioid Overdoses'
+d = get_data(overdoseAll,21,title)
+x = np.array(d.index)
+y = np.array(d['Opioid Overdoses'])
+XN,YN = augment(x,y,10)
+augmented = pd.DataFrame(YN,XN)
+augmented.columns = {title}
+
+Writer = animation.writers['ffmpeg']
+writer = Writer(fps=50, metadata=dict(artist='Me'), bitrate=1800)
+
+fig = plt.figure(figsize=(10,6))
+plt.xlim(1999, 2016)
+plt.ylim(np.min(augmented)[0], np.max(augmented)[0])
+plt.xlabel('Year',fontsize=20)
+plt.ylabel(title,fontsize=20)
+
+plt.title('Opioid Overdoses per Year',fontsize=20)
+def animate(i):
+    data = augmented.iloc[:int(i+1)]
+    p = sns.lineplot(x=data.index, y=data[title], data=data, color="r")
+    p.tick_params(labelsize=17)
+    plt.setp(p.lines,linewidth=7)
+ani = matplotlib.animation.FuncAnimation(fig, animate, frames=160, repeat=True)
+#ani.save('OpioidOverdoses.mp4', writer=writer)
+plt.show()
+
+def forcast(original,numSteps,numYears,goalNumber):
+    Countstepsize = (goalNumber - np.max(augmented)[0])/(numYears*numSteps)
+    YearStepsize = (numYears)/(numYears*numSteps)
+    startYear = max(original.index) + YearStepsize
+    newYear = [startYear]
+    newNum = [np.max(augmented)[0]+Countstepsize]
+    for year in range(numYears):
+        for step in range(numSteps):
+            newYear = np.append(newYear,newYear[-1]+YearStepsize)
+            newNum = np.append(newNum,newNum[-1]+Countstepsize)
+    new = pd.DataFrame(newNum,newYear)
+    new.columns = {title}
+    return new
+
+%matplotlib notebook
+title = 'Opioid Overdoses'
+d = get_data(overdoseAll,21,title)
+x = np.array(d.index)
+y = np.array(d['Opioid Overdoses'])
+XN,YN = augment(x,y,10)
+augmented = pd.DataFrame(YN,XN)
+augmented.columns = {title}
+f = forcast(augmented,10,12,100000)
+fc = augmented.append(f)
+
+Writer = animation.writers['ffmpeg']
+writer = Writer(fps=50, metadata=dict(artist='Me'), bitrate=1800)
+
+maxRec = np.max(augmented)[0]
+
+fig = plt.figure(figsize=(10,6))
+fig.subplots_adjust(hspace=0.9, wspace=0.9)
+plt.xlim(1999, 2027)
+plt.ylim(np.min(augmented)[0], 94000)
+plt.xlabel('Year',fontsize=20)
+plt.ylabel(title,fontsize=20)
+plt.gcf().subplots_adjust(left=0.15)
+plt.title('Opioid Overdoses per Year',fontsize=20)
+def animate(i):
+    data = fc.iloc[:int(i+1)]    
+    if data.iloc[-1][0]>maxRec:
+        startFc = data[data[title]==maxRec].index[0]
+        data = data[startFc:]
+        p2 = sns.lineplot(x=data.index, y=data[title], data=data, color="maroon")
+        p2.tick_params(labelsize=17)
+        plt.setp(p2.lines,linewidth=7)#, linestyle='dotted')
+    else:
+        p = sns.lineplot(x=data.index, y=data[title], data=data, color="r")
+        p.tick_params(labelsize=17)
+        plt.setp(p.lines,linewidth=7)
+ani = matplotlib.animation.FuncAnimation(fig, animate, frames=320, repeat=True)
+ani.save('OpioidOverdosesFc.mp4', writer=writer)
+#plt.show()
+
+%matplotlib notebook
+title = 'Heroin Overdoses'
+d = get_data(overdoseAll,18,title)
+x = np.array(d.index)
+y = np.array(d['Heroin Overdoses'])
+XN,YN = augment(x,y,10)
+augmented = pd.DataFrame(YN,XN)
+augmented.columns = {title}
+
+Writer = animation.writers['ffmpeg']
+writer = Writer(fps=50, metadata=dict(artist='Me'), bitrate=1800)
+
+fig = plt.figure(figsize=(10,6))
+plt.xlim(1999, 2016)
+plt.ylim(np.min(augmented)[0], np.max(augmented)[0])
+plt.xlabel('Year',fontsize=20)
+plt.ylabel(title,fontsize=20)
+
+plt.title('Heroin Overdoses per Year',fontsize=20)
+def animate(i):
+    data = augmented.iloc[:int(i+1)]
+    p = sns.lineplot(x=data.index, y=data[title], data=data, color="r")
+    p.tick_params(labelsize=17)
+    plt.setp(p.lines,linewidth=7)
+ani = matplotlib.animation.FuncAnimation(fig, animate, frames=160, repeat=True)
+ani.save('HeroinOverdoses.mp4', writer=writer)
+#plt.show()
+
+opioid_death = pd.read_csv('opioid_death_1999_2014_v1_1.csv')
+#source: https://data.world/health/opioid-overdose-deaths/ 
+#who got it from: https://www.cdc.gov/mmwr/preview/mmwrhtml/mm6450a3.htm
+
+opioid_death
+
+%matplotlib inline
+maxRate = np.max(opioid_death['crude_rate'].replace("Unreliable","0.0").replace("Suppressed","0.0").apply(pd.to_numeric))
+scale = np.array(np.linspace(0,maxRate,4,dtype='int'))
+rates = opioid_death['crude_rate'].replace("Unreliable","0.0").replace("Suppressed","0.0").apply(pd.to_numeric)
+plt.hist(rates)
+plt.title("Distribution of Crude Rates Over all Years")
+plt.xlabel("Crude Rate")
+plt.ylabel("Count")
+plt.show();
+
+perc1 = np.percentile(rates, 25)
+perc2 = np.percentile(rates, 50)
+perc3 = np.percentile(rates, 75)
+
+def getTableOneYear(data,year):
+    new = data[data['year']==year][['state','crude_rate']].reset_index()
+    new = new.replace("Unreliable","0.0").replace("Suppressed","0.0")[['state',"crude_rate"]]
+    new['crude_rate'] = new['crude_rate'].apply(pd.to_numeric)
+    return new
+t = getTableOneYear(opioid_death,2014)
+
+# Find the original file here: https://github.com/python-visualization/folium/tree/master/examples/data
+state_geo = 'us-states.json'
+
+m = folium.Map(location=[37, -101], zoom_start=4)
+
+m.choropleth(
+ geo_data=state_geo,
+ name='choropleth',
+ data=t,
+ columns=['state', 'crude_rate'],
+ key_on='feature.properties.name',
+ fill_color='Reds',
+ fill_opacity=0.8,
+ line_opacity=0.3,
+    threshold_scale=[ 0,perc1,perc2,perc3,maxRate+1],reset=True,
+ legend_name='Crude Rate (Opioid Related Deaths per 100.000 )'
+)
+
+folium.LayerControl().add_to(m)     
+
+m
+
+opioid_persc = pd.read_csv('OpioidPerscriptions.csv')
+#Source: https://www.cdc.gov/drugoverdose/maps/rxrate-maps.html
+
+opioid_persc
+
+overdose = pd.read_csv('VSRR_Provisional_Drug_Overdose_Death_Counts.csv')
+
+overdose

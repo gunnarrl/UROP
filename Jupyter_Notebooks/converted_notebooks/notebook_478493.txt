@@ -1,0 +1,159 @@
+import tensorflow as tf
+
+tf.__version__
+
+import pandas as pd
+import numpy as np
+
+from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, classification_report
+def metrics(y_test, y_pred):
+    y_pred = y_pred.argmax(axis=1)
+    print(y_pred)
+    print("Accuracy Score : ", accuracy_score(y_test, y_pred))
+    print("Precision Score : ", precision_score(y_test, y_pred, average="weighted"))
+    print("Classification Report : \n", classification_report(y_test, y_pred))
+    print("Confusion Matrix : \n", confusion_matrix(y_test, y_pred))
+
+fashion_mnist = tf.keras.datasets.fashion_mnist
+
+(X_train, y_train), (X_test, y_test) = fashion_mnist.load_data()
+
+# Always a good idea to look at shape before getting started.
+print(f"X train shape : {X_train.shape}")
+print(f"y train shape : {y_train.shape}")
+print(f"X test shape : {X_test.shape}")
+print(f"y test shape : {y_test.shape}")
+
+# All of the above are numpy arrays --> run much faster than python lists.
+# numpy is implemented in C.
+
+# tensorflow is named after "tensor" which is a generalised numpy array.
+
+print(type(X_train))
+
+# Normalising values as gradient descent works better on small scale data.
+
+X_train , X_test = X_train/255, X_test/255
+
+# Converting input suitable to CNN architecture.
+
+X_train = np.reshape(X_train,newshape=(X_train.shape+(1,)))
+
+print(f"New X_train shape : {X_train.shape}")
+
+X_test = np.reshape(X_test, newshape=(X_test.shape[0], X_test.shape[1], X_test.shape[2], 1))
+
+print(f"New X_test shape : {X_test.shape}")
+
+# Trying to make output into proper format
+
+y_train, y_test = y_train.flatten(), y_test.flatten()
+
+print(f"New shape of y_train {y_train.shape}")
+print(f"New shape of y_test {y_test.shape}")
+
+# Label mapping
+labels = '''T-shirt/top
+Trouser
+Pullover
+Dress
+Coat
+Sandal
+Shirt
+Sneaker
+Bag
+Ankle boot'''.split("\n")
+
+# Getting number of classes
+K = len(set(y_train))
+print(f"No. of classes : {K}")
+
+X_train[0].shape
+
+# Buliding model using keras functional API.
+
+from tensorflow.keras.layers import Input, Conv2D, Flatten, Dense, Dropout
+from tensorflow.keras.models import Model
+
+
+input_shape = X_train[0].shape
+feature_map = [32, 64, 128]
+dense_size = [512]
+filter_size= (3,3)
+
+i = Input(shape=input_shape)
+x = Conv2D(filters=feature_map[0], kernel_size=filter_size, activation="relu", strides=2)(i)
+x = Conv2D(filters=feature_map[1], kernel_size=filter_size, activation="relu", strides=2)(x)
+x = Conv2D(filters=feature_map[2], kernel_size=filter_size, activation="relu", strides=2)(x)
+
+# Dense layer takes flattened input
+x = Flatten()(x)
+
+# Building dense/ fully connected layers from here
+x = Dense(dense_size[0], activation="relu")(x)
+x = Dense(K, activation="softmax")(x)
+
+model = Model(i, x)
+
+model.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+
+r = model.fit(X_train, y_train, validation_data=(X_test, y_test), epochs=20)
+
+r.history.keys()
+
+import matplotlib.pyplot as plt
+
+plt.plot(r.history["accuracy"], label="Accuracy")
+plt.plot(r.history["val_accuracy"], label="Validation Acc.")
+plt.legend()
+plt.xlabel("No. of epochs")
+plt.ylabel("Accuracy")
+
+import matplotlib.pyplot as plt
+
+plt.plot(r.history["loss"], label="Loss")
+plt.plot(r.history["val_loss"], label="Validation Loss")
+plt.legend()
+
+i = Input(shape=(X_train[0].shape))
+x = Conv2D(32, (3,3), strides=2, activation="relu")(i)
+x = Conv2D(64, (3,3), strides=2, activation="relu")(x)
+x = Conv2D(128, (3,3), strides=2, activation="relu")(x)
+
+x = Flatten()(x)
+
+x = Dropout(0.2)(x)
+x = Dense(128, activation="relu")(x)
+x = Dropout(0.2)(x)
+x = Dense(K, activation="softmax")(x)
+
+model = Model(i,x)
+
+model.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+
+r = model.fit(X_train, y_train, validation_data=(X_test, y_test), epochs=5)
+
+import matplotlib.pyplot as plt
+
+plt.plot(r.history["accuracy"], label="Accuracy")
+plt.plot(r.history["val_accuracy"], label="Validation Acc.")
+plt.legend()
+plt.xlabel("No. of epochs")
+plt.ylabel("Accuracy")
+
+import matplotlib.pyplot as plt
+
+plt.plot(r.history["loss"], label="Loss")
+plt.plot(r.history["val_loss"], label="Validation Loss")
+plt.legend()
+
+y_pred = model.predict(X_test)
+metrics(y_test, y_pred)
+
+misclassified_index = np.where(y_pred.argmax(axis=1) != y_test)
+X_test = X_test * 255
+misclassified_index[0]
+
+i = np.random.choice(misclassified_index[0])
+plt.imshow(X_test[i].reshape(28,28), cmap='gray')
+plt.title("True label: %s Predicted: %s" % (labels[y_test[i]], labels[y_pred.argmax(axis=1)[i]]));

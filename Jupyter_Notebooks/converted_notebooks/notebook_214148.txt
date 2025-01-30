@@ -1,0 +1,30 @@
+R = 10 / (100000 - 10)
+
+p = R / (R + 1)
+
+alpha = 0.05
+
+beta = 0.2
+
+pyy = (1 - beta) * p
+
+pny = (1 - p) * alpha
+
+pny, pyy
+
+PPV = pyy / (pny + pyy)
+
+PPV
+
+print(100 * (1 - PPV))
+
+def compute_ppv(R, alpha, beta):
+    p = R / (R + 1)
+    pyy = (1 - beta) * p
+    pny = (1 - p) * alpha
+    return pyy / (pny + pyy)
+
+compute_ppv(10 / (100000 - 10), 0.05, 0.20)
+
+for R in [1/n for n in (10000, 1000, 100, 10, 2, 1)]:
+        print("R = {0:1.8f}, PPV = {1:1.5f}".format(R, compute_ppv(R, alpha, beta)))
