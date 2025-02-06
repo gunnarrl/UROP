@@ -1,0 +1,267 @@
+from od_media import ODMedia
+
+media = ODMedia()
+
+import time
+
+import od_control
+
+robot = od_control.ODRobot(media.disk_open, media.disk_close, com_port="COM6")
+
+import os
+from pathlib import Path
+
+from odarchive import Archiver, load_archiver_from_json
+#from h3timeit import h3_timeit
+
+
+class ODStatus:
+    """Reads the status of the optical disk in the drive.
+    Initialisation reads all the state information and then you can use the data as necessary"""
+    def __init__(self, media):
+        # Parse media information
+        self.number_of_drives = media.number_of_drives
+        # test = media.disk_type()
+        #test = "Todo"
+        #if test == '\rThere was an error obtaining disc info!\r\n':
+        #    self.disk_loaded = False
+        #else:
+        #    self.disk_loaded = True
+        #    """Parses disk type into a json object"""
+        #    lines = test.split('\n')
+        #    print(lines)
+        #    description=lines[0].split(',')  # First line
+        #    self.media_type = description[0]
+        #    self.free_space = int(description[2].strip().split(' ')[0]) * 2048
+        #    self.capacity = int(lines[3].strip().split(':')[1].strip()) * 2048
+        #    self.disk_is_blank = self.free_space == self.capacity and self.free_space != 0
+
+    def __str__(self):
+        result = f"Number of drives = {self.number_of_drives}\n"
+        #if self.disk_loaded:
+        #    result += f"Disk Loaded\n"
+        #    result += f"Size = {self.capacity}\n"
+        #    result += f"Free space = {self.free_space}\n"
+        #    if self.disk_is_blank:
+        #        result += f"Blank disk\n"
+         ##   else:
+         #       #result += f"{self.readme}\n"
+         #       result += f"Media type = {self.media_type}\n"
+
+        #else:
+        #    result += f"No Disk Loaded\n"
+        return result
+
+    def _readme(self):
+        # Assume disk loaded
+        # look for readme.markdown and then print
+        with open("d:/readme.markdown","r") as f:
+            content = f.readlines()
+        return content
+
+
+a = ODStatus(media)
+print(a)
+
+
+class ODError(Exception):
+    pass
+
+for i in range(9):  
+    # Check if drive empty
+    a = ODStatus(media)
+    if not a.disk_loaded:
+        robot.load()
+        a = ODStatus(media)
+        print(a)
+    if not a.disk_loaded:
+        raise ODError(f'On cycle {i} not disk was loaded and it should have been')
+    if a.disk_is_blank:
+        print(f'Disk {i} is blank')
+        robot.unload()
+    else:
+        print(f'Disk {i} has data')
+        robot.unload(destination_bin='waste')
+
+# refill in bin
+for i in range(9):  
+    robot.unload(source_bin='out', destination_bin='in')
+
+from functools import partial
+import os
+import re
+import shutil
+
+root_path = r'Z:\Home Pictures'
+number_start = re.compile('^\d\d\d\d')
+
+def getFolderSize(start_path = '.'):
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(start_path):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            total_size += os.path.getsize(fp)
+    return total_size
+
+size_sum = 0
+results = []
+with os.scandir(root_path) as it:
+    for entry in it:
+        if not entry.is_file():
+            if number_start.search(entry.name):
+                print(entry.path)
+                folder_size = getFolderSize(entry.path) 
+                size_sum += folder_size
+                results.append([entry.path, folder_size, size_sum])
+print(results)
+for i,list in enumerate(results):
+    if list[2] > 1.5*1E9:
+        print(i, list)
+        break
+# Get the list of directories
+target_dirs = [d[0] for d in results[:i]]
+print(target_dirs)
+
+"""
+This should make for easier debugging
+It creates a single archive and prints out the information for it.
+On the Z drive
+timeit started 2018-06-18 11:15:25.988937
+Initializing file database
+Number of files = 40,954
+Data size       = 228,605,334,662
+Is segmented    = False
+Number of dirs  = 1458
+Max dir depth   = 11 (on source file system)
+ Dir =: Z:\Home Pictures\H3 to Sort\2012-06-29\ManualArchive\Apalone\Quotes\healthMan\awstats\awstats\icon\flags
+
+'test_scan_Z_drive'  436541.60 ms
+
+"""
+
+
+def test_create_job():
+    # Archive part
+    ar = Archiver()
+    ar.create_file_database(Path("Z:\\Home Pictures\\2000"))
+    ar.save()
+    ar.convert_to_hash_database(verbose = True)
+    ar.hash_db.save()  #  Creates catalogue.json
+    ar.save()
+    # ar = load_archiver_from_json()  only once catalogue.json has been crate
+    ar.segment("cd")
+    ar.save()
+    ar.hash_db.save()
+    print(ar.file_db.get_info())
+
+def test_create_some_iso():
+    ar = load_archiver_from_json()  #only once catalogue.json has been crate
+    print(ar.get_info())
+    for n in range(ar.last_disc_num):
+        ar.write_iso(disc_num=n)
+        filename = f"new_{n:04}.iso"
+        print(f'Written {filename}')
+
+def test_burn_some_pictures():
+    # Check and make sure drive is empty
+    a = ODStatus(media)
+    #if a.disk_loaded:
+    #    print(f'Drive had disk in which is being put into waste bin')
+    #    robot.unload(destination_bin='waste') 
+    # Archive part
+    ar = Archiver()
+    ar.create_file_database(Path("Z:\\Home Pictures"))
+    ar.save()
+    ar.convert_to_hash_database(verbose = True)
+    ar.hash_db.save()  #  Creates catalogue.json
+    ar.save()
+    # ar = load_archiver_from_json()  only once catalogue.json has been crate
+    ar.segment("bd")
+    ar.save()
+    ar.hash_db.save()
+    print(ar.file_db.get_info())
+    for n in range(ar.last_disc_num):
+        #ar = load_archiver_from_json()
+        ar.write_iso(disc_num=n)
+        # TODO make filename part of archiver
+        filename = f"new_{n:04}.iso"
+        # Load drive and burn disc
+        robot.load()
+        media.burn_disk(filename)
+        #a = ODStatus(media)
+        robot.unload()
+        if os.path.isfile(filename):
+            print(f'File {filename} being deleted after use')
+            os.remove(filename)
+        else:
+            print(f'--- File {filename} missing')
+        #a = ODStatus(media)
+        #print(a)
+        #if a.disk_is_blank:
+        #    media.burn_disk(filename)
+        #    robot.unload()
+        #else:
+        #    raise ODError(f'Cycle {n} and had non blank disk')        
+
+# test_create_job() First part
+#test_create_some_iso() # second part
+test_burn_some_pictures() # first second and third parts
+
+
+## If failed but have archive then use this code
+def test_burn_isos():
+    # Check and make sure drive is empty
+    #a = ODStatus(media)
+    #if a.disk_loaded:
+    #    print(f'Drive had disk in which is being put into waste bin')
+    #    robot.unload(destination_bin='waste') 
+    # Archive part
+    ar = load_archiver_from_json()  # Assume segmented and ready to burn
+    print(ar.get_info())
+    for n in (0,): # range(ar.last_disc_num+1):
+        ar.write_iso(disc_num=n)
+        # TODO make filename part of archiver
+        filename = f"new_{n:04}.iso"
+        # Load drive and burn disc
+        robot.load()
+        media.burn_disk(filename)
+        robot.unload()
+        #if os.path.isfile(filename):
+        #    print(f'File {filename} being deleted after use')
+        #    os.remove(filename)
+        #else:
+        #    print(f'--- File {filename} missing')
+        #  #a = ODStatus(media)
+        #print(a)
+        #if a.disk_is_blank:
+        #    media.burn_disk(filename)
+        #    robot.unload()
+        #else:
+        #    raise ODError(f'Cycle {n} and had non blank disk')
+    # put the drive back
+#    robot.zero_toolhead()
+#    robot.rotator.to_bin('od')
+        
+test_burn_isos()
+
+#Test
+robot.load(source_bin='out')
+
+robot.disk_close()
+
+# Reject disk and load new blank
+robot.unload() #(destination_bin='waste')
+#robot.load()
+
+robot.disk_close()
+a = ODStatus(media)
+print(a)
+
+robot.disk_open()
+robot.pickup_from_bin('od')
+robot.drop_on_bin('in')
+
+robot.zero_toolhead()
+
+robot.zero_toolhead()
+robot.rotator.to_bin('od')

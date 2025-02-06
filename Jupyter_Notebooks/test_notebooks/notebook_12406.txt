@@ -1,0 +1,143 @@
+# SES example
+from statsmodels.tsa.holtwinters import SimpleExpSmoothing
+from random import random
+
+# contrived dataset
+data = [x + random() for x in range(1, 100)]
+
+# fit model
+model = SimpleExpSmoothing(data)
+model_fit = model.fit()
+
+# make prediction
+yhat = model_fit.predict(len(data), len(data))
+print(yhat[1])
+
+# HWES example
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+from random import random
+
+# contrived dataset
+data = [x + random() for x in range(1, 100)]
+
+# fit model
+model = ExponentialSmoothing(data)
+model_fit = model.fit()
+
+# make prediction
+yhat = model_fit.predict(len(data), len(data))
+print(yhat)
+
+import warnings                                  # `do not disturbe` mode
+warnings.filterwarnings('ignore')
+
+import numpy as np                               # vectors and matrices
+import pandas                              # tables and data manipulations
+import matplotlib.pyplot as plt                  # plots
+import seaborn as sns                            # more plots
+
+from dateutil.relativedelta import relativedelta # working with dates with style
+from scipy.optimize import minimize              # for function minimization
+
+import statsmodels.formula.api as smf            # statistics and econometrics
+import statsmodels.tsa.api as smt
+import statsmodels.api as sm
+import scipy.stats as scs
+
+from itertools import product                    # some useful functions
+from tqdm import tqdm_notebook
+
+ads = pandas.read_csv('ads.csv', index_col=['Time'], parse_dates=['Time'])
+currency = pandas.read_csv('currency.csv', index_col=['Time'], parse_dates=['Time'])
+
+
+%matplotlib inline
+plt.figure(figsize=(15, 7))
+plt.plot(ads.Ads)
+plt.title('Ads watched (hourly data)')
+plt.grid(True)
+plt.show()
+
+
+%matplotlib inline
+plt.figure(figsize=(15, 7))
+plt.plot(currency.GEMS_GEMS_SPENT)
+plt.title('In-game currency spent (daily data)')
+plt.grid(True)
+plt.show()
+
+def exponential_smoothing(series, alpha):
+    """
+        series - dataset with timestamps
+        alpha - float [0.0, 1.0], smoothing parameter
+    """
+    result = [series[0]] # first value is same as series
+    for n in range(1, len(series)):
+        result.append(alpha * series[n] + (1 - alpha) * result[n-1])
+    return result
+
+def plotExponentialSmoothing(series, alphas):
+    """
+        Plots exponential smoothing with different alphas
+        
+        series - dataset with timestamps
+        alphas - list of floats, smoothing parameters
+        
+    """
+    with plt.style.context('seaborn-white'):    
+        plt.figure(figsize=(15, 7))
+        for alpha in alphas:
+            plt.plot(exponential_smoothing(series, alpha), label="Alpha {}".format(alpha))
+        plt.plot(series.values, "c", label = "Actual")
+        plt.legend(loc="best")
+        plt.axis('tight')
+        plt.title("Exponential Smoothing")
+        plt.grid(True);
+
+plotExponentialSmoothing(ads.Ads, [0.3, 0.05])
+
+plotExponentialSmoothing(currency.GEMS_GEMS_SPENT, [0.3, 0.05])
+
+def double_exponential_smoothing(series, alpha, beta):
+    """
+        series - dataset with timeseries
+        alpha - float [0.0, 1.0], smoothing parameter for level
+        beta - float [0.0, 1.0], smoothing parameter for trend
+    """
+    # first value is same as series
+    result = [series[0]]
+    for n in range(1, len(series)+1):
+        if n == 1:
+            level, trend = series[0], series[1] - series[0]
+        if n >= len(series): # forecasting
+            value = result[-1]
+        else:
+            value = series[n]
+        last_level, level = level, alpha*value + (1-alpha)*(level+trend)
+        trend = beta*(level-last_level) + (1-beta)*trend
+        result.append(level+trend)
+    return result
+
+def plotDoubleExponentialSmoothing(series, alphas, betas):
+    """
+        Plots double exponential smoothing with different alphas and betas
+        
+        series - dataset with timestamps
+        alphas - list of floats, smoothing parameters for level
+        betas - list of floats, smoothing parameters for trend
+    """
+    
+    with plt.style.context('seaborn-white'):    
+        plt.figure(figsize=(20, 8))
+        for alpha in alphas:
+            for beta in betas:
+                plt.plot(double_exponential_smoothing(series, alpha, beta), label="Alpha {}, beta {}".format(alpha, beta))
+        plt.plot(series.values, label = "Actual")
+        plt.legend(loc="best")
+        plt.axis('tight')
+        plt.title("Double Exponential Smoothing")
+        plt.grid(True)
+
+plotDoubleExponentialSmoothing(ads.Ads, alphas=[0.9, 0.02], betas=[0.9, 0.02])
+
+plotDoubleExponentialSmoothing(currency.GEMS_GEMS_SPENT, alphas=[0.9, 0.02], betas=[0.9, 0.02])
