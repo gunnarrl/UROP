@@ -1,104 +1,133 @@
 import ollama
 import os
 import json
-import sys
+import sqlite3
+import ast
+import pandas as pd
 
 
-def review_file_rolling(file_path, model='llama3.2'):
+def clean_code_from_notebook(file_path):
     """
-    Reviews the file in rolling 5-line windows.
-    For each window, sends the snippet to the Ollama model for code review,
-    and collects the model's JSON output along with the window range.
+    Reads a Jupyter Notebook-converted script file and removes remnants of notebook execution.
     """
+    with open(file_path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+
+    # Remove Jupyter-specific artifacts (magic commands, cell markers, blank lines)
+    cleaned_lines = []
+    for line in lines:
+        stripped = line.lstrip()
+        if not stripped.startswith(('%', '!', '# In[')):
+            cleaned_lines.append(line)
+
+    return "".join(cleaned_lines)
+
+
+def split_methods_from_file(file_path):
+    """
+    Extracts individual function/method definitions from a cleaned Python script.
+    Returns a list of tuples (function_name, start_line, function_source_code).
+    """
+    source = clean_code_from_notebook(file_path)
+
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-    except (UnicodeDecodeError, FileNotFoundError):
-        print(f"Skipping {file_path} due to unreadable characters or missing file.", file=sys.stderr)
-        return None
+        tree = ast.parse(source, filename=file_path)
+    except SyntaxError:
+        print(f"Skipping {file_path} due to syntax errors.")
+        return []
 
-    filename = os.path.basename(file_path)
-    window_size = 5
-    total_lines = len(lines)
-    review_results = {
-        "file": filename,
-        "reviews": []  # Each element will include window info and the model's response
-    }
+    functions = []
+    lines = source.splitlines(True)  # Preserve line endings
 
-    # Process rolling windows: lines 1-5, 2-6, etc.
-    for i in range(total_lines - window_size + 1):
-        start_line = i + 1
-        end_line = i + window_size
-        snippet = "".join(lines[i:i + window_size])
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            start_line = node.lineno
+            end_line = node.end_lineno
+            func_source = "".join(lines[start_line - 1:end_line])
+            functions.append((node.name, start_line, func_source))
 
-        # Print progress to stderr so that stdout remains a pure JSON output.
-        print(f"reviewing lines {start_line}-{end_line} of file {filename}", file=sys.stderr)
+    return functions
 
-        while True:  # Retry loop for ensuring JSON-parsable output
-            prompt = f"""
-You are a professional Python developer reviewing the following snippet of code.
-Identify issues in the code, mentioning the line numbers (relative to the snippet) where the issues occur.
-If there are no issues, return an empty list for issues. If there are issues, provide a comment explaining the problem.
 
-Return the output as strictly JSON in the following format (the JSON must be valid and properly formatted):
+def review_function(function_name, start_line, function_source, model='llama3.2'):
+    """
+    Sends a function to the Ollama model for code review.
+    Retries until a valid JSON response is received.
+    """
+    while True:
+        prompt = f"""
+You are reviewing the following Python function. Identify issues and suggest fixes.
+Return a JSON object in this format:
 {{
-    "file": "{filename}",
-    "window": {{
-        "start_line": {start_line},
-        "end_line": {end_line}
-    }},
+    "function": "{function_name}",
     "issues": [
-        {{"line": <line_number>, "comment": "<issue description>"}}  
+        {{"line": <line_number>, "comment": "<issue description>", "fix": "<suggested fix>"}}
     ]
 }}
+
 Code:
 ```python
-{snippet}
+{function_source}
 ```
-            """
+        """
 
-            # Send request to Ollama model
-            response = ollama.chat(
-                model=model,
-                messages=[{'role': 'user', 'content': prompt}]
-            )
+        response = ollama.chat(
+            model=model,
+            messages=[{'role': 'user', 'content': prompt}],
+            format='json'
+        )
 
-            content = response['message']['content']
+        content = response['message']['content']
 
-            try:
-                review_data = json.loads(content)
-                break  # Successfully parsed, exit retry loop
-            except json.JSONDecodeError:
-                print(f"Error parsing model response for {filename} (lines {start_line}-{end_line}). Retrying...",
-                      file=sys.stderr)
-                prompt += "\nEnsure that the output is strictly JSON formatted with no additional text."
+        try:
+            review_data = json.loads(content)
+        except json.JSONDecodeError as e:
+            print("Error parsing JSON:", e)
+            continue
 
-        review_results["reviews"].append(review_data)
+        # Adjust the line numbers to match the full file
+        for issue in review_data.get("issues", []):
+            issue["line"] = issue.get("line", start_line) + start_line - 1
+            issue["comment"] = issue.get("comment", "No comment provided.")
+            issue["fix"] = issue.get("fix", "No fix suggested.")
 
-    return review_results
+        return review_data
 
 
-def review_folder(folder_path, model='llama3.2'):
+def save_reviews_to_db(df, db_path="reviews.db"):
     """
-    Runs the rolling 5-line code review on all .txt files in the given folder
-    and outputs a single JSON formatted string with all results.
+    Saves review data to an SQLite database using pandas.
     """
-    aggregated_results = []
+    conn = sqlite3.connect(db_path)
+    df.to_sql("code_reviews", conn, if_exists="replace", index=False)
+    conn.close()
+
+
+def process_file(file_path, model='llama3.2'):
+    """
+    Extracts functions from a file, reviews them, and saves results in a DataFrame.
+    """
+    functions = split_methods_from_file(file_path)
+    review_data = []
+
+    for function_name, start_line, function_source in functions:
+        review = review_function(function_name, start_line, function_source, model)
+        if review:
+            for issue in review.get("issues", []):
+                review_data.append([
+                    file_path, function_name, issue["line"], issue["comment"], issue["fix"]
+                ])
+
+    # The DataFrame includes a 'line_number' column for where the comment was made.
+    df = pd.DataFrame(review_data, columns=["file", "function_name", "line_number", "comments", "fix"])
+    save_reviews_to_db(df)
+
+
+if __name__ == "__main__":
+    folder_path = r"C:\\Users\\gunna\\OneDrive\\Documents\\coding_projects\\UROP\\Jupyter_Notebooks\\test_notebooks"  # Update with actual path
 
     for root, _, files in os.walk(folder_path):
         for file in files:
             if file.endswith(".txt"):
                 file_path = os.path.join(root, file)
-                result = review_file_rolling(file_path, model)
-                if result:
-                    aggregated_results.append(result)
-
-    # Convert aggregated results to a JSON formatted string
-    final_output = json.dumps(aggregated_results, indent=4)
-    return final_output
-
-
-if __name__ == "__main__":
-    folder_path = r"C:\Users\gunna\OneDrive\Documents\coding_projects\UROP\Jupyter_Notebooks\test_notebooks"
-    output = review_folder(folder_path)
-    print(output)
+                process_file(file_path)
