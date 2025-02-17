@@ -2,7 +2,6 @@ import ollama
 import os
 import json
 import sqlite3
-import ast
 import pandas as pd
 
 
@@ -23,51 +22,38 @@ def clean_code_from_notebook(file_path):
     return "".join(cleaned_lines)
 
 
-def split_methods_from_file(file_path):
+def review_file(file_source, model='llama3.2'):
     """
-    Extracts individual function/method definitions from a cleaned Python script.
-    Returns a list of tuples (function_name, start_line, function_source_code).
-    """
-    source = clean_code_from_notebook(file_path)
-
-    try:
-        tree = ast.parse(source, filename=file_path)
-    except SyntaxError:
-        print(f"Skipping {file_path} due to syntax errors.")
-        return []
-
-    functions = []
-    lines = source.splitlines(True)  # Preserve line endings
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef):
-            start_line = node.lineno
-            end_line = node.end_lineno
-            func_source = "".join(lines[start_line - 1:end_line])
-            functions.append((node.name, start_line, func_source))
-
-    return functions
-
-
-def review_function(function_name, start_line, function_source, model='llama3.2'):
-    """
-    Sends a function to the Ollama model for code review.
+    Sends the entire file to the Ollama model for code review.
     Retries until a valid JSON response is received.
     """
     while True:
         prompt = f"""
-You are reviewing the following Python function. Identify issues and suggest fixes.
-Return a JSON object in this format:
+You are an expert Python code reviewer. I will provide you with a Python script, and your task is to identify issues in the code and suggest improvements. Please analyze the entire file and output a JSON object that strictly adheres to the following format without any additional text, commentary, or markdown formatting:
+
 {{
-    "function": "{function_name}",
-    "issues": [
-        {{"line": <line_number>, "comment": "<issue description>", "fix": "<suggested fix>"}}
-    ]
+  "issues": [
+    {{
+      "line": <line_number>, 
+      "comment": "<issue description>", 
+      "fix": "<suggested fix>"
+    }}
+  ]
 }}
 
-Code:
+Requirements:
+1. The "issues" key must be an array. Each element in the array must be a dictionary with exactly three keys:
+   - "line": an integer representing the exact line number in the file where the issue occurs.
+   - "comment": a string that clearly describes the issue.
+   - "fix": a string that provides a suggested fix for the issue.
+2. If there are no issues found, return "issues": [].
+3. Do not include any additional keys or extra text outside of the JSON object.
+4. Output only the valid JSON object, without any markdown code blocks or additional formatting.
+
+Below is the Python script to review:
+
 ```python
-{function_source}
+{file_source}
 ```
         """
 
@@ -85,45 +71,53 @@ Code:
             print("Error parsing JSON:", e)
             continue
 
-        # Adjust the line numbers to match the full file
-        for issue in review_data.get("issues", []):
-            issue["line"] = issue.get("line", start_line) + start_line - 1
-            issue["comment"] = issue.get("comment", "No comment provided.")
-            issue["fix"] = issue.get("fix", "No fix suggested.")
-
         return review_data
 
 
-def save_reviews_to_db(df, db_path="reviews.db"):
+def save_reviews_to_db(df, db_path="file_reviews.db"):
     """
     Saves review data to an SQLite database using pandas.
     """
     conn = sqlite3.connect(db_path)
-    df.to_sql("code_reviews", conn, if_exists="replace", index=False)
+    df.to_sql("code_reviews", conn, if_exists="append", index=False)
     conn.close()
 
 
 def process_file(file_path, model='llama3.2'):
     """
-    Extracts functions from a file, reviews them, and saves results in a DataFrame.
+    Reads the file, reviews it, and saves results in a DataFrame.
     """
-    functions = split_methods_from_file(file_path)
-    review_data = []
+    notebook_name = os.path.basename(file_path)
+    file_source = clean_code_from_notebook(file_path)
+    review = review_file(file_source, model)
 
-    for function_name, start_line, function_source in functions:
-        review = review_function(function_name, start_line, function_source, model)
-        if review:
-            for issue in review.get("issues", []):
-                review_data.append([
-                    file_path, function_name, issue["line"], issue["comment"], issue["fix"]
-                ])
+    review_data = []
+    issues = review.get("issues", [])
+
+    if not isinstance(issues, list):
+        print("Unexpected response format:", issues)  # Debugging output
+        return  # Skip saving if the data is malformed
+
+    for issue in issues:
+        if isinstance(issue, dict):  # Ensure it's a dictionary before accessing keys
+            review_data.append([
+                notebook_name, issue.get("line", -1),  # Default to -1 if missing
+                issue.get("comment", "No comment provided."),
+                issue.get("fix", "No fix suggested.")
+            ])
+        else:
+            print("Skipping unexpected issue format:", issue)  # Debugging output
 
     # The DataFrame includes a 'line_number' column for where the comment was made.
-    df = pd.DataFrame(review_data, columns=["file", "function_name", "line_number", "comments", "fix"])
+    df = pd.DataFrame(review_data, columns=["file", "line_number", "comments", "fix"])
     save_reviews_to_db(df)
 
 
 if __name__ == "__main__":
+    db_path = "file_reviews.db"
+    if os.path.exists(db_path):
+        os.remove(db_path)
+
     folder_path = r"C:\\Users\\gunna\\OneDrive\\Documents\\coding_projects\\UROP\\Jupyter_Notebooks\\test_notebooks"  # Update with actual path
 
     for root, _, files in os.walk(folder_path):

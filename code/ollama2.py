@@ -105,7 +105,7 @@ Below is the Python function to review:
 
         return review_data
 
-def save_reviews_to_db(df, db_path="reviews.db"):
+def save_reviews_to_db(df, db_path="function_reviews.db"):
     """
     Saves review data to an SQLite database using pandas.
     """
@@ -134,7 +134,7 @@ def process_file(file_path, model='llama3.2'):
     save_reviews_to_db(df)
 
 if __name__ == "__main__":
-    db_path = "reviews.db"
+    db_path = "function_reviews.db"
     if os.path.exists(db_path):
         os.remove(db_path)
 
